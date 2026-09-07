@@ -7,7 +7,6 @@
 #include "Renderer/Components.hpp"
 #include "Renderer/PathTracer/PathTracerShaders.hpp"
 
-#include <lwcgl/gl11_compat.h>
 #include <lwcgl/glmodern.h>
 #include <lwcgl/lwcgl.h>
 
@@ -20,7 +19,6 @@
 #include <initializer_list>
 #include <limits>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #ifndef GL_RGBA32F
@@ -43,24 +41,13 @@ struct Vec3f {
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr std::uint32_t kLeafBit = 0x80000000u;
-constexpr std::uint32_t kBlasLeafSize = 8u;
-constexpr std::uint32_t kTlasLeafSize = 4u;
-constexpr std::size_t kMaximumTrianglesPerBlas = 1000000u;
+constexpr std::uint32_t kLeafSize = 8u;
+constexpr std::size_t kMaximumTriangles = 1000000u;
 constexpr std::size_t kMaximumTextureSlots = 16u;
-
-Vec3f add(const Vec3f& a, const Vec3f& b)
-{
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
 
 Vec3f subtract(const Vec3f& a, const Vec3f& b)
 {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-Vec3f scale(const Vec3f& value, float factor)
-{
-    return {value.x * factor, value.y * factor, value.z * factor};
 }
 
 float dot(const Vec3f& a, const Vec3f& b)
@@ -81,7 +68,8 @@ Vec3f normalize(const Vec3f& value)
 {
     const float length_squared = dot(value, value);
     if (length_squared <= 1.0e-20f) return {0.0f, 1.0f, 0.0f};
-    return scale(value, 1.0f / std::sqrt(length_squared));
+    const float inverse_length = 1.0f / std::sqrt(length_squared);
+    return {value.x * inverse_length, value.y * inverse_length, value.z * inverse_length};
 }
 
 Vec3f minVec(const Vec3f& a, const Vec3f& b)
@@ -227,6 +215,15 @@ Vec3f transformPoint(const Mat4& matrix, const Vec3f& point)
     };
 }
 
+Vec3f transformNormal(const Mat4& world_to_object, const Vec3f& normal)
+{
+    return normalize({
+        world_to_object[0] * normal.x + world_to_object[1] * normal.y + world_to_object[2] * normal.z,
+        world_to_object[4] * normal.x + world_to_object[5] * normal.y + world_to_object[6] * normal.z,
+        world_to_object[8] * normal.x + world_to_object[9] * normal.y + world_to_object[10] * normal.z,
+    });
+}
+
 void hashValue(std::uint64_t& hash, std::uint32_t value)
 {
     hash ^= static_cast<std::uint64_t>(value);
@@ -362,11 +359,12 @@ struct PathTracer::Impl {
         float min_x = 0.0f;
         float min_y = 0.0f;
         float min_z = 0.0f;
-        std::uint32_t left = 0u;
+        std::uint32_t first = 0u;
         float max_x = 0.0f;
         float max_y = 0.0f;
         float max_z = 0.0f;
         std::uint32_t meta = 0u;
+        std::array<std::uint32_t, 4> extra{};
     };
 
     struct alignas(16) GpuTriangle {
@@ -380,33 +378,9 @@ struct PathTracer::Impl {
         std::array<float, 4> uv2{};
     };
 
-    struct alignas(16) GpuInstance {
-        Mat4 object_to_world = identityMatrix();
-        Mat4 world_to_object = identityMatrix();
-        std::array<std::uint32_t, 4> data{};
-    };
-
     struct alignas(16) GpuMaterial {
         std::array<float, 4> base_color {1.0f, 1.0f, 1.0f, 1.0f};
         std::array<std::int32_t, 4> data {-1, 0, 0, 0};
-    };
-
-    struct MeshCache {
-        std::uint32_t mesh = Models::INVALID_MESH;
-        Ecs::Entity owner = Ecs::INVALID_ENTITY;
-        std::uint64_t pose_revision = 0u;
-        bool dynamic = false;
-        Vec3f bounds_min{};
-        Vec3f bounds_max{};
-        std::vector<GpuNode> nodes;
-        std::vector<GpuTriangle> triangles;
-    };
-
-    struct InstanceEntry {
-        GpuInstance gpu;
-        Vec3f bounds_min{};
-        Vec3f bounds_max{};
-        Vec3f centroid{};
     };
 
     struct CameraState {
@@ -433,8 +407,8 @@ struct PathTracer::Impl {
         GLint camera_up = -1;
         GLint tan_half_fov = -1;
         GLint aspect = -1;
-        GLint tlas_node_count = -1;
-        GLint instance_count = -1;
+        GLint node_count = -1;
+        GLint triangle_count = -1;
         GLint material_count = -1;
         GLint samples_this_frame = -1;
         GLint sample_base = -1;
@@ -467,10 +441,8 @@ struct PathTracer::Impl {
     GLuint trace_program = 0u;
     GLuint present_program = 0u;
     GLuint accumulation = 0u;
-    GLuint blas_node_buffer = 0u;
+    GLuint node_buffer = 0u;
     GLuint triangle_buffer = 0u;
-    GLuint tlas_node_buffer = 0u;
-    GLuint instance_buffer = 0u;
     GLuint material_buffer = 0u;
 
     TraceUniformLocations trace_uniforms{};
@@ -478,14 +450,9 @@ struct PathTracer::Impl {
     bool texture_bindings_dirty = true;
     bool buffer_bindings_dirty = true;
 
-    std::unordered_map<std::uint32_t, MeshCache> static_blas;
-    std::unordered_map<Ecs::Entity, MeshCache> dynamic_blas;
     std::unordered_map<std::uint32_t, GLuint> texture_cache;
-
-    std::vector<GpuNode> gpu_blas_nodes;
+    std::vector<GpuNode> gpu_nodes;
     std::vector<GpuTriangle> gpu_triangles;
-    std::vector<GpuNode> gpu_tlas_nodes;
-    std::vector<GpuInstance> gpu_instances;
     std::vector<GpuMaterial> gpu_materials;
     std::array<GLuint, kMaximumTextureSlots> texture_slots{};
     std::size_t texture_slot_count = 0u;
@@ -551,8 +518,8 @@ struct PathTracer::Impl {
         trace_uniforms.camera_up = uniformLocation(trace_program, "uCameraUp");
         trace_uniforms.tan_half_fov = uniformLocation(trace_program, "uTanHalfFov");
         trace_uniforms.aspect = uniformLocation(trace_program, "uAspect");
-        trace_uniforms.tlas_node_count = uniformLocation(trace_program, "uTlasNodeCount");
-        trace_uniforms.instance_count = uniformLocation(trace_program, "uInstanceCount");
+        trace_uniforms.node_count = uniformLocation(trace_program, "uNodeCount");
+        trace_uniforms.triangle_count = uniformLocation(trace_program, "uTriangleCount");
         trace_uniforms.material_count = uniformLocation(trace_program, "uMaterialCount");
         trace_uniforms.samples_this_frame = uniformLocation(trace_program, "uSamplesThisFrame");
         trace_uniforms.sample_base = uniformLocation(trace_program, "uSampleBase");
@@ -626,20 +593,12 @@ struct PathTracer::Impl {
     void destroyBuffers()
     {
         if (!GL15.glDeleteBuffers) return;
-        GLuint buffers[] = {
-            blas_node_buffer,
-            triangle_buffer,
-            tlas_node_buffer,
-            instance_buffer,
-            material_buffer,
-        };
+        GLuint buffers[] = {node_buffer, triangle_buffer, material_buffer};
         for (GLuint buffer : buffers) {
             if (buffer != 0u) GL15.glDeleteBuffers(1, &buffer);
         }
-        blas_node_buffer = 0u;
+        node_buffer = 0u;
         triangle_buffer = 0u;
-        tlas_node_buffer = 0u;
-        instance_buffer = 0u;
         material_buffer = 0u;
         buffer_bindings_dirty = true;
     }
@@ -690,7 +649,7 @@ struct PathTracer::Impl {
         };
     }
 
-    std::uint32_t buildBlasNode(MeshCache& cache, std::uint32_t start, std::uint32_t count)
+    std::uint32_t buildNode(std::uint32_t start, std::uint32_t count)
     {
         const float infinity = std::numeric_limits<float>::infinity();
         Vec3f bounds_min{infinity, infinity, infinity};
@@ -699,7 +658,7 @@ struct PathTracer::Impl {
         Vec3f centroid_max{-infinity, -infinity, -infinity};
 
         for (std::uint32_t index = 0u; index < count; ++index) {
-            const GpuTriangle& triangle = cache.triangles[start + index];
+            const GpuTriangle& triangle = gpu_triangles[start + index];
             const Vec3f p0{triangle.p0[0], triangle.p0[1], triangle.p0[2]};
             const Vec3f p1{triangle.p1[0], triangle.p1[1], triangle.p1[2]};
             const Vec3f p2{triangle.p2[0], triangle.p2[1], triangle.p2[2]};
@@ -710,249 +669,43 @@ struct PathTracer::Impl {
             centroid_max = maxVec(centroid_max, centroid);
         }
 
-        const std::uint32_t node_index = static_cast<std::uint32_t>(cache.nodes.size());
-        cache.nodes.push_back({
-            bounds_min.x, bounds_min.y, bounds_min.z, 0u,
-            bounds_max.x, bounds_max.y, bounds_max.z, 0u,
-        });
+        const std::uint32_t node_index = static_cast<std::uint32_t>(gpu_nodes.size());
+        GpuNode node;
+        node.min_x = bounds_min.x;
+        node.min_y = bounds_min.y;
+        node.min_z = bounds_min.z;
+        node.max_x = bounds_max.x;
+        node.max_y = bounds_max.y;
+        node.max_z = bounds_max.z;
+        gpu_nodes.push_back(node);
 
         const Vec3f extent = subtract(centroid_max, centroid_min);
         int axis = extent.y > extent.x ? 1 : 0;
         if (extent.z > component(extent, axis)) axis = 2;
 
-        if (count <= kBlasLeafSize || component(extent, axis) <= 1.0e-6f) {
-            cache.nodes[node_index].left = start;
-            cache.nodes[node_index].meta = kLeafBit | count;
+        if (count <= kLeafSize || component(extent, axis) <= 1.0e-6f) {
+            gpu_nodes[node_index].first = start;
+            gpu_nodes[node_index].meta = kLeafBit | count;
+            gpu_nodes[node_index].extra[0] = static_cast<std::uint32_t>(gpu_nodes.size());
             return node_index;
         }
 
         const std::uint32_t left_count = count / 2u;
         const std::uint32_t middle = start + left_count;
         std::nth_element(
-            cache.triangles.begin() + start,
-            cache.triangles.begin() + middle,
-            cache.triangles.begin() + start + count,
+            gpu_triangles.begin() + start,
+            gpu_triangles.begin() + middle,
+            gpu_triangles.begin() + start + count,
             [axis](const GpuTriangle& a, const GpuTriangle& b) {
                 return component(triangleCentroid(a), axis) < component(triangleCentroid(b), axis);
             }
         );
 
-        const std::uint32_t left = buildBlasNode(cache, start, left_count);
-        const std::uint32_t right = buildBlasNode(cache, middle, count - left_count);
-        cache.nodes[node_index].left = left;
-        cache.nodes[node_index].meta = right;
-        return node_index;
-    }
-
-    bool buildMeshCache(
-        MeshCache& cache,
-        std::uint32_t mesh_handle,
-        Ecs::Entity owner,
-        const Animation::Pose *pose)
-    {
-        const Models::MeshData *mesh = Models::mesh(mesh_handle);
-        if (!mesh || mesh->indices.size() < 3u) return false;
-
-        cache = {};
-        cache.mesh = mesh_handle;
-        cache.owner = owner;
-        cache.dynamic = pose != nullptr;
-        cache.pose_revision = pose ? pose->revision : 0u;
-
-        std::vector<Models::Vec3> positions;
-        std::vector<Models::Vec3> normals;
-        if (pose) {
-            positions.resize(mesh->vertices.size());
-            normals.resize(mesh->vertices.size());
-            for (std::size_t index = 0u; index < mesh->vertices.size(); ++index) {
-                const Models::Vertex& vertex = mesh->vertices[index];
-                Animation::Vec3 input_position {vertex.position.x, vertex.position.y, vertex.position.z};
-                Animation::Vec3 input_normal {vertex.normal.x, vertex.normal.y, vertex.normal.z};
-                Animation::Vec3 output_position {};
-                Animation::Vec3 output_normal {};
-                Animation::skinVertex(
-                    *pose,
-                    vertex.skin,
-                    input_position,
-                    input_normal,
-                    &output_position,
-                    &output_normal
-                );
-                positions[index] = {output_position.x, output_position.y, output_position.z};
-                normals[index] = {output_normal.x, output_normal.y, output_normal.z};
-            }
-        }
-
-        const std::size_t triangle_count = std::min<std::size_t>(
-            mesh->indices.size() / 3u,
-            kMaximumTrianglesPerBlas
-        );
-        cache.triangles.reserve(triangle_count);
-
-        const float infinity = std::numeric_limits<float>::infinity();
-        cache.bounds_min = {infinity, infinity, infinity};
-        cache.bounds_max = {-infinity, -infinity, -infinity};
-
-        for (std::size_t triangle_index = 0u; triangle_index < triangle_count; ++triangle_index) {
-            const std::size_t offset = triangle_index * 3u;
-            const std::uint32_t i0 = mesh->indices[offset + 0u];
-            const std::uint32_t i1 = mesh->indices[offset + 1u];
-            const std::uint32_t i2 = mesh->indices[offset + 2u];
-            if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size()) continue;
-
-            const Models::Vertex& v0 = mesh->vertices[i0];
-            const Models::Vertex& v1 = mesh->vertices[i1];
-            const Models::Vertex& v2 = mesh->vertices[i2];
-            const Models::Vec3 p0 = pose ? positions[i0] : v0.position;
-            const Models::Vec3 p1 = pose ? positions[i1] : v1.position;
-            const Models::Vec3 p2 = pose ? positions[i2] : v2.position;
-            const Models::Vec3 n0 = pose ? normals[i0] : v0.normal;
-            const Models::Vec3 n1 = pose ? normals[i1] : v1.normal;
-            const Models::Vec3 n2 = pose ? normals[i2] : v2.normal;
-
-            GpuTriangle triangle{};
-            triangle.p0 = {p0.x, p0.y, p0.z, 0.0f};
-            triangle.p1 = {p1.x, p1.y, p1.z, 0.0f};
-            triangle.p2 = {p2.x, p2.y, p2.z, 0.0f};
-            triangle.n0 = {n0.x, n0.y, n0.z, 0.0f};
-            triangle.n1 = {n1.x, n1.y, n1.z, 0.0f};
-            triangle.n2 = {n2.x, n2.y, n2.z, 0.0f};
-            triangle.uv01 = {v0.uv.x, v0.uv.y, v1.uv.x, v1.uv.y};
-            triangle.uv2 = {v2.uv.x, v2.uv.y, 0.0f, 0.0f};
-            cache.triangles.push_back(triangle);
-
-            const Vec3f a{p0.x, p0.y, p0.z};
-            const Vec3f b{p1.x, p1.y, p1.z};
-            const Vec3f c{p2.x, p2.y, p2.z};
-            cache.bounds_min = minVec(cache.bounds_min, minVec(a, minVec(b, c)));
-            cache.bounds_max = maxVec(cache.bounds_max, maxVec(a, maxVec(b, c)));
-        }
-
-        if (cache.triangles.empty()) return false;
-        cache.nodes.reserve(cache.triangles.size() * 2u);
-        buildBlasNode(cache, 0u, static_cast<std::uint32_t>(cache.triangles.size()));
-        return true;
-    }
-
-    MeshCache *staticCache(std::uint32_t mesh_handle)
-    {
-        auto found = static_blas.find(mesh_handle);
-        if (found != static_blas.end()) return &found->second;
-
-        MeshCache cache;
-        if (!buildMeshCache(cache, mesh_handle, Ecs::INVALID_ENTITY, nullptr)) return nullptr;
-        auto [inserted, ok] = static_blas.emplace(mesh_handle, std::move(cache));
-        return ok ? &inserted->second : nullptr;
-    }
-
-    MeshCache *dynamicCache(
-        Ecs::Entity entity,
-        std::uint32_t mesh_handle,
-        const Animation::Pose& pose)
-    {
-        auto found = dynamic_blas.find(entity);
-        if (
-            found != dynamic_blas.end() &&
-            found->second.mesh == mesh_handle &&
-            found->second.pose_revision == pose.revision)
-        {
-            return &found->second;
-        }
-
-        MeshCache cache;
-        if (!buildMeshCache(cache, mesh_handle, entity, &pose)) return nullptr;
-        dynamic_blas[entity] = std::move(cache);
-        return &dynamic_blas[entity];
-    }
-
-    static Vec3f transformedBoundsMin(const MeshCache& cache, const Mat4& model)
-    {
-        const float infinity = std::numeric_limits<float>::infinity();
-        Vec3f result{infinity, infinity, infinity};
-        for (int x = 0; x < 2; ++x) {
-            for (int y = 0; y < 2; ++y) {
-                for (int z = 0; z < 2; ++z) {
-                    const Vec3f corner {
-                        x == 0 ? cache.bounds_min.x : cache.bounds_max.x,
-                        y == 0 ? cache.bounds_min.y : cache.bounds_max.y,
-                        z == 0 ? cache.bounds_min.z : cache.bounds_max.z,
-                    };
-                    result = minVec(result, transformPoint(model, corner));
-                }
-            }
-        }
-        return result;
-    }
-
-    static Vec3f transformedBoundsMax(const MeshCache& cache, const Mat4& model)
-    {
-        const float infinity = std::numeric_limits<float>::infinity();
-        Vec3f result{-infinity, -infinity, -infinity};
-        for (int x = 0; x < 2; ++x) {
-            for (int y = 0; y < 2; ++y) {
-                for (int z = 0; z < 2; ++z) {
-                    const Vec3f corner {
-                        x == 0 ? cache.bounds_min.x : cache.bounds_max.x,
-                        y == 0 ? cache.bounds_min.y : cache.bounds_max.y,
-                        z == 0 ? cache.bounds_min.z : cache.bounds_max.z,
-                    };
-                    result = maxVec(result, transformPoint(model, corner));
-                }
-            }
-        }
-        return result;
-    }
-
-    std::uint32_t buildTlasNode(
-        std::vector<InstanceEntry>& entries,
-        std::uint32_t start,
-        std::uint32_t count)
-    {
-        const float infinity = std::numeric_limits<float>::infinity();
-        Vec3f bounds_min{infinity, infinity, infinity};
-        Vec3f bounds_max{-infinity, -infinity, -infinity};
-        Vec3f centroid_min{infinity, infinity, infinity};
-        Vec3f centroid_max{-infinity, -infinity, -infinity};
-
-        for (std::uint32_t index = 0u; index < count; ++index) {
-            const InstanceEntry& entry = entries[start + index];
-            bounds_min = minVec(bounds_min, entry.bounds_min);
-            bounds_max = maxVec(bounds_max, entry.bounds_max);
-            centroid_min = minVec(centroid_min, entry.centroid);
-            centroid_max = maxVec(centroid_max, entry.centroid);
-        }
-
-        const std::uint32_t node_index = static_cast<std::uint32_t>(gpu_tlas_nodes.size());
-        gpu_tlas_nodes.push_back({
-            bounds_min.x, bounds_min.y, bounds_min.z, 0u,
-            bounds_max.x, bounds_max.y, bounds_max.z, 0u,
-        });
-
-        const Vec3f extent = subtract(centroid_max, centroid_min);
-        int axis = extent.y > extent.x ? 1 : 0;
-        if (extent.z > component(extent, axis)) axis = 2;
-
-        if (count <= kTlasLeafSize || component(extent, axis) <= 1.0e-6f) {
-            gpu_tlas_nodes[node_index].left = start;
-            gpu_tlas_nodes[node_index].meta = kLeafBit | count;
-            return node_index;
-        }
-
-        const std::uint32_t left_count = count / 2u;
-        const std::uint32_t middle = start + left_count;
-        std::nth_element(
-            entries.begin() + start,
-            entries.begin() + middle,
-            entries.begin() + start + count,
-            [axis](const InstanceEntry& a, const InstanceEntry& b) {
-                return component(a.centroid, axis) < component(b.centroid, axis);
-            }
-        );
-
-        const std::uint32_t left = buildTlasNode(entries, start, left_count);
-        const std::uint32_t right = buildTlasNode(entries, middle, count - left_count);
-        gpu_tlas_nodes[node_index].left = left;
-        gpu_tlas_nodes[node_index].meta = right;
+        const std::uint32_t left = buildNode(start, left_count);
+        const std::uint32_t right = buildNode(middle, count - left_count);
+        gpu_nodes[node_index].first = left;
+        gpu_nodes[node_index].meta = right;
+        gpu_nodes[node_index].extra[0] = static_cast<std::uint32_t>(gpu_nodes.size());
         return node_index;
     }
 
@@ -1052,64 +805,11 @@ struct PathTracer::Impl {
 
     bool syncScene(const Ecs::World& world)
     {
-        struct Item {
-            const MeshCache *cache = nullptr;
-            Transform transform{};
-            std::uint32_t material = Models::INVALID_MATERIAL;
-        };
-
-        std::vector<Item> items;
-        items.reserve(world.entities().size());
-
-        for (const Ecs::Entity entity : world.entities()) {
-            const RenderableComponent *renderable = world.get<RenderableComponent>(entity);
-            const MeshComponent *mesh_component = world.get<MeshComponent>(entity);
-            const Transform *transform = world.get<Transform>(entity);
-            if (!renderable || !renderable->visible || !mesh_component || !transform) continue;
-
-            const Models::MaterialData *material = Models::material(mesh_component->material);
-            if (material && material->opacity < 0.5f) continue;
-
-            const Animation::Pose *pose = nullptr;
-            const Animation::SkinBindingComponent *binding = world.get<Animation::SkinBindingComponent>(entity);
-            if (binding && binding->animator != Ecs::INVALID_ENTITY) {
-                const Animation::AnimatorComponent *animator =
-                    world.get<Animation::AnimatorComponent>(binding->animator);
-                if (animator && !animator->pose.skin.empty()) pose = &animator->pose;
-            }
-
-            MeshCache *cache = pose
-                ? dynamicCache(entity, mesh_component->mesh, *pose)
-                : staticCache(mesh_component->mesh);
-            if (!cache || cache->nodes.empty() || cache->triangles.empty()) continue;
-
-            items.push_back({cache, *transform, mesh_component->material});
-        }
-
-        gpu_blas_nodes.clear();
+        gpu_nodes.clear();
         gpu_triangles.clear();
-        gpu_tlas_nodes.clear();
-        gpu_instances.clear();
         gpu_materials.clear();
         texture_slots.fill(0u);
         texture_slot_count = 0u;
-
-        struct Offsets {
-            std::uint32_t nodes = 0u;
-            std::uint32_t triangles = 0u;
-        };
-        std::unordered_map<const MeshCache *, Offsets> offsets;
-        offsets.reserve(items.size());
-
-        for (const Item& item : items) {
-            if (offsets.find(item.cache) != offsets.end()) continue;
-            Offsets value;
-            value.nodes = static_cast<std::uint32_t>(gpu_blas_nodes.size());
-            value.triangles = static_cast<std::uint32_t>(gpu_triangles.size());
-            gpu_blas_nodes.insert(gpu_blas_nodes.end(), item.cache->nodes.begin(), item.cache->nodes.end());
-            gpu_triangles.insert(gpu_triangles.end(), item.cache->triangles.begin(), item.cache->triangles.end());
-            offsets.emplace(item.cache, value);
-        }
 
         std::unordered_map<std::uint32_t, std::uint32_t> material_indices;
         std::unordered_map<std::uint32_t, int> texture_indices;
@@ -1129,7 +829,7 @@ struct PathTracer::Impl {
                 };
 
                 if (material->diffuse_texture != Models::INVALID_TEXTURE) {
-                    auto texture_found = texture_indices.find(material->diffuse_texture);
+                    const auto texture_found = texture_indices.find(material->diffuse_texture);
                     int slot = -1;
                     if (texture_found != texture_indices.end()) {
                         slot = texture_found->second;
@@ -1151,44 +851,106 @@ struct PathTracer::Impl {
             return index;
         };
 
-        std::vector<InstanceEntry> entries;
-        entries.reserve(items.size());
+        gpu_triangles.reserve(262144u);
 
-        for (const Item& item : items) {
-            const auto offset = offsets.find(item.cache);
-            if (offset == offsets.end()) continue;
+        for (const Ecs::Entity entity : world.entities()) {
+            if (gpu_triangles.size() >= kMaximumTriangles) break;
 
-            const Mat4 model = modelMatrix(item.transform);
-            const Mat4 inverse_model = inverseModelMatrix(item.transform);
-            InstanceEntry entry;
-            entry.gpu.object_to_world = model;
-            entry.gpu.world_to_object = inverse_model;
-            entry.gpu.data = {
-                offset->second.nodes,
-                offset->second.triangles,
-                static_cast<std::uint32_t>(item.cache->nodes.size()),
-                materialIndex(item.material),
-            };
-            entry.bounds_min = transformedBoundsMin(*item.cache, model);
-            entry.bounds_max = transformedBoundsMax(*item.cache, model);
-            entry.centroid = scale(add(entry.bounds_min, entry.bounds_max), 0.5f);
-            entries.push_back(entry);
+            const RenderableComponent *renderable = world.get<RenderableComponent>(entity);
+            const MeshComponent *mesh_component = world.get<MeshComponent>(entity);
+            const Transform *transform = world.get<Transform>(entity);
+            if (!renderable || !renderable->visible || !mesh_component || !transform) continue;
+
+            const Models::MeshData *mesh = Models::mesh(mesh_component->mesh);
+            if (!mesh || mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
+
+            const Models::MaterialData *material = Models::material(mesh_component->material);
+            if (material && material->opacity < 0.5f) continue;
+
+            const std::uint32_t material_index = materialIndex(mesh_component->material);
+            const Mat4 model = modelMatrix(*transform);
+            const Mat4 world_to_object = inverseModelMatrix(*transform);
+
+            const Animation::Pose *pose = nullptr;
+            const Animation::SkinBindingComponent *binding = world.get<Animation::SkinBindingComponent>(entity);
+            if (binding && binding->animator != Ecs::INVALID_ENTITY) {
+                const Animation::AnimatorComponent *animator =
+                    world.get<Animation::AnimatorComponent>(binding->animator);
+                if (animator && !animator->pose.skin.empty()) pose = &animator->pose;
+            }
+
+            std::vector<Vec3f> positions(mesh->vertices.size());
+            std::vector<Vec3f> normals(mesh->vertices.size());
+
+            for (std::size_t index = 0u; index < mesh->vertices.size(); ++index) {
+                const Models::Vertex& vertex = mesh->vertices[index];
+                Vec3f local_position{vertex.position.x, vertex.position.y, vertex.position.z};
+                Vec3f local_normal{vertex.normal.x, vertex.normal.y, vertex.normal.z};
+
+                if (pose) {
+                    Animation::Vec3 skinned_position{};
+                    Animation::Vec3 skinned_normal{};
+                    Animation::skinVertex(
+                        *pose,
+                        vertex.skin,
+                        {local_position.x, local_position.y, local_position.z},
+                        {local_normal.x, local_normal.y, local_normal.z},
+                        &skinned_position,
+                        &skinned_normal
+                    );
+                    local_position = {skinned_position.x, skinned_position.y, skinned_position.z};
+                    local_normal = {skinned_normal.x, skinned_normal.y, skinned_normal.z};
+                }
+
+                positions[index] = transformPoint(model, local_position);
+                normals[index] = transformNormal(world_to_object, local_normal);
+            }
+
+            const std::size_t triangle_count = mesh->indices.size() / 3u;
+            for (std::size_t triangle_index = 0u; triangle_index < triangle_count; ++triangle_index) {
+                if (gpu_triangles.size() >= kMaximumTriangles) break;
+
+                const std::size_t offset = triangle_index * 3u;
+                const std::uint32_t i0 = mesh->indices[offset + 0u];
+                const std::uint32_t i1 = mesh->indices[offset + 1u];
+                const std::uint32_t i2 = mesh->indices[offset + 2u];
+                if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size()) continue;
+
+                const Models::Vertex& v0 = mesh->vertices[i0];
+                const Models::Vertex& v1 = mesh->vertices[i1];
+                const Models::Vertex& v2 = mesh->vertices[i2];
+                const Vec3f& p0 = positions[i0];
+                const Vec3f& p1 = positions[i1];
+                const Vec3f& p2 = positions[i2];
+                const Vec3f& n0 = normals[i0];
+                const Vec3f& n1 = normals[i1];
+                const Vec3f& n2 = normals[i2];
+
+                GpuTriangle triangle;
+                triangle.p0 = {p0.x, p0.y, p0.z, std::bit_cast<float>(material_index)};
+                triangle.p1 = {p1.x, p1.y, p1.z, 0.0f};
+                triangle.p2 = {p2.x, p2.y, p2.z, 0.0f};
+                triangle.n0 = {n0.x, n0.y, n0.z, 0.0f};
+                triangle.n1 = {n1.x, n1.y, n1.z, 0.0f};
+                triangle.n2 = {n2.x, n2.y, n2.z, 0.0f};
+                triangle.uv01 = {v0.uv.x, v0.uv.y, v1.uv.x, v1.uv.y};
+                triangle.uv2 = {v2.uv.x, v2.uv.y, 0.0f, 0.0f};
+                gpu_triangles.push_back(triangle);
+            }
         }
 
         if (gpu_materials.empty()) gpu_materials.push_back(GpuMaterial{});
 
-        if (!entries.empty()) {
-            gpu_tlas_nodes.reserve(entries.size() * 2u);
-            buildTlasNode(entries, 0u, static_cast<std::uint32_t>(entries.size()));
-            gpu_instances.reserve(entries.size());
-            for (const InstanceEntry& entry : entries) gpu_instances.push_back(entry.gpu);
+        if (!gpu_triangles.empty()) {
+            gpu_nodes.reserve(gpu_triangles.size() * 2u);
+            buildNode(0u, static_cast<std::uint32_t>(gpu_triangles.size()));
         }
 
         const bool uploaded =
             uploadBuffer(
-                blas_node_buffer,
-                gpu_blas_nodes.data(),
-                gpu_blas_nodes.size() * sizeof(GpuNode),
+                node_buffer,
+                gpu_nodes.data(),
+                gpu_nodes.size() * sizeof(GpuNode),
                 GL_STATIC_DRAW
             ) &&
             uploadBuffer(
@@ -1198,22 +960,10 @@ struct PathTracer::Impl {
                 GL_STATIC_DRAW
             ) &&
             uploadBuffer(
-                tlas_node_buffer,
-                gpu_tlas_nodes.data(),
-                gpu_tlas_nodes.size() * sizeof(GpuNode),
-                GL_DYNAMIC_DRAW
-            ) &&
-            uploadBuffer(
-                instance_buffer,
-                gpu_instances.data(),
-                gpu_instances.size() * sizeof(GpuInstance),
-                GL_DYNAMIC_DRAW
-            ) &&
-            uploadBuffer(
                 material_buffer,
                 gpu_materials.data(),
                 gpu_materials.size() * sizeof(GpuMaterial),
-                GL_DYNAMIC_DRAW
+                GL_STATIC_DRAW
             );
 
         if (uploaded) {
@@ -1221,14 +971,13 @@ struct PathTracer::Impl {
             texture_bindings_dirty = true;
             std::fprintf(
                 stderr,
-                "[PathTracer]: scene cache %zu triangles, %zu BLAS nodes, %zu instances, %zu TLAS nodes, %zu materials\n",
+                "[PathTracer]: world cache %zu triangles, %zu nodes, %zu materials\n",
                 gpu_triangles.size(),
-                gpu_blas_nodes.size(),
-                gpu_instances.size(),
-                gpu_tlas_nodes.size(),
+                gpu_nodes.size(),
                 gpu_materials.size()
             );
         }
+
         return uploaded;
     }
 
@@ -1241,8 +990,6 @@ struct PathTracer::Impl {
             }
             texture_bindings_dirty = false;
         } else {
-            // Presentation uses texture unit zero for the accumulation buffer, so
-            // restore only the one scene binding that it clobbers each frame.
             GLModern.glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, texture_slots[0]);
         }
@@ -1252,10 +999,8 @@ struct PathTracer::Impl {
     void bindBuffersIfDirty()
     {
         if (!buffer_bindings_dirty) return;
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0u, blas_node_buffer);
+        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0u, node_buffer);
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1u, triangle_buffer);
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2u, tlas_node_buffer);
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3u, instance_buffer);
         GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4u, material_buffer);
         buffer_bindings_dirty = false;
     }
@@ -1277,12 +1022,12 @@ struct PathTracer::Impl {
         setVec3(trace_uniforms.camera_up, camera.up);
         setFloat(trace_uniforms.tan_half_fov, std::tan(camera.fov_degrees * (kPi / 360.0f)));
         setFloat(trace_uniforms.aspect, static_cast<float>(width) / static_cast<float>(height));
-        setInt(trace_uniforms.tlas_node_count, static_cast<int>(gpu_tlas_nodes.size()));
-        setInt(trace_uniforms.instance_count, static_cast<int>(gpu_instances.size()));
+        setInt(trace_uniforms.node_count, static_cast<int>(gpu_nodes.size()));
+        setInt(trace_uniforms.triangle_count, static_cast<int>(gpu_triangles.size()));
         setInt(trace_uniforms.material_count, static_cast<int>(gpu_materials.size()));
         setInt(trace_uniforms.samples_this_frame, samples);
         setInt(trace_uniforms.sample_base, static_cast<int>(sample_count));
-        setInt(trace_uniforms.max_bounces, std::clamp(settings.max_bounces, 1, 8));
+        setInt(trace_uniforms.max_bounces, std::clamp(settings.max_bounces, 1, 4));
         setInt(trace_uniforms.has_light, light.valid ? 1 : 0);
         setVec3(trace_uniforms.light_position, light.position);
         setVec3(trace_uniforms.light_color, light.color);
@@ -1327,6 +1072,10 @@ struct PathTracer::Impl {
         GLModern.glActiveTexture(GL_TEXTURE0);
     }
 };
+
+static_assert(sizeof(PathTracer::Impl::GpuNode) == 48u);
+static_assert(sizeof(PathTracer::Impl::GpuTriangle) == 128u);
+static_assert(sizeof(PathTracer::Impl::GpuMaterial) == 32u);
 
 PathTracer::PathTracer() : impl_(new Impl) {}
 
@@ -1448,7 +1197,7 @@ void PathTracer::render(const Ecs::World& world)
         const std::uint64_t next_scene_signature = impl_->sceneSignature(world);
         if (next_scene_signature != impl_->scene_signature) {
             if (!impl_->syncScene(world)) {
-                std::fprintf(stderr, "[PathTracer]: failed to synchronize scene cache\n");
+                std::fprintf(stderr, "[PathTracer]: failed to synchronize world cache\n");
                 return;
             }
             impl_->scene_signature = next_scene_signature;
@@ -1486,12 +1235,8 @@ void PathTracer::shutdown()
     }
 
     impl_->texture_cache.clear();
-    impl_->static_blas.clear();
-    impl_->dynamic_blas.clear();
-    impl_->gpu_blas_nodes.clear();
+    impl_->gpu_nodes.clear();
     impl_->gpu_triangles.clear();
-    impl_->gpu_tlas_nodes.clear();
-    impl_->gpu_instances.clear();
     impl_->gpu_materials.clear();
     impl_->texture_slots.fill(0u);
     impl_->texture_slot_count = 0u;
