@@ -341,6 +341,10 @@ void main()
     ivec2 size = ivec2(uResolution);
     if (any(greaterThanEqual(pixel, size))) return;
 
+    if (uResetAccumulation != 0) {
+        imageStore(uAccumulation, pixel, vec4(0.0));
+    }
+
     int phase = max(uFrameIndex, 0) & (PHASE_COUNT - 1);
     int pixel_phase = (pixel.x & 1) | ((pixel.y & 1) << 1);
     if (pixel_phase != phase) return;
@@ -386,42 +390,51 @@ uniform float uExposure;
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
 
-vec4 validAccumulationSample(ivec2 pixel, ivec2 size, int completed_frames)
+vec4 validAccumulationSample(ivec2 pixel, ivec2 size)
 {
     pixel = clamp(pixel, ivec2(0), size - ivec2(1));
-    if (completed_frames >= 4) return texelFetch(uAccumulation, pixel, 0);
+    vec4 exact = texelFetch(uAccumulation, pixel, 0);
+    if (exact.a > 0.0) return exact;
 
     ivec2 block = (pixel / 2) * 2;
-    int available = clamp(completed_frames, 1, 4);
-    ivec2 best = block;
+    vec4 best = vec4(0.0);
     int best_distance = 1000;
 
     for (int phase = 0; phase < 4; ++phase) {
-        if (phase >= available) continue;
         ivec2 candidate = block + ivec2(phase & 1, (phase >> 1) & 1);
         candidate = clamp(candidate, ivec2(0), size - ivec2(1));
+        vec4 sample = texelFetch(uAccumulation, candidate, 0);
+        if (sample.a <= 0.0) continue;
+
         int distance = abs(candidate.x - pixel.x) + abs(candidate.y - pixel.y);
         if (distance < best_distance) {
-            best = candidate;
+            best = sample;
             best_distance = distance;
         }
     }
 
-    return texelFetch(uAccumulation, best, 0);
+    return best;
+}
+
+bool blockComplete(ivec2 pixel, ivec2 size)
+{
+    ivec2 block = (pixel / 2) * 2;
+    for (int phase = 0; phase < 4; ++phase) {
+        ivec2 candidate = block + ivec2(phase & 1, (phase >> 1) & 1);
+        candidate = clamp(candidate, ivec2(0), size - ivec2(1));
+        if (texelFetch(uAccumulation, candidate, 0).a <= 0.0) return false;
+    }
+    return true;
 }
 
 void main()
 {
     ivec2 size = textureSize(uAccumulation, 0);
     ivec2 pixel = clamp(ivec2(vUv * vec2(size)), ivec2(0), size - ivec2(1));
-    int completed_frames = max(int(floor(uPhaseCount + 0.5)), 1);
 
-    vec4 accumulated;
-    if (completed_frames < 4) {
-        accumulated = validAccumulationSample(pixel, size, completed_frames);
-    } else {
-        accumulated = texture(uAccumulation, vUv);
-    }
+    vec4 accumulated = blockComplete(pixel, size)
+        ? texture(uAccumulation, vUv)
+        : validAccumulationSample(pixel, size);
 
     float samples = max(accumulated.a, 1.0);
     vec3 linear_color = max(accumulated.rgb / samples, vec3(0.0));
