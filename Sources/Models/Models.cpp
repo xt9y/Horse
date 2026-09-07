@@ -2,7 +2,6 @@
 
 #include "Models/Core/Texture.hpp"
 #include "Models/Formats/Fbx.hpp"
-#include "Models/Formats/FbxSanitize.hpp"
 #include "Models/Formats/Obj.hpp"
 
 #include <algorithm>
@@ -96,11 +95,6 @@ ModelHandle load(const std::string& path, std::string *error)
     if (extension == ".fbx") {
         Fbx::Document document;
         if (!Fbx::load(key, &document, error)) return INVALID_MODEL;
-        Fbx::sanitize(&document);
-        if (document.parts.empty()) {
-            if (error) *error = "FBX contains no valid renderable triangles after validation: " + key;
-            return INVALID_MODEL;
-        }
 
         Animation::SkeletonHandle skeleton_handle = Animation::INVALID_SKELETON;
         if (document.has_skeleton && !document.skeleton.bones.empty()) {
