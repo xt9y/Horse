@@ -65,6 +65,8 @@ uniform int uTriangleCount;
 uniform int uMaterialCount;
 uniform int uSamplesThisFrame;
 uniform int uSampleBase;
+uniform int uFrameIndex;
+uniform int uResetAccumulation;
 uniform int uMaxBounces;
 
 uniform int uHasLight;
@@ -339,11 +341,11 @@ void main()
     ivec2 size = ivec2(uResolution);
     if (any(greaterThanEqual(pixel, size))) return;
 
-    int phase = max(uSampleBase, 0) & (PHASE_COUNT - 1);
+    int phase = max(uFrameIndex, 0) & (PHASE_COUNT - 1);
     int pixel_phase = (pixel.x & 1) | ((pixel.y & 1) << 1);
     if (pixel_phase != phase) return;
 
-    uint absolute_sample = uint(max(uSampleBase, 0));
+    uint absolute_sample = uint(max(uFrameIndex, 0));
     uint state = hashUint(
         uint(pixel.x) * 1973u ^
         uint(pixel.y) * 9277u ^
@@ -361,7 +363,7 @@ void main()
     );
 
     vec3 sample_radiance = tracePath(uCameraPosition, direction, state);
-    vec4 previous = uSampleBase < PHASE_COUNT ? vec4(0.0) : imageLoad(uAccumulation, pixel);
+    vec4 previous = uResetAccumulation != 0 ? vec4(0.0) : imageLoad(uAccumulation, pixel);
     imageStore(uAccumulation, pixel, vec4(previous.rgb + sample_radiance, previous.a + 1.0));
 }
 )GLSL";
@@ -379,7 +381,7 @@ void main()
 inline constexpr const char *present_fragment = R"GLSL(
 #version 430 compatibility
 uniform sampler2D uAccumulation;
-uniform float uSampleCount;
+uniform float uPhaseCount;
 uniform float uExposure;
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
@@ -412,7 +414,7 @@ void main()
 {
     ivec2 size = textureSize(uAccumulation, 0);
     ivec2 pixel = clamp(ivec2(vUv * vec2(size)), ivec2(0), size - ivec2(1));
-    int completed_frames = max(int(floor(uSampleCount + 0.5)), 1);
+    int completed_frames = max(int(floor(uPhaseCount + 0.5)), 1);
 
     vec4 accumulated;
     if (completed_frames < 4) {
