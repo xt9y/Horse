@@ -80,7 +80,8 @@ const float RAY_EPSILON = 0.0025;
 const float INF = 1.0e30;
 const int MAX_CLOSEST_STEPS = 8192;
 const int MAX_SHADOW_STEPS = 4096;
-const int PHASE_COUNT = 4;
+const int STATIONARY_PHASE_GRID = 2;
+const int MOVING_PHASE_GRID = 4;
 
 struct Hit {
     bool found;
@@ -345,8 +346,12 @@ void main()
         imageStore(uAccumulation, pixel, vec4(0.0));
     }
 
-    int phase = max(uFrameIndex, 0) & (PHASE_COUNT - 1);
-    int pixel_phase = (pixel.x & 1) | ((pixel.y & 1) << 1);
+    int phase_grid = uResetAccumulation != 0 ? MOVING_PHASE_GRID : STATIONARY_PHASE_GRID;
+    int phase_count = phase_grid * phase_grid;
+    int phase = max(uFrameIndex, 0) % phase_count;
+    int phase_x = phase % phase_grid;
+    int phase_y = phase / phase_grid;
+    int pixel_phase = (pixel.x % phase_grid) + (pixel.y % phase_grid) * phase_grid;
     if (pixel_phase != phase) return;
 
     uint absolute_sample = uint(max(uFrameIndex, 0));
@@ -354,6 +359,7 @@ void main()
         uint(pixel.x) * 1973u ^
         uint(pixel.y) * 9277u ^
         absolute_sample * 26699u ^
+        uint(phase_x + phase_y * phase_grid) * 104729u ^
         0x68bc21ebu
     );
 
@@ -396,12 +402,12 @@ vec4 validAccumulationSample(ivec2 pixel, ivec2 size)
     vec4 exact = texelFetch(uAccumulation, pixel, 0);
     if (exact.a > 0.0) return exact;
 
-    ivec2 block = (pixel / 2) * 2;
+    ivec2 block = (pixel / 4) * 4;
     vec4 best = vec4(0.0);
     int best_distance = 1000;
 
-    for (int phase = 0; phase < 4; ++phase) {
-        ivec2 candidate = block + ivec2(phase & 1, (phase >> 1) & 1);
+    for (int phase = 0; phase < 16; ++phase) {
+        ivec2 candidate = block + ivec2(phase & 3, (phase >> 2) & 3);
         candidate = clamp(candidate, ivec2(0), size - ivec2(1));
         vec4 candidate_sample = texelFetch(uAccumulation, candidate, 0);
         if (candidate_sample.a <= 0.0) continue;
@@ -418,9 +424,9 @@ vec4 validAccumulationSample(ivec2 pixel, ivec2 size)
 
 bool blockComplete(ivec2 pixel, ivec2 size)
 {
-    ivec2 block = (pixel / 2) * 2;
-    for (int phase = 0; phase < 4; ++phase) {
-        ivec2 candidate = block + ivec2(phase & 1, (phase >> 1) & 1);
+    ivec2 block = (pixel / 4) * 4;
+    for (int phase = 0; phase < 16; ++phase) {
+        ivec2 candidate = block + ivec2(phase & 3, (phase >> 2) & 3);
         candidate = clamp(candidate, ivec2(0), size - ivec2(1));
         if (texelFetch(uAccumulation, candidate, 0).a <= 0.0) return false;
     }
