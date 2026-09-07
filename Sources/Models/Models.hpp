@@ -37,6 +37,11 @@ struct MeshData {
     std::vector<Vertex> vertices;
     std::vector<std::uint32_t> indices;
     Bounds bounds;
+    // FBX skin clusters bind each mesh to bones with a mesh-specific
+    // geometry-to-bone matrix. This palette must not be collapsed into the
+    // skeleton because multiple skinned meshes can bind to the same skeleton
+    // with different transforms.
+    std::vector<Animation::Mat4> skin_inverse_bind;
 };
 
 struct ModelPart {

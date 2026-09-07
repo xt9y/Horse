@@ -49,26 +49,6 @@ void build(C_Build *b)
     c_sources(library, "Sources/*/*.cpp");
     c_sources(library, "Sources/*/*/*.cpp");
 
-    C_Dependency *ufbx = c_git(
-        b,
-        "ufbx",
-        "https://github.com/ufbx/ufbx.git",
-        "v0.23.0"
-    );
-    c_dep_header_only(ufbx);
-    c_dep_include(ufbx, ".");
-    c_use(library, ufbx);
-
-    C_Dependency *stb = c_git(
-        b,
-        "stb",
-        "https://github.com/nothings/stb.git",
-        "2c980bb59875b0d32144a71867fbdebb2f77cd20"
-    );
-    c_dep_header_only(stb);
-    c_dep_include(stb, ".");
-    c_use(library, stb);
-
     c_flag(library, "-std=c++20");
     configureLibrary(library);
     c_default_target(b, library);
