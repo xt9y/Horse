@@ -412,6 +412,8 @@ struct PathTracer::Impl {
         GLint material_count = -1;
         GLint samples_this_frame = -1;
         GLint sample_base = -1;
+        GLint frame_index = -1;
+        GLint reset_accumulation = -1;
         GLint max_bounces = -1;
         GLint has_light = -1;
         GLint light_position = -1;
@@ -422,7 +424,7 @@ struct PathTracer::Impl {
 
     struct PresentUniformLocations {
         GLint accumulation = -1;
-        GLint sample_count = -1;
+        GLint phase_count = -1;
         GLint exposure = -1;
     };
 
@@ -433,6 +435,9 @@ struct PathTracer::Impl {
     int trace_width = 1;
     int trace_height = 1;
     std::uint32_t sample_count = 0u;
+    std::uint32_t frame_index = 0u;
+    std::uint32_t phase_count = 0u;
+    bool reset_pending = true;
     std::uint64_t scene_signature = 0u;
     std::uint64_t camera_signature = 0u;
     std::uint64_t light_signature = 0u;
@@ -465,6 +470,15 @@ struct PathTracer::Impl {
     void resetAccumulation()
     {
         sample_count = 0u;
+        reset_pending = true;
+    }
+
+    void resetFrameHistory()
+    {
+        sample_count = 0u;
+        frame_index = 0u;
+        phase_count = 0u;
+        reset_pending = true;
     }
 
     void updateTraceResolution()
@@ -498,7 +512,7 @@ struct PathTracer::Impl {
         );
 
         accumulation = texture;
-        resetAccumulation();
+        resetFrameHistory();
         return true;
     }
 
@@ -506,7 +520,7 @@ struct PathTracer::Impl {
     {
         if (accumulation != 0u) glDeleteTextures(1, &accumulation);
         accumulation = 0u;
-        resetAccumulation();
+        resetFrameHistory();
     }
 
     void cacheUniformLocations()
@@ -523,6 +537,8 @@ struct PathTracer::Impl {
         trace_uniforms.material_count = uniformLocation(trace_program, "uMaterialCount");
         trace_uniforms.samples_this_frame = uniformLocation(trace_program, "uSamplesThisFrame");
         trace_uniforms.sample_base = uniformLocation(trace_program, "uSampleBase");
+        trace_uniforms.frame_index = uniformLocation(trace_program, "uFrameIndex");
+        trace_uniforms.reset_accumulation = uniformLocation(trace_program, "uResetAccumulation");
         trace_uniforms.max_bounces = uniformLocation(trace_program, "uMaxBounces");
         trace_uniforms.has_light = uniformLocation(trace_program, "uHasLight");
         trace_uniforms.light_position = uniformLocation(trace_program, "uLightPosition");
@@ -538,7 +554,7 @@ struct PathTracer::Impl {
         }
 
         present_uniforms.accumulation = uniformLocation(present_program, "uAccumulation");
-        present_uniforms.sample_count = uniformLocation(present_program, "uSampleCount");
+        present_uniforms.phase_count = uniformLocation(present_program, "uPhaseCount");
         present_uniforms.exposure = uniformLocation(present_program, "uExposure");
         GL20.glUseProgram(present_program);
         setInt(present_uniforms.accumulation, 0);
@@ -1009,6 +1025,7 @@ struct PathTracer::Impl {
     {
         const int samples = std::clamp(settings.samples_per_frame, 1, 4);
         if (sample_count > 1000000000u - static_cast<std::uint32_t>(samples)) resetAccumulation();
+        if (frame_index > 1000000000u) frame_index &= 3u;
 
         GL20.glUseProgram(trace_program);
         setVec2(
@@ -1027,6 +1044,8 @@ struct PathTracer::Impl {
         setInt(trace_uniforms.material_count, static_cast<int>(gpu_materials.size()));
         setInt(trace_uniforms.samples_this_frame, samples);
         setInt(trace_uniforms.sample_base, static_cast<int>(sample_count));
+        setInt(trace_uniforms.frame_index, static_cast<int>(frame_index));
+        setInt(trace_uniforms.reset_accumulation, reset_pending ? 1 : 0);
         setInt(trace_uniforms.max_bounces, std::clamp(settings.max_bounces, 1, 4));
         setInt(trace_uniforms.has_light, light.valid ? 1 : 0);
         setVec3(trace_uniforms.light_position, light.position);
@@ -1046,6 +1065,9 @@ struct PathTracer::Impl {
         GL20.glUseProgram(0u);
 
         sample_count += static_cast<std::uint32_t>(samples);
+        ++frame_index;
+        phase_count = std::min<std::uint32_t>(phase_count + 1u, 4u);
+        reset_pending = false;
     }
 
     void present()
@@ -1059,7 +1081,7 @@ struct PathTracer::Impl {
         GL20.glUseProgram(present_program);
         GLModern.glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, accumulation);
-        setFloat(present_uniforms.sample_count, static_cast<float>(std::max(sample_count, 1u)));
+        setFloat(present_uniforms.phase_count, static_cast<float>(std::max(phase_count, 1u)));
         setFloat(present_uniforms.exposure, settings.exposure);
 
         glBegin(GL_TRIANGLES);
