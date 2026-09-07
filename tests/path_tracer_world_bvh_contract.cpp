@@ -26,8 +26,9 @@ int main()
     assert(phase_reject != std::string_view::npos);
     assert(clear_history < phase_reject);
 
-    assert(present.find("uniform int uPhaseStart;") != std::string_view::npos);
-    assert(present.find("(uPhaseStart + phase_offset) & 3") != std::string_view::npos);
+    assert(present.find("sample.a <= 0.0") != std::string_view::npos);
+    assert(present.find("exact.a > 0.0") != std::string_view::npos);
+    assert(present.find("blockComplete") != std::string_view::npos);
 
     const Renderer::PathTracerSettings settings{};
     assert(settings.resolution_divisor == 2);
