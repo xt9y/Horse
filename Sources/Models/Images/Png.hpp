@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 namespace Models::Images::Png {
