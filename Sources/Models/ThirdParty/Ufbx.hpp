@@ -1,6 +1,0 @@
-#ifndef RW_ENGINE_MODELS_THIRD_PARTY_UFBX_HPP
-#define RW_ENGINE_MODELS_THIRD_PARTY_UFBX_HPP
-
-#include <ufbx.h>
-
-#endif
