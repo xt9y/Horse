@@ -26,7 +26,9 @@ int main()
     assert(phase_reject != std::string_view::npos);
     assert(clear_history < phase_reject);
 
-    assert(present.find("sample.a <= 0.0") != std::string_view::npos);
+    assert(present.find("vec4 sample =") == std::string_view::npos);
+    assert(present.find("vec4 candidate_sample =") != std::string_view::npos);
+    assert(present.find("candidate_sample.a <= 0.0") != std::string_view::npos);
     assert(present.find("exact.a > 0.0") != std::string_view::npos);
     assert(present.find("blockComplete") != std::string_view::npos);
 
