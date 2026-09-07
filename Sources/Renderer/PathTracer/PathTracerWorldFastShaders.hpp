@@ -403,12 +403,12 @@ vec4 validAccumulationSample(ivec2 pixel, ivec2 size)
     for (int phase = 0; phase < 4; ++phase) {
         ivec2 candidate = block + ivec2(phase & 1, (phase >> 1) & 1);
         candidate = clamp(candidate, ivec2(0), size - ivec2(1));
-        vec4 sample = texelFetch(uAccumulation, candidate, 0);
-        if (sample.a <= 0.0) continue;
+        vec4 candidate_sample = texelFetch(uAccumulation, candidate, 0);
+        if (candidate_sample.a <= 0.0) continue;
 
         int distance = abs(candidate.x - pixel.x) + abs(candidate.y - pixel.y);
         if (distance < best_distance) {
-            best = sample;
+            best = candidate_sample;
             best_distance = distance;
         }
     }
