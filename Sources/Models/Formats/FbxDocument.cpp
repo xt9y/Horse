@@ -1,8 +1,23 @@
 #include "Models/Formats/FbxDocument.hpp"
 
+#include "Models/Formats/FbxAscii.hpp"
+#include "Models/Formats/FbxBinary.hpp"
+
+#include <fstream>
+#include <limits>
 #include <type_traits>
+#include <vector>
 
 namespace Models::FbxDocument {
+namespace {
+
+bool fail(std::string *error, const std::string& message)
+{
+    if (error) *error = message;
+    return false;
+}
+
+} // namespace
 
 std::int64_t Property::asInt64(std::int64_t fallback) const
 {
@@ -99,6 +114,37 @@ std::vector<double> Node::numericArray() const
     result.reserve(properties.size());
     for (const Property& property : properties) result.push_back(property.asDouble());
     return result;
+}
+
+bool parseMemory(
+    const std::uint8_t *data,
+    std::size_t size,
+    RawDocument *out,
+    std::string *error)
+{
+    if (error) error->clear();
+    if (!data || !out) return fail(error, "invalid FBX input");
+    if (FbxBinary::matches(data, size)) return FbxBinary::parse(data, size, out, error);
+    return FbxAscii::parse(data, size, out, error);
+}
+
+bool parseFile(const std::string& path, RawDocument *out, std::string *error)
+{
+    if (error) error->clear();
+    if (!out) return fail(error, "null FBX document output");
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return fail(error, "failed to open FBX file: " + path);
+    file.seekg(0, std::ios::end);
+    const std::streamoff length = file.tellg();
+    if (length < 0) return fail(error, "failed to size FBX file: " + path);
+    if (static_cast<std::uint64_t>(length) > std::numeric_limits<std::size_t>::max()) {
+        return fail(error, "FBX file is too large: " + path);
+    }
+    file.seekg(0, std::ios::beg);
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
+    if (!bytes.empty()) file.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!file && !bytes.empty()) return fail(error, "failed to read FBX file: " + path);
+    return parseMemory(bytes.data(), bytes.size(), out, error);
 }
 
 } // namespace Models::FbxDocument
