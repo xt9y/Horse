@@ -329,27 +329,29 @@ GLuint createGraphicsProgram(const char *vertex_source, const char *fragment_sou
     return program;
 }
 
-void setInt(GLuint program, const char *name, int value)
+GLint uniformLocation(GLuint program, const char *name)
 {
-    const GLint location = GL20.glGetUniformLocation(program, name);
+    if (!GL20.glGetUniformLocation) return -1;
+    return GL20.glGetUniformLocation(program, name);
+}
+
+void setInt(GLint location, int value)
+{
     if (location >= 0) GL20.glUniform1i(location, value);
 }
 
-void setFloat(GLuint program, const char *name, float value)
+void setFloat(GLint location, float value)
 {
-    const GLint location = GL20.glGetUniformLocation(program, name);
     if (location >= 0) GL20.glUniform1f(location, value);
 }
 
-void setVec2(GLuint program, const char *name, float x, float y)
+void setVec2(GLint location, float x, float y)
 {
-    const GLint location = GL20.glGetUniformLocation(program, name);
     if (location >= 0) GL20.glUniform2f(location, x, y);
 }
 
-void setVec3(GLuint program, const char *name, const Vec3f& value)
+void setVec3(GLint location, const Vec3f& value)
 {
-    const GLint location = GL20.glGetUniformLocation(program, name);
     if (location >= 0) GL20.glUniform3f(location, value.x, value.y, value.z);
 }
 
@@ -423,6 +425,33 @@ struct PathTracer::Impl {
         float intensity = 0.0f;
     };
 
+    struct TraceUniformLocations {
+        GLint resolution = -1;
+        GLint camera_position = -1;
+        GLint camera_forward = -1;
+        GLint camera_right = -1;
+        GLint camera_up = -1;
+        GLint tan_half_fov = -1;
+        GLint aspect = -1;
+        GLint tlas_node_count = -1;
+        GLint instance_count = -1;
+        GLint material_count = -1;
+        GLint samples_this_frame = -1;
+        GLint sample_base = -1;
+        GLint max_bounces = -1;
+        GLint has_light = -1;
+        GLint light_position = -1;
+        GLint light_color = -1;
+        GLint light_intensity = -1;
+        std::array<GLint, kMaximumTextureSlots> textures{};
+    };
+
+    struct PresentUniformLocations {
+        GLint accumulation = -1;
+        GLint sample_count = -1;
+        GLint exposure = -1;
+    };
+
     PathTracerSettings settings{};
     bool initialized = false;
     int width = 1;
@@ -433,6 +462,7 @@ struct PathTracer::Impl {
     std::uint64_t scene_signature = 0u;
     std::uint64_t camera_signature = 0u;
     std::uint64_t light_signature = 0u;
+    std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
 
     GLuint trace_program = 0u;
     GLuint present_program = 0u;
@@ -442,6 +472,11 @@ struct PathTracer::Impl {
     GLuint tlas_node_buffer = 0u;
     GLuint instance_buffer = 0u;
     GLuint material_buffer = 0u;
+
+    TraceUniformLocations trace_uniforms{};
+    PresentUniformLocations present_uniforms{};
+    bool texture_bindings_dirty = true;
+    bool buffer_bindings_dirty = true;
 
     std::unordered_map<std::uint32_t, MeshCache> static_blas;
     std::unordered_map<Ecs::Entity, MeshCache> dynamic_blas;
@@ -507,6 +542,42 @@ struct PathTracer::Impl {
         resetAccumulation();
     }
 
+    void cacheUniformLocations()
+    {
+        trace_uniforms.resolution = uniformLocation(trace_program, "uResolution");
+        trace_uniforms.camera_position = uniformLocation(trace_program, "uCameraPosition");
+        trace_uniforms.camera_forward = uniformLocation(trace_program, "uCameraForward");
+        trace_uniforms.camera_right = uniformLocation(trace_program, "uCameraRight");
+        trace_uniforms.camera_up = uniformLocation(trace_program, "uCameraUp");
+        trace_uniforms.tan_half_fov = uniformLocation(trace_program, "uTanHalfFov");
+        trace_uniforms.aspect = uniformLocation(trace_program, "uAspect");
+        trace_uniforms.tlas_node_count = uniformLocation(trace_program, "uTlasNodeCount");
+        trace_uniforms.instance_count = uniformLocation(trace_program, "uInstanceCount");
+        trace_uniforms.material_count = uniformLocation(trace_program, "uMaterialCount");
+        trace_uniforms.samples_this_frame = uniformLocation(trace_program, "uSamplesThisFrame");
+        trace_uniforms.sample_base = uniformLocation(trace_program, "uSampleBase");
+        trace_uniforms.max_bounces = uniformLocation(trace_program, "uMaxBounces");
+        trace_uniforms.has_light = uniformLocation(trace_program, "uHasLight");
+        trace_uniforms.light_position = uniformLocation(trace_program, "uLightPosition");
+        trace_uniforms.light_color = uniformLocation(trace_program, "uLightColor");
+        trace_uniforms.light_intensity = uniformLocation(trace_program, "uLightIntensity");
+
+        GL20.glUseProgram(trace_program);
+        for (std::size_t slot = 0u; slot < trace_uniforms.textures.size(); ++slot) {
+            char name[32]{};
+            std::snprintf(name, sizeof(name), "uTexture%zu", slot);
+            trace_uniforms.textures[slot] = uniformLocation(trace_program, name);
+            setInt(trace_uniforms.textures[slot], static_cast<int>(slot));
+        }
+
+        present_uniforms.accumulation = uniformLocation(present_program, "uAccumulation");
+        present_uniforms.sample_count = uniformLocation(present_program, "uSampleCount");
+        present_uniforms.exposure = uniformLocation(present_program, "uExposure");
+        GL20.glUseProgram(present_program);
+        setInt(present_uniforms.accumulation, 0);
+        GL20.glUseProgram(0u);
+    }
+
     bool createPrograms()
     {
         trace_program = createComputeProgram(PathTracerShaders::trace);
@@ -514,7 +585,9 @@ struct PathTracer::Impl {
             PathTracerShaders::present_vertex,
             PathTracerShaders::present_fragment
         );
-        return trace_program != 0u && present_program != 0u;
+        if (trace_program == 0u || present_program == 0u) return false;
+        cacheUniformLocations();
+        return true;
     }
 
     void destroyPrograms()
@@ -524,6 +597,8 @@ struct PathTracer::Impl {
         if (present_program != 0u) GL20.glDeleteProgram(present_program);
         trace_program = 0u;
         present_program = 0u;
+        trace_uniforms = {};
+        present_uniforms = {};
     }
 
     bool ensureBuffer(GLuint& buffer)
@@ -566,6 +641,7 @@ struct PathTracer::Impl {
         tlas_node_buffer = 0u;
         instance_buffer = 0u;
         material_buffer = 0u;
+        buffer_bindings_dirty = true;
     }
 
     GLuint textureFor(std::uint32_t handle)
@@ -1141,6 +1217,8 @@ struct PathTracer::Impl {
             );
 
         if (uploaded) {
+            buffer_bindings_dirty = true;
+            texture_bindings_dirty = true;
             std::fprintf(
                 stderr,
                 "[PathTracer]: scene cache %zu triangles, %zu BLAS nodes, %zu instances, %zu TLAS nodes, %zu materials\n",
@@ -1154,17 +1232,32 @@ struct PathTracer::Impl {
         return uploaded;
     }
 
-    void bindTextures()
+    void bindTexturesForDispatch()
     {
-        for (std::size_t slot = 0u; slot < texture_slots.size(); ++slot) {
-            GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + slot));
-            glBindTexture(GL_TEXTURE_2D, texture_slots[slot]);
-
-            char name[32]{};
-            std::snprintf(name, sizeof(name), "uTexture%zu", slot);
-            setInt(trace_program, name, static_cast<int>(slot));
+        if (texture_bindings_dirty) {
+            for (std::size_t slot = 0u; slot < texture_slots.size(); ++slot) {
+                GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + slot));
+                glBindTexture(GL_TEXTURE_2D, texture_slots[slot]);
+            }
+            texture_bindings_dirty = false;
+        } else {
+            // Presentation uses texture unit zero for the accumulation buffer, so
+            // restore only the one scene binding that it clobbers each frame.
+            GLModern.glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, texture_slots[0]);
         }
         GLModern.glActiveTexture(GL_TEXTURE0);
+    }
+
+    void bindBuffersIfDirty()
+    {
+        if (!buffer_bindings_dirty) return;
+        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0u, blas_node_buffer);
+        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1u, triangle_buffer);
+        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2u, tlas_node_buffer);
+        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3u, instance_buffer);
+        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4u, material_buffer);
+        buffer_bindings_dirty = false;
     }
 
     void dispatch(const CameraState& camera, const LightState& light)
@@ -1174,34 +1267,29 @@ struct PathTracer::Impl {
 
         GL20.glUseProgram(trace_program);
         setVec2(
-            trace_program,
-            "uResolution",
+            trace_uniforms.resolution,
             static_cast<float>(trace_width),
             static_cast<float>(trace_height)
         );
-        setVec3(trace_program, "uCameraPosition", camera.position);
-        setVec3(trace_program, "uCameraForward", camera.forward);
-        setVec3(trace_program, "uCameraRight", camera.right);
-        setVec3(trace_program, "uCameraUp", camera.up);
-        setFloat(trace_program, "uTanHalfFov", std::tan(camera.fov_degrees * (kPi / 360.0f)));
-        setFloat(trace_program, "uAspect", static_cast<float>(width) / static_cast<float>(height));
-        setInt(trace_program, "uTlasNodeCount", static_cast<int>(gpu_tlas_nodes.size()));
-        setInt(trace_program, "uInstanceCount", static_cast<int>(gpu_instances.size()));
-        setInt(trace_program, "uMaterialCount", static_cast<int>(gpu_materials.size()));
-        setInt(trace_program, "uSamplesThisFrame", samples);
-        setInt(trace_program, "uSampleBase", static_cast<int>(sample_count));
-        setInt(trace_program, "uMaxBounces", std::clamp(settings.max_bounces, 1, 8));
-        setInt(trace_program, "uHasLight", light.valid ? 1 : 0);
-        setVec3(trace_program, "uLightPosition", light.position);
-        setVec3(trace_program, "uLightColor", light.color);
-        setFloat(trace_program, "uLightIntensity", light.intensity);
+        setVec3(trace_uniforms.camera_position, camera.position);
+        setVec3(trace_uniforms.camera_forward, camera.forward);
+        setVec3(trace_uniforms.camera_right, camera.right);
+        setVec3(trace_uniforms.camera_up, camera.up);
+        setFloat(trace_uniforms.tan_half_fov, std::tan(camera.fov_degrees * (kPi / 360.0f)));
+        setFloat(trace_uniforms.aspect, static_cast<float>(width) / static_cast<float>(height));
+        setInt(trace_uniforms.tlas_node_count, static_cast<int>(gpu_tlas_nodes.size()));
+        setInt(trace_uniforms.instance_count, static_cast<int>(gpu_instances.size()));
+        setInt(trace_uniforms.material_count, static_cast<int>(gpu_materials.size()));
+        setInt(trace_uniforms.samples_this_frame, samples);
+        setInt(trace_uniforms.sample_base, static_cast<int>(sample_count));
+        setInt(trace_uniforms.max_bounces, std::clamp(settings.max_bounces, 1, 8));
+        setInt(trace_uniforms.has_light, light.valid ? 1 : 0);
+        setVec3(trace_uniforms.light_position, light.position);
+        setVec3(trace_uniforms.light_color, light.color);
+        setFloat(trace_uniforms.light_intensity, light.intensity);
 
-        bindTextures();
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0u, blas_node_buffer);
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1u, triangle_buffer);
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2u, tlas_node_buffer);
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3u, instance_buffer);
-        GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4u, material_buffer);
+        bindTexturesForDispatch();
+        bindBuffersIfDirty();
         GL42.glBindImageTexture(0u, accumulation, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
 
         GL43.glDispatchCompute(
@@ -1226,9 +1314,8 @@ struct PathTracer::Impl {
         GL20.glUseProgram(present_program);
         GLModern.glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, accumulation);
-        setInt(present_program, "uAccumulation", 0);
-        setFloat(present_program, "uSampleCount", static_cast<float>(std::max(sample_count, 1u)));
-        setFloat(present_program, "uExposure", settings.exposure);
+        setFloat(present_uniforms.sample_count, static_cast<float>(std::max(sample_count, 1u)));
+        setFloat(present_uniforms.exposure, settings.exposure);
 
         glBegin(GL_TRIANGLES);
         glVertex2f(-1.0f, -1.0f);
@@ -1353,17 +1440,21 @@ void PathTracer::render(const Ecs::World& world)
     }
 
     const Impl::LightState light = impl_->lightState(world);
-    const std::uint64_t next_scene_signature = impl_->sceneSignature(world);
     const std::uint64_t next_camera_signature = impl_->cameraSignature(camera);
     const std::uint64_t next_light_signature = impl_->lightSignature(light);
+    const std::uint64_t next_world_revision = world.changeRevision();
 
-    if (next_scene_signature != impl_->scene_signature) {
-        if (!impl_->syncScene(world)) {
-            std::fprintf(stderr, "[PathTracer]: failed to synchronize scene cache\n");
-            return;
+    if (next_world_revision != impl_->world_revision) {
+        const std::uint64_t next_scene_signature = impl_->sceneSignature(world);
+        if (next_scene_signature != impl_->scene_signature) {
+            if (!impl_->syncScene(world)) {
+                std::fprintf(stderr, "[PathTracer]: failed to synchronize scene cache\n");
+                return;
+            }
+            impl_->scene_signature = next_scene_signature;
+            impl_->resetAccumulation();
         }
-        impl_->scene_signature = next_scene_signature;
-        impl_->resetAccumulation();
+        impl_->world_revision = next_world_revision;
     }
 
     if (next_camera_signature != impl_->camera_signature) {
@@ -1407,6 +1498,9 @@ void PathTracer::shutdown()
     impl_->scene_signature = 0u;
     impl_->camera_signature = 0u;
     impl_->light_signature = 0u;
+    impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
+    impl_->texture_bindings_dirty = true;
+    impl_->buffer_bindings_dirty = true;
     impl_->initialized = false;
 }
 
