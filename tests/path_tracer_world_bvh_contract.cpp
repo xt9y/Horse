@@ -13,6 +13,10 @@ int main()
     assert(shader.find("instances[") == std::string_view::npos);
     assert(shader.find("node.extra.x") != std::string_view::npos);
     assert(shader.find("PHASE_COUNT = 4") != std::string_view::npos);
+    assert(shader.find("uniform int uFrameIndex;") != std::string_view::npos);
+    assert(shader.find("uniform int uResetAccumulation;") != std::string_view::npos);
+    assert(shader.find("max(uFrameIndex, 0) & (PHASE_COUNT - 1)") != std::string_view::npos);
+    assert(shader.find("uResetAccumulation != 0") != std::string_view::npos);
 
     const Renderer::PathTracerSettings settings{};
     assert(settings.resolution_divisor == 2);
