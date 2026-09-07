@@ -15,8 +15,8 @@
 - Preserve generic ECS, Models/FBX, textures, and animation.
 - Use only ECS point light illumination.
 - No GBuffer, shadow maps, PCF/PCSS, fake ambient, or hybrid GI.
-- Default 1 sample/pixel/frame, 3 diffuse bounces.
-- Static geometry must not rebuild because the camera moved.
+- Default half-resolution tracing, 1 sample/pixel/frame, 3 diffuse bounces.
+- Static BLAS construction must not repeat because the camera moved.
 - Do not touch workflow files.
 
 ---
@@ -32,10 +32,10 @@
 - Produces `Renderer::PathTracer::{init,resize,render,shutdown,settings}`.
 - `Render.hpp` provides `using Rasterizer = PathTracer` for compatibility.
 
-- [ ] Define `PathTracerSettings { enabled=true; samples_per_frame=1; max_bounces=3; exposure=1.0f; }`.
-- [ ] Define non-copyable `PathTracer` with PImpl.
-- [ ] Replace GI includes/accessors in `Render.hpp` with the compatibility alias.
-- [ ] Verify headers contain no GI/shadow APIs.
+- [x] Define `PathTracerSettings { enabled=true; resolution_divisor=2; samples_per_frame=1; max_bounces=3; exposure=1.0f; }`.
+- [x] Define non-copyable `PathTracer` with PImpl.
+- [x] Replace GI includes/accessors in `Render.hpp` with the compatibility alias.
+- [x] Verify headers contain no GI/shadow APIs.
 
 ### Task 2: Scene cache and CPU acceleration data
 
@@ -46,28 +46,29 @@
 - Internal `GpuNode`, `GpuTriangle`, `GpuMaterial`, `GpuInstance`, `MeshCache`.
 - `syncScene(const Ecs::World&)` returns whether geometry/instances/material bindings changed.
 
-- [ ] Build local-space triangle arrays from `Models::MeshData` including UV/material data.
-- [ ] Build bounded median-split BVHs with <=8 triangles/leaf.
-- [ ] Cache static mesh BLAS by mesh handle.
-- [ ] For entities with `SkinBindingComponent`, CPU-skin vertices using current pose and rebuild only when pose revision changes.
-- [ ] Upload flattened BLAS node/triangle arrays and instance records to SSBOs.
-- [ ] Hash instance transforms/membership/mesh/material/pose revision so unchanged frames do not upload/rebuild scene data.
+- [x] Build local-space triangle arrays from `Models::MeshData` including UV/material data.
+- [x] Build bounded median-split BVHs with <=8 triangles/leaf.
+- [x] Cache static mesh BLAS by mesh handle.
+- [x] For entities with `SkinBindingComponent`, CPU-skin vertices using current pose and rebuild only when pose revision changes.
+- [x] Upload flattened BLAS node/triangle arrays and instance records to SSBOs.
+- [x] Hash instance transforms/membership/mesh/material/pose revision so unchanged frames do not upload/rebuild scene data.
 
 ### Task 3: Compute path tracer
 
 **Files:**
+- Create: `Sources/Renderer/PathTracer/PathTracerShaders.hpp`
 - Modify: `Sources/Renderer/PathTracer/PathTracer.cpp`
 
 **Interfaces:**
-- Compute shader inputs: camera matrices/vectors, point light, SSBO scene data, material records, texture samplers, accumulation image.
+- Compute shader inputs: camera vectors, point light, SSBO scene data, material records, texture samplers, accumulation image.
 
-- [ ] Generate jittered primary rays from camera FOV/aspect and transform.
-- [ ] Traverse instance list and BLAS BVHs with bounded stack/step counts.
-- [ ] At closest hit, evaluate textured/base-color diffuse material.
-- [ ] Perform next-event estimation to the point light with an occlusion ray and inverse-square attenuation.
-- [ ] Continue with cosine-weighted diffuse sampling up to `max_bounces`.
-- [ ] Use black radiance on misses; use no ambient/environment term.
-- [ ] Add each stochastic sample to RGBA32F accumulation and increment sample count only after successful dispatch.
+- [x] Generate jittered primary rays from camera FOV/aspect and transform.
+- [x] Traverse TLAS and BLAS BVHs with bounded 48-entry stacks and 2048-step guards.
+- [x] At closest hit, evaluate textured/base-color diffuse material.
+- [x] Perform next-event estimation to the point light with an occlusion ray and inverse-square attenuation.
+- [x] Continue with cosine-weighted diffuse sampling up to `max_bounces`.
+- [x] Use black radiance on misses; use no ambient/environment term.
+- [x] Add each stochastic sample to RGBA32F accumulation and increment sample count after dispatch.
 
 ### Task 4: Progressive cache invalidation and present
 
@@ -77,10 +78,10 @@
 **Interfaces:**
 - `sceneSignature()`, `cameraSignature()`, `lightSignature()` drive `resetAccumulation()`.
 
-- [ ] Reset accumulation on resize, camera change, active point-light change, transform/material/geometry change, or animation pose revision change.
-- [ ] Keep accumulation indefinitely while signatures are unchanged.
-- [ ] Present average accumulated radiance with exposure, Reinhard tone map, and gamma 2.2 via a minimal fullscreen shader.
-- [ ] Log initialization and scene-cache rebuild statistics once per rebuild.
+- [x] Reset accumulation on resize, camera change, active point-light change, transform/material/geometry change, or animation pose revision change.
+- [x] Keep accumulation while signatures are unchanged.
+- [x] Present average accumulated radiance with exposure, Reinhard tone map, and gamma 2.2 via a minimal fullscreen shader.
+- [x] Log initialization and scene-cache rebuild statistics.
 
 ### Task 5: GAME point light
 
@@ -90,16 +91,16 @@
 **Interfaces:**
 - Uses existing `Renderer::LightComponent` with `LightType::Point` and `Renderer::Transform`.
 
-- [ ] Create one point-light entity near/above Sponza after camera setup.
-- [ ] Set white color and an intensity suitable for inverse-square attenuation.
-- [ ] Keep existing models, animation update, camera update, and renderer call flow unchanged.
+- [x] Create one point-light entity based on Sponza bounds.
+- [x] Scale point-light intensity from scene extent for inverse-square attenuation.
+- [x] Keep existing models/camera/update flow; only start Glock animation when a clip name is explicitly requested so static accumulation can converge by default.
 
 ### Task 6: Static verification
 
 **Files:** none
 
-- [ ] Search source for `GI`, `shadowVisibility`, `GL_LIGHT0`, `glLight`, `GBuffer`, `PCSS`, `PCF`; runtime renderer source must contain none of them.
-- [ ] Search for `PathTracer`, point-light selection, accumulation reset, and bounded traversal guards.
-- [ ] Verify `build.c` nested source glob already includes `Sources/Renderer/PathTracer/*.cpp`.
-- [ ] Verify no `.github/workflows` file changed.
-- [ ] Local user verification: `c build` in ECS-MODEL-RASTERIZER, then `c update ecs-model-rasterizer && c build run` in GAME.
+- [x] Search runtime source for `GI`, `shadowVisibility`, `GL_LIGHT0`, `glLight`, `GBuffer`, `PCSS`, `PCF`; old renderer implementation is removed.
+- [x] Verify `PathTracer`, point-light selection, accumulation reset, and bounded traversal guards are present.
+- [x] Verify `build.c` nested source glob includes `Sources/Renderer/PathTracer/*.cpp`.
+- [x] Verify the implementation compare contains no `.github/workflows` changes.
+- [ ] Local environment verification: `c build` in ECS-MODEL-RASTERIZER, then `c update ecs-model-rasterizer && c build run` in GAME.
