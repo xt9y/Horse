@@ -55,6 +55,21 @@ struct RawDocument {
     Node root;
 };
 
+using Document = RawDocument;
+
+bool parseMemory(
+    const std::uint8_t *data,
+    std::size_t size,
+    RawDocument *out,
+    std::string *error = nullptr
+);
+
+bool parseFile(
+    const std::string& path,
+    RawDocument *out,
+    std::string *error = nullptr
+);
+
 } // namespace Models::FbxDocument
 
 #endif
