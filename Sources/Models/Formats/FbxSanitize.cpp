@@ -50,6 +50,42 @@ Vec3 normalized(Vec3 value, Vec3 fallback)
     return {value.x * inverse, value.y * inverse, value.z * inverse};
 }
 
+bool matrixNear(const Animation::Mat4& a, const Animation::Mat4& b)
+{
+    for (std::size_t index = 0u; index < a.value.size(); ++index) {
+        if (std::abs(a.value[index] - b.value[index]) > 1.0e-4f) return false;
+    }
+    return true;
+}
+
+void synchronizeSkeletonFallbackPalette(Document *document)
+{
+    if (!document || !document->has_skeleton || document->skeleton.bones.empty()) return;
+
+    const std::vector<Animation::Mat4> *common = nullptr;
+    for (const Part& part : document->parts) {
+        const auto& palette = part.mesh.skin_inverse_bind;
+        if (palette.empty()) continue;
+        if (palette.size() != document->skeleton.bones.size()) return;
+        if (!common) {
+            common = &palette;
+            continue;
+        }
+        for (std::size_t bone = 0u; bone < palette.size(); ++bone) {
+            if (!matrixNear((*common)[bone], palette[bone])) return;
+        }
+    }
+    if (!common) return;
+
+    // Animation::Pose keeps a skeleton-level fallback skin palette. When all
+    // mesh cluster palettes agree (the normal case for one FBX skin split into
+    // material parts), use the actual FBX cluster bind matrices rather than an
+    // inverse-model approximation. Per-mesh palettes remain stored on MeshData.
+    for (std::size_t bone = 0u; bone < common->size(); ++bone) {
+        document->skeleton.bones[bone].inverse_bind = (*common)[bone];
+    }
+}
+
 void recomputeBounds(MeshData *mesh)
 {
     if (!mesh || mesh->vertices.empty()) {
@@ -135,6 +171,7 @@ void sanitize(Document *document)
         ),
         document->parts.end()
     );
+    synchronizeSkeletonFallbackPalette(document);
 }
 
 } // namespace Models::Fbx
