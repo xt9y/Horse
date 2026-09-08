@@ -25,13 +25,15 @@ int main()
     assert(gl.find("best.geometric_normal = normalize(cross(") != std::string::npos);
     assert(gl.find("shadow_origin = hit.position + hit.geometric_normal") != std::string::npos);
     assert(gl.find("origin = hit.position + hit.geometric_normal") != std::string::npos);
+    assert(gl.find("dot(direction, hit.geometric_normal) <= 0.0") != std::string::npos);
 
     assert(metal.find("float3 geometric_normal;") != std::string::npos);
     assert(metal.find("best.geometric_normal = normalize(cross(") != std::string::npos);
     assert(metal.find("shadow_origin = hit.position + hit.geometric_normal") != std::string::npos);
     assert(metal.find("origin = hit.position + hit.geometric_normal") != std::string::npos);
+    assert(metal.find("dot(direction, hit.geometric_normal) <= 0.0f") != std::string::npos);
 
-    // Keep the interpolated shading normal for lighting itself.
+    // Keep the interpolated shading normal for BRDF lighting itself.
     assert(gl.find("dot(hit.normal, light_direction)") != std::string::npos);
     assert(metal.find("dot(hit.normal, light_direction)") != std::string::npos);
 
