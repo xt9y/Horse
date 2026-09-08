@@ -1,6 +1,6 @@
 ECS-MODEL-RASTERIZER
 
-C++ ECS, model loader and rasterizer using lwcgl v2.9.3.
+C++ ECS, Model loader and Path Tracer using lwcgl v2.9.3.
 Build on top of: https://github.com/xt9y/lwcgl/tree/v2.9.3
 
 EXAMPLE: https://github.com/xt9y/GAME.git
