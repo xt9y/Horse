@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   renderer-contract:
@@ -29,6 +30,25 @@ jobs:
             echo "public PathTracer header leaks OpenGL declarations"
             exit 1
           fi
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
+          git clone --depth 1 --branch v2.9.3 https://github.com/xt9y/lwcgl.git "$RUNNER_TEMP/lwcgl"
+          make -C "$RUNNER_TEMP/lwcgl" clean all
+          sudo make -C "$RUNNER_TEMP/lwcgl" install
+          git clone --depth 1 https://github.com/xt9y/C-BuildSystem.git "$RUNNER_TEMP/c-buildsystem"
+          make -C "$RUNNER_TEMP/c-buildsystem" clean all
+          sudo make -C "$RUNNER_TEMP/c-buildsystem" install
+      - name: Build OpenGL PathTracer shared library
+        run: |
+          c clean || true
+          c build
 
   macos:
     runs-on: macos-15
