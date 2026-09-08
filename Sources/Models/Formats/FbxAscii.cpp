@@ -2,6 +2,7 @@
 
 #include <charconv>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -36,7 +37,9 @@ struct Token {
         Star,
         Newline,
         End,
-    } type = Type::End;
+    };
+
+    Type type = Type::End;
     std::string text;
 };
 
@@ -49,60 +52,58 @@ public:
 
     bool next(Token *token, std::string *error)
     {
-        if (!token) return fail(error, "invalid FBX ASCII token output");
-        for (;;) {
-            while (pos_ < text_.size()) {
-                const char c = text_[pos_];
-                if (c == ' ' || c == '\t' || c == '\r') {
-                    ++pos_;
-                    continue;
-                }
-                break;
+        if (!token) return fail(error, "null FBX ASCII token output");
+        while (pos_ < text_.size()) {
+            const char c = text_[pos_];
+            if (c == ' ' || c == '\t' || c == '\r') {
+                ++pos_;
+                continue;
             }
-            if (pos_ >= text_.size()) {
-                *token = {Token::Type::End,{}};
-                return true;
-            }
-            if (text_[pos_] == ';') {
+            if (c == ';') {
                 while (pos_ < text_.size() && text_[pos_] != '\n') ++pos_;
-                if (pos_ < text_.size()) ++pos_;
-                *token = {Token::Type::Newline,"\n"};
-                return true;
+                continue;
             }
             break;
         }
 
-        const char c = text_[pos_++];
-        if (c == '\n') { *token = {Token::Type::Newline,"\n"}; return true; }
-        if (c == ':') { *token = {Token::Type::Colon,":"}; return true; }
-        if (c == ',') { *token = {Token::Type::Comma,","}; return true; }
-        if (c == '{') { *token = {Token::Type::LBrace,"{"}; return true; }
-        if (c == '}') { *token = {Token::Type::RBrace,"}"}; return true; }
-        if (c == '*') { *token = {Token::Type::Star,"*"}; return true; }
-        if (c == '"') return readString(token, error);
+        if (pos_ >= text_.size()) {
+            *token = {Token::Type::End, {}};
+            return true;
+        }
 
-        std::string value(1, c);
+        const char c = text_[pos_++];
+        switch (c) {
+            case '\n': *token = {Token::Type::Newline, {}}; return true;
+            case ':': *token = {Token::Type::Colon, {}}; return true;
+            case ',': *token = {Token::Type::Comma, {}}; return true;
+            case '{': *token = {Token::Type::LBrace, {}}; return true;
+            case '}': *token = {Token::Type::RBrace, {}}; return true;
+            case '*': *token = {Token::Type::Star, {}}; return true;
+            case '"': return readString(token, error);
+            default: break;
+        }
+
+        if (c == '+' || c == '-' || c == '.' || std::isdigit(static_cast<unsigned char>(c))) {
+            std::string value(1u, c);
+            while (pos_ < text_.size()) {
+                const char next = text_[pos_];
+                if (!std::isdigit(static_cast<unsigned char>(next)) && next != '.' && next != 'e' && next != 'E' && next != '+' && next != '-') break;
+                value.push_back(next);
+                ++pos_;
+            }
+            const bool real = value.find_first_of(".eE") != std::string::npos;
+            *token = {real ? Token::Type::Real : Token::Type::Integer, std::move(value)};
+            return true;
+        }
+
+        std::string value(1u, c);
         while (pos_ < text_.size()) {
             const char next = text_[pos_];
-            if (
-                next == ' ' || next == '\t' || next == '\r' || next == '\n' ||
-                next == ':' || next == ',' || next == '{' || next == '}' || next == '*' || next == ';')
-            {
-                break;
-            }
+            if (next == ':' || next == ',' || next == '{' || next == '}' || next == '*' || next == '\n' || std::isspace(static_cast<unsigned char>(next))) break;
             value.push_back(next);
             ++pos_;
         }
-
-        const bool maybe_number =
-            std::isdigit(static_cast<unsigned char>(value[0])) ||
-            value[0] == '+' || value[0] == '-' || value[0] == '.';
-        if (!maybe_number) {
-            *token = {Token::Type::Identifier,std::move(value)};
-            return true;
-        }
-        const bool real = value.find_first_of(".eE") != std::string::npos;
-        *token = {real ? Token::Type::Real : Token::Type::Integer,std::move(value)};
+        *token = {Token::Type::Identifier, std::move(value)};
         return true;
     }
 
@@ -113,7 +114,7 @@ private:
         while (pos_ < text_.size()) {
             const char c = text_[pos_++];
             if (c == '"') {
-                *token = {Token::Type::String,std::move(value)};
+                *token = {Token::Type::String, std::move(value)};
                 return true;
             }
             if (c != '\\') {
@@ -150,10 +151,67 @@ bool parseInteger(const std::string& text, std::int64_t *value)
 bool parseReal(const std::string& text, double *value)
 {
     if (!value || text.empty()) return false;
-    const char *begin = text.data();
-    const char *end = begin + text.size();
-    const auto result = std::from_chars(begin, end, *value, std::chars_format::general);
-    return result.ec == std::errc{} && result.ptr == end;
+
+    std::size_t pos = 0u;
+    bool negative = false;
+    if (text[pos] == '+' || text[pos] == '-') {
+        negative = text[pos] == '-';
+        if (++pos == text.size()) return false;
+    }
+
+    long double significand = 0.0L;
+    int fractional_digits = 0;
+    bool saw_digit = false;
+
+    while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+        saw_digit = true;
+        significand = significand * 10.0L + static_cast<long double>(text[pos] - '0');
+        ++pos;
+    }
+
+    if (pos < text.size() && text[pos] == '.') {
+        ++pos;
+        while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+            saw_digit = true;
+            significand = significand * 10.0L + static_cast<long double>(text[pos] - '0');
+            ++fractional_digits;
+            ++pos;
+        }
+    }
+    if (!saw_digit) return false;
+
+    int exponent = -fractional_digits;
+    if (pos < text.size() && (text[pos] == 'e' || text[pos] == 'E')) {
+        ++pos;
+        if (pos == text.size()) return false;
+        bool exponent_negative = false;
+        if (text[pos] == '+' || text[pos] == '-') {
+            exponent_negative = text[pos] == '-';
+            if (++pos == text.size()) return false;
+        }
+
+        int parsed_exponent = 0;
+        bool saw_exponent_digit = false;
+        while (pos < text.size() && std::isdigit(static_cast<unsigned char>(text[pos]))) {
+            saw_exponent_digit = true;
+            if (parsed_exponent < 100000) parsed_exponent = parsed_exponent * 10 + (text[pos] - '0');
+            ++pos;
+        }
+        if (!saw_exponent_digit) return false;
+        exponent += exponent_negative ? -parsed_exponent : parsed_exponent;
+    }
+
+    if (pos != text.size()) return false;
+
+    long double parsed = significand;
+    if (exponent != 0) parsed *= std::pow(10.0L, static_cast<long double>(exponent));
+    if (negative) parsed = -parsed;
+
+    const double converted = static_cast<double>(parsed);
+    if (!std::isfinite(converted)) return false;
+    if (converted == 0.0 && significand != 0.0L) return false;
+    *value = converted;
+    return true;
 }
 
 class Parser {
@@ -190,133 +248,138 @@ public:
     }
 
 private:
-    bool advance() { return lexer_.next(&current_, error_); }
+    bool advance()
+    {
+        return lexer_.next(&current_, error_);
+    }
 
     void skipNewlines()
     {
         while (current_.type == Token::Type::Newline) {
-            if (!advance()) break;
+            if (!advance()) return;
         }
     }
 
-    bool parseNode(FbxDocument::Node *node, std::size_t depth)
+    bool parseNode(FbxDocument::Node *out, std::size_t depth)
     {
-        if (!node) return fail(error_, "null FBX ASCII node output");
-        if (depth > kMaximumDepth) return fail(error_, "FBX ASCII nesting exceeds limit");
-        if (node_count_ >= kMaximumNodes) return fail(error_, "FBX ASCII node count exceeds limit");
-        if (current_.type != Token::Type::Identifier) return fail(error_, "expected FBX ASCII node name");
-        node->name = current_.text;
+        if (!out) return fail(error_, "null FBX ASCII node output");
+        if (depth > kMaximumDepth) return fail(error_, "FBX ASCII nesting exceeds safety limit");
+        if (++node_count_ > kMaximumNodes) return fail(error_, "FBX ASCII node count exceeds safety limit");
+
+        if (current_.type != Token::Type::Identifier && current_.type != Token::Type::String) {
+            return fail(error_, "expected FBX ASCII node name");
+        }
+        out->name = current_.text;
         if (!advance()) return false;
         if (current_.type != Token::Type::Colon) return fail(error_, "expected ':' after FBX ASCII node name");
         if (!advance()) return false;
 
-        if (current_.type == Token::Type::Star) {
-            if (!parseArray(node)) return false;
-            ++node_count_;
-            return true;
-        }
-
-        while (
-            current_.type != Token::Type::LBrace &&
-            current_.type != Token::Type::RBrace &&
-            current_.type != Token::Type::Newline &&
-            current_.type != Token::Type::End)
-        {
+        while (current_.type != Token::Type::LBrace && current_.type != Token::Type::Newline && current_.type != Token::Type::End && current_.type != Token::Type::RBrace) {
             if (current_.type == Token::Type::Comma) {
                 if (!advance()) return false;
                 continue;
             }
             FbxDocument::Property property;
             if (!parseProperty(&property)) return false;
-            node->properties.push_back(std::move(property));
+            out->properties.push_back(std::move(property));
         }
 
         if (current_.type == Token::Type::LBrace) {
             if (!advance()) return false;
             skipNewlines();
             while (current_.type != Token::Type::RBrace) {
-                if (current_.type == Token::Type::End) return fail(error_, "unterminated FBX ASCII node");
+                if (current_.type == Token::Type::End) return fail(error_, "unterminated FBX ASCII node block");
                 FbxDocument::Node child;
                 if (!parseNode(&child, depth + 1u)) return false;
-                node->children.push_back(std::move(child));
+                out->children.push_back(std::move(child));
                 skipNewlines();
             }
             if (!advance()) return false;
         }
-        if (current_.type == Token::Type::Newline) skipNewlines();
-        ++node_count_;
+
+        if (current_.type == Token::Type::Newline) return advance();
         return true;
     }
 
-    bool parseProperty(FbxDocument::Property *property)
+    bool parseProperty(FbxDocument::Property *out)
     {
-        if (!property) return fail(error_, "invalid FBX ASCII property output");
+        if (!out) return fail(error_, "null FBX ASCII property output");
+        if (current_.type == Token::Type::Star) return parseArray(out);
         if (current_.type == Token::Type::String || current_.type == Token::Type::Identifier) {
-            property->type = 'S';
-            property->value = current_.text;
+            *out = FbxDocument::Property::string(current_.text);
             return advance();
         }
         if (current_.type == Token::Type::Integer) {
             std::int64_t value = 0;
             if (!parseInteger(current_.text, &value)) return fail(error_, "invalid FBX ASCII integer");
-            property->type = 'L';
-            property->value = value;
+            *out = FbxDocument::Property::integer(value);
             return advance();
         }
         if (current_.type == Token::Type::Real) {
             double value = 0.0;
             if (!parseReal(current_.text, &value)) return fail(error_, "invalid FBX ASCII real");
-            property->type = 'D';
-            property->value = value;
+            *out = FbxDocument::Property::real(value);
             return advance();
         }
-        return fail(error_, "invalid FBX ASCII property");
+        return fail(error_, "unsupported FBX ASCII property token");
     }
 
-    bool parseArray(FbxDocument::Node *node)
+    bool parseArray(FbxDocument::Property *out)
     {
         if (!advance()) return false;
-        if (current_.type != Token::Type::Integer) return fail(error_, "expected FBX ASCII array count");
-        std::int64_t declared = 0;
-        if (!parseInteger(current_.text, &declared) || declared < 0 || static_cast<std::uint64_t>(declared) > kMaximumArrayElements) {
-            return fail(error_, "invalid FBX ASCII array count");
+        if (current_.type != Token::Type::Integer) return fail(error_, "expected FBX ASCII array size");
+        std::int64_t declared_count = 0;
+        if (!parseInteger(current_.text, &declared_count) || declared_count < 0 || static_cast<std::uint64_t>(declared_count) > kMaximumArrayElements) {
+            return fail(error_, "invalid FBX ASCII array size");
         }
         if (!advance()) return false;
-        if (current_.type != Token::Type::LBrace) return fail(error_, "expected '{' after FBX ASCII array count");
+        if (current_.type != Token::Type::LBrace) return fail(error_, "expected '{' after FBX ASCII array size");
         if (!advance()) return false;
         skipNewlines();
-        if (current_.type == Token::Type::Identifier && current_.text == "a") {
-            if (!advance()) return false;
-            if (current_.type != Token::Type::Colon) return fail(error_, "expected ':' after FBX ASCII array marker");
-            if (!advance()) return false;
-        }
 
-        std::vector<double> values;
-        values.reserve(static_cast<std::size_t>(declared));
+        if (current_.type != Token::Type::Identifier || current_.text != "a") return fail(error_, "expected FBX ASCII array payload");
+        if (!advance()) return false;
+        if (current_.type != Token::Type::Colon) return fail(error_, "expected ':' before FBX ASCII array payload");
+        if (!advance()) return false;
+
+        std::vector<std::int64_t> integers;
+        std::vector<double> reals;
+        integers.reserve(static_cast<std::size_t>(declared_count));
+        reals.reserve(static_cast<std::size_t>(declared_count));
+        bool has_real = false;
+
         while (current_.type != Token::Type::RBrace) {
             if (current_.type == Token::Type::End) return fail(error_, "unterminated FBX ASCII array");
-            if (current_.type == Token::Type::Comma || current_.type == Token::Type::Newline) {
+            if (current_.type == Token::Type::Newline || current_.type == Token::Type::Comma) {
                 if (!advance()) return false;
                 continue;
             }
-            double value = 0.0;
             if (current_.type == Token::Type::Integer) {
-                std::int64_t integer = 0;
-                if (!parseInteger(current_.text, &integer)) return fail(error_, "invalid integer in FBX ASCII array");
-                value = static_cast<double>(integer);
+                std::int64_t value = 0;
+                if (!parseInteger(current_.text, &value)) return fail(error_, "invalid FBX ASCII integer array value");
+                integers.push_back(value);
+                reals.push_back(static_cast<double>(value));
             } else if (current_.type == Token::Type::Real) {
-                if (!parseReal(current_.text, &value)) return fail(error_, "invalid real in FBX ASCII array");
+                double value = 0.0;
+                if (!parseReal(current_.text, &value)) return fail(error_, "invalid FBX ASCII real array value");
+                integers.push_back(static_cast<std::int64_t>(value));
+                reals.push_back(value);
+                has_real = true;
             } else {
-                return fail(error_, "expected number in FBX ASCII array");
+                return fail(error_, "invalid FBX ASCII array value");
             }
-            values.push_back(value);
-            if (values.size() > static_cast<std::size_t>(declared)) return fail(error_, "FBX ASCII array exceeds declared count");
+            if (integers.size() > static_cast<std::size_t>(declared_count)) return fail(error_, "FBX ASCII array exceeds declared size");
             if (!advance()) return false;
         }
-        if (values.size() != static_cast<std::size_t>(declared)) return fail(error_, "FBX ASCII array count mismatch");
+
+        if (integers.size() != static_cast<std::size_t>(declared_count)) return fail(error_, "FBX ASCII array size mismatch");
         if (!advance()) return false;
-        if (current_.type == Token::Type::Newline) skipNewlines();
-        node->properties.push_back(FbxDocument::Property{'d', std::move(values)});
+
+        if (has_real) {
+            *out = FbxDocument::Property::realArray(std::move(reals));
+        } else {
+            *out = FbxDocument::Property::integerArray(std::move(integers));
+        }
         return true;
     }
 
@@ -328,16 +391,11 @@ private:
 
 } // namespace
 
-bool parse(
-    const std::uint8_t *data,
-    std::size_t size,
-    FbxDocument::RawDocument *out,
-    std::string *error)
+bool parse(const std::uint8_t *data, std::size_t size, FbxDocument::RawDocument *out, std::string *error)
 {
+    if (!data || size == 0u || !out) return fail(error, "invalid FBX ASCII input");
     if (error) error->clear();
-    if (!data || !out) return fail(error, "invalid ASCII FBX input");
-    Parser parser(data, size, error);
-    return parser.parse(out);
+    return Parser(data, size, error).parse(out);
 }
 
 } // namespace Models::FbxAscii
