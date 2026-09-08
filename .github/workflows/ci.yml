@@ -1,0 +1,18 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  renderer-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject rasterizer fallback
+        run: |
+          if grep -R -n -E 'class Rasterizer|renderCompatibility|\[Rasterizer\]: compatibility' Sources/Renderer/Render.hpp Sources/Renderer/Render.cpp 2>/dev/null; then
+            echo "renderer fallback still exists"
+            exit 1
+          fi
