@@ -39,15 +39,15 @@ static void configureLibrary(C_Target *target)
 #endif
     c_link_flag(target, "-Wl,-rpath,/usr/local/lib");
 #ifdef __APPLE__
-    c_link_flag(target, "-Wl,-install_name,@rpath/libecs-model-rasterizer.dylib");
+    c_link_flag(target, "-Wl,-install_name,@rpath/libHorse.dylib");
 #else
-    c_link_flag(target, "-Wl,-soname,libecs-model-rasterizer.so");
+    c_link_flag(target, "-Wl,-soname,libHorse.so");
 #endif
 }
 
 void build(C_Build *b)
 {
-    C_Target *library = c_shared_library(b, "ecs-model-rasterizer");
+    C_Target *library = c_shared_library(b, "Horse");
 
     c_sources(library, "Sources/*.cpp");
     c_sources(library, "Sources/*/*.cpp");
