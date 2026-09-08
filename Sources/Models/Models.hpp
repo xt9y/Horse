@@ -53,6 +53,7 @@ ModelHandle load(const std::string& path, std::string *error = nullptr);
 const ModelPart *part(ModelHandle model, std::size_t index);
 const MeshData *mesh(MeshHandle handle);
 const MaterialData *material(MaterialHandle handle);
+bool updateMaterial(MaterialHandle handle, const MaterialData& replacement);
 std::size_t partCount(ModelHandle model);
 
 Animation::SkeletonHandle skeleton(ModelHandle model);
