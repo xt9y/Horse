@@ -97,7 +97,7 @@ jobs:
           set -euo pipefail
           EARTH="tests/fixtures/earth_regression.fbx"
           test -s "$EARTH"
-          LIB="$(find build -type f -name 'libecs-model-rasterizer.so' | head -1)"
+          LIB="$(find build -type f -name 'libHorse.so' | head -1)"
           test -n "$LIB"
           LIBDIR="$(cd "$(dirname "$LIB")" && pwd)"
           for source in \
@@ -111,13 +111,13 @@ jobs:
           do
             name="$(basename "$source" .cpp)"
             c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources -Itests \
-              "$source" -L"$LIBDIR" -lecs-model-rasterizer \
+              "$source" -L"$LIBDIR" -lHorse \
               -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o "/tmp/$name"
             echo "[run] $name"
             LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" "/tmp/$name"
           done
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
+            tests/earth_fbx_contract.cpp -L"$LIBDIR" -lHorse \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
           LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/earth-fbx-contract "$EARTH"
 
@@ -156,7 +156,7 @@ jobs:
           set -euo pipefail
           EARTH="tests/fixtures/earth_regression.fbx"
           test -s "$EARTH"
-          LIB="$(find build -type f -name 'libecs-model-rasterizer.dylib' | head -1)"
+          LIB="$(find build -type f -name 'libHorse.dylib' | head -1)"
           test -n "$LIB"
           LIBDIR="$(cd "$(dirname "$LIB")" && pwd)"
           for source in \
@@ -170,12 +170,12 @@ jobs:
           do
             name="$(basename "$source" .cpp)"
             c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources -Itests \
-              "$source" -L"$LIBDIR" -lecs-model-rasterizer \
+              "$source" -L"$LIBDIR" -lHorse \
               -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o "/tmp/$name"
             echo "[run] $name"
             "/tmp/$name"
           done
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
+            tests/earth_fbx_contract.cpp -L"$LIBDIR" -lHorse \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
           /tmp/earth-fbx-contract "$EARTH"
