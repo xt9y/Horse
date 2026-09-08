@@ -306,19 +306,22 @@ private:
         if (!out) return fail(error_, "null FBX ASCII property output");
         if (current_.type == Token::Type::Star) return parseArray(out);
         if (current_.type == Token::Type::String || current_.type == Token::Type::Identifier) {
-            *out = FbxDocument::Property::string(current_.text);
+            out->type = 'S';
+            out->value = current_.text;
             return advance();
         }
         if (current_.type == Token::Type::Integer) {
             std::int64_t value = 0;
             if (!parseInteger(current_.text, &value)) return fail(error_, "invalid FBX ASCII integer");
-            *out = FbxDocument::Property::integer(value);
+            out->type = 'L';
+            out->value = value;
             return advance();
         }
         if (current_.type == Token::Type::Real) {
             double value = 0.0;
             if (!parseReal(current_.text, &value)) return fail(error_, "invalid FBX ASCII real");
-            *out = FbxDocument::Property::real(value);
+            out->type = 'D';
+            out->value = value;
             return advance();
         }
         return fail(error_, "unsupported FBX ASCII property token");
@@ -376,9 +379,11 @@ private:
         if (!advance()) return false;
 
         if (has_real) {
-            *out = FbxDocument::Property::realArray(std::move(reals));
+            out->type = 'd';
+            out->value = std::move(reals);
         } else {
-            *out = FbxDocument::Property::integerArray(std::move(integers));
+            out->type = 'l';
+            out->value = std::move(integers);
         }
         return true;
     }
