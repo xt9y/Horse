@@ -5,6 +5,7 @@ static void configurePlatform(C_Target *target)
 #ifdef __APPLE__
     c_define(target, "GL_SILENCE_DEPRECATION");
     c_include(target, "/opt/homebrew/include");
+    c_include(target, "/usr/local/include/lwmgl-1.0.0");
     c_link_flag(target, "-L/opt/homebrew/lib");
     c_framework(target, "OpenGL");
     c_framework(target, "Cocoa");
@@ -33,6 +34,9 @@ static void configureLibrary(C_Target *target)
 
     c_link_flag(target, "-L/usr/local/lib");
     c_link_flag(target, "-llwcgl");
+#ifdef __APPLE__
+    c_link_flag(target, "-llwmgl");
+#endif
     c_link_flag(target, "-Wl,-rpath,/usr/local/lib");
 #ifdef __APPLE__
     c_link_flag(target, "-Wl,-install_name,@rpath/libecs-model-rasterizer.dylib");
@@ -47,7 +51,12 @@ void build(C_Build *b)
 
     c_sources(library, "Sources/*.cpp");
     c_sources(library, "Sources/*/*.cpp");
-    c_sources(library, "Sources/*/*/*.cpp");
+    c_sources(library, "Sources/Models/*/*.cpp");
+#ifdef __APPLE__
+    c_sources(library, "Sources/Renderer/PathTracer/PathTracerMetal.cpp");
+#else
+    c_sources(library, "Sources/Renderer/PathTracer/PathTracer.cpp");
+#endif
 
     c_flag(library, "-std=c++20");
     configureLibrary(library);
