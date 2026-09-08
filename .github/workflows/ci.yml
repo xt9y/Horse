@@ -19,12 +19,44 @@ jobs:
       - name: Require Metal PathTracer backend
         run: |
           test -f Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp
-          grep -q 'Metal.create' Sources/Renderer/PathTracer/PathTracer.cpp
-          grep -q 'Metal.createComputePipeline' Sources/Renderer/PathTracer/PathTracer.cpp
-          grep -q 'Metal.dispatch' Sources/Renderer/PathTracer/PathTracer.cpp
-          grep -q 'Metal.beginRenderToDrawable' Sources/Renderer/PathTracer/PathTracer.cpp
-          grep -q 'Metal.present' Sources/Renderer/PathTracer/PathTracer.cpp
+          test -f Sources/Renderer/PathTracer/PathTracerMetal.cpp
+          grep -q 'Metal.create' Sources/Renderer/PathTracer/PathTracerMetal.cpp
+          grep -q 'Metal.createComputePipeline' Sources/Renderer/PathTracer/PathTracerMetal.cpp
+          grep -q 'Metal.dispatch' Sources/Renderer/PathTracer/PathTracerMetal.cpp
+          grep -q 'Metal.beginRenderToDrawable' Sources/Renderer/PathTracer/PathTracerMetal.cpp
+          grep -q 'Metal.present' Sources/Renderer/PathTracer/PathTracerMetal.cpp
           if grep -q 'lwcgl/gl11_compat.h' Sources/Renderer/PathTracer/PathTracer.hpp; then
             echo "public PathTracer header leaks OpenGL declarations"
             exit 1
           fi
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install pkg-config glfw
+          git clone --depth 1 --branch v2.9.3 https://github.com/xt9y/lwcgl.git "$RUNNER_TEMP/lwcgl"
+          make -C "$RUNNER_TEMP/lwcgl" clean all
+          sudo make -C "$RUNNER_TEMP/lwcgl" install
+          git clone --depth 1 https://github.com/xt9y/lwmgl.git "$RUNNER_TEMP/lwmgl"
+          make -C "$RUNNER_TEMP/lwmgl" clean all
+          sudo make -C "$RUNNER_TEMP/lwmgl" install
+          git clone --depth 1 https://github.com/xt9y/C-BuildSystem.git "$RUNNER_TEMP/c-buildsystem"
+          make -C "$RUNNER_TEMP/c-buildsystem" clean all
+          sudo make -C "$RUNNER_TEMP/c-buildsystem" install
+      - name: Build Horse shared library
+        run: |
+          c clean || true
+          c build
+      - name: Compile and run Metal shader contract
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror \
+            -I. -I/usr/local/include/lwmgl-1.0.0 -I/opt/homebrew/include \
+            tests/path_tracer_metal_shader_contract.cpp \
+            -L/usr/local/lib -llwmgl -L/opt/homebrew/lib -lglfw \
+            -framework Metal -framework QuartzCore -framework AppKit -framework Foundation \
+            -Wl,-rpath,/usr/local/lib \
+            -o /tmp/path-tracer-metal-shader-contract
+          /tmp/path-tracer-metal-shader-contract
