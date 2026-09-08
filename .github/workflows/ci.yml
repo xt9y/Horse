@@ -46,15 +46,11 @@ jobs:
           assert 'camera_moving' in metal_cpu
           assert 'camera_moving' in gl_cpu
 
-          # Moving frames must clear every pixel, trace only one of 16 phases,
-          # and present unsampled pixels as black instead of reconstructing them.
           assert 'uCameraMoving != 0 ? MOVING_PHASE_GRID' in gl_shader
           assert 'camera_moving ? MOVING_PHASE_GRID' in metal_shader
           assert 'uCameraMoving != 0 && accumulated.a <= 0.0' in gl_shader
           assert 'uniforms.exposure.y > 0.5f && accumulated.a <= 0.0f' in metal_shader
 
-          # A frame immediately after movement stops must reset fully so stale
-          # sparse samples from the moving camera cannot survive.
           assert 'was_camera_moving' in gl_cpu
           assert 'was_camera_moving' in metal_cpu
           PY
@@ -69,7 +65,7 @@ jobs:
           commit = body.index('Metal.commit(command)')
           wait = body.index('Metal.wait(command)')
           destroy = body.index('Metal.destroyCommand(command)')
-          assert commit < wait < destroy, 'Metal command must complete before shared uniform/accumulation state can be reused'
+          assert commit < wait < destroy
           PY
 
   linux:
@@ -90,7 +86,7 @@ jobs:
         run: |
           c clean || true
           c build
-      - name: Run canonical FBX contracts
+      - name: Run canonical FBX and model contracts
         run: |
           set -euo pipefail
           EARTH="tests/fixtures/earth_regression.fbx"
@@ -103,7 +99,8 @@ jobs:
             tests/fbx_rotation_order_contract.cpp \
             tests/fbx_geometry_semantics_contract.cpp \
             tests/fbx_material_semantics_contract.cpp \
-            tests/fbx_skin_animation_contract.cpp
+            tests/fbx_skin_animation_contract.cpp \
+            tests/model_registration_contract.cpp
           do
             name="$(basename "$source" .cpp)"
             c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources -Itests \
@@ -147,7 +144,7 @@ jobs:
             -Wl,-rpath,/usr/local/lib \
             -o /tmp/path-tracer-metal-shader-contract
           /tmp/path-tracer-metal-shader-contract
-      - name: Run canonical FBX contracts
+      - name: Run canonical FBX and model contracts
         run: |
           set -euo pipefail
           EARTH="tests/fixtures/earth_regression.fbx"
@@ -160,7 +157,8 @@ jobs:
             tests/fbx_rotation_order_contract.cpp \
             tests/fbx_geometry_semantics_contract.cpp \
             tests/fbx_material_semantics_contract.cpp \
-            tests/fbx_skin_animation_contract.cpp
+            tests/fbx_skin_animation_contract.cpp \
+            tests/model_registration_contract.cpp
           do
             name="$(basename "$source" .cpp)"
             c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources -Itests \
