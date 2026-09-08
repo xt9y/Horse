@@ -1,12 +1,17 @@
 #include "Models/Formats/Fbx.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <string>
 
+namespace {
+bool near(float a, float b, float epsilon = 1.0e-4f) { return std::abs(a-b) <= epsilon; }
+}
+
 int main()
 {
-    const std::string path = "/tmp/horse-fbx-ngon-debug.fbx";
+    const std::string path = "/tmp/horse-fbx-mirror-debug.fbx";
     std::ofstream file(path, std::ios::binary);
     file <<
         "; FBX 7.4.0 project file\n"
@@ -22,11 +27,18 @@ int main()
         "  }\n"
         "}\n"
         "Objects: {\n"
-        "  Geometry: 1, \"Geometry::Concave\", \"Mesh\" {\n"
-        "    Vertices: *15 { a: 0,0,0,2,0,0,2,2,0,1,1,0,0,2,0 }\n"
-        "    PolygonVertexIndex: *5 { a: 0,1,2,3,-5 }\n"
+        "  Geometry: 1, \"Geometry::Mirror\", \"Mesh\" {\n"
+        "    Vertices: *9 { a: 0,0,0,1,0,0,0,1,0 }\n"
+        "    PolygonVertexIndex: *3 { a: 0,1,-3 }\n"
+        "    LayerElementNormal: 0 {\n"
+        "      MappingInformationType: \"ByPolygonVertex\"\n"
+        "      ReferenceInformationType: \"Direct\"\n"
+        "      Normals: *9 { a: 1,1,0,1,1,0,1,1,0 }\n"
+        "    }\n"
         "  }\n"
-        "  Model: 2, \"Model::Concave\", \"Mesh\" {}\n"
+        "  Model: 2, \"Model::Mirror\", \"Mesh\" {\n"
+        "    Properties70: { P: \"Lcl Scaling\", \"Lcl Scaling\", \"\", \"A\",-2,1,0.5 }\n"
+        "  }\n"
         "}\n"
         "Connections: { C: \"OO\",1,2 }\n";
     file.close();
@@ -34,14 +46,19 @@ int main()
     Models::Fbx::Document document;
     std::string error;
     if (!Models::Fbx::load(path, &document, &error)) {
-        std::fprintf(stderr, "ngon import failed: %s\n", error.c_str());
+        std::fprintf(stderr, "mirror import failed: %s\n", error.c_str());
         return 1;
     }
-    if (document.parts.size() != 1u || document.parts[0].mesh.indices.size() != 9u) {
-        std::fprintf(stderr, "ngon wrong output: parts=%zu indices=%zu\n",
-            document.parts.size(),
-            document.parts.empty() ? 0u : document.parts[0].mesh.indices.size());
-        return 2;
+    if (document.parts.empty()) return 2;
+    const auto& mesh = document.parts[0].mesh;
+    const float expected_x = -1.0f / std::sqrt(5.0f);
+    const float expected_y = 2.0f / std::sqrt(5.0f);
+    for (const auto& vertex : mesh.vertices) {
+        if (!near(vertex.normal.x, expected_x) || !near(vertex.normal.y, expected_y) || !near(vertex.normal.z, 0.0f)) {
+            std::fprintf(stderr, "wrong normal: %.6f %.6f %.6f expected %.6f %.6f 0\n",
+                vertex.normal.x, vertex.normal.y, vertex.normal.z, expected_x, expected_y);
+            return 3;
+        }
     }
     return 0;
 }
