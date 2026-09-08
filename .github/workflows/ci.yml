@@ -16,3 +16,15 @@ jobs:
             echo "renderer fallback still exists"
             exit 1
           fi
+      - name: Require Metal PathTracer backend
+        run: |
+          test -f Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp
+          grep -q 'Metal.create' Sources/Renderer/PathTracer/PathTracer.cpp
+          grep -q 'Metal.createComputePipeline' Sources/Renderer/PathTracer/PathTracer.cpp
+          grep -q 'Metal.dispatch' Sources/Renderer/PathTracer/PathTracer.cpp
+          grep -q 'Metal.beginRenderToDrawable' Sources/Renderer/PathTracer/PathTracer.cpp
+          grep -q 'Metal.present' Sources/Renderer/PathTracer/PathTracer.cpp
+          if grep -q 'lwcgl/gl11_compat.h' Sources/Renderer/PathTracer/PathTracer.hpp; then
+            echo "public PathTracer header leaks OpenGL declarations"
+            exit 1
+          fi
