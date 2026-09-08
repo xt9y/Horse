@@ -1,0 +1,44 @@
+name: Apply Metal Frame Sync Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-metal-frame-sync-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Patch PathTracer Metal frame lifetime
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('Sources/Renderer/PathTracer/PathTracerMetal.cpp')
+          source = path.read_text()
+          old = '''        if (ok) ok = Metal.present(command) == 0;
+                  if (ok) ok = Metal.commit(command) == 0;
+                  Metal.destroyCommand(command);'''
+          new = '''        if (ok) ok = Metal.present(command) == 0;
+                  if (ok) ok = Metal.commit(command) == 0;
+                  if (ok) ok = Metal.wait(command) == 0;
+                  Metal.destroyCommand(command);'''
+          if old not in source:
+              raise SystemExit('expected dispatchAndPresent commit sequence not found')
+          source = source.replace(old, new, 1)
+          path.write_text(source)
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name xt9y
+          git config user.email felix@xt9y.de
+          git add Sources/Renderer/PathTracer/PathTracerMetal.cpp
+          git commit -m 'fix: synchronize Metal path tracer frames'
+          git push origin HEAD:main
