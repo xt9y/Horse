@@ -125,6 +125,22 @@ ModelHandle load(const std::string& path, std::string *error)
     return INVALID_MODEL;
 }
 
+MeshHandle registerMesh(MeshData mesh)
+{
+    if (meshes().size() >= static_cast<std::size_t>(INVALID_MESH)) return INVALID_MESH;
+    const MeshHandle handle = static_cast<MeshHandle>(meshes().size());
+    meshes().push_back(std::move(mesh));
+    return handle;
+}
+
+MaterialHandle registerMaterial(MaterialData material)
+{
+    if (materials().size() >= static_cast<std::size_t>(INVALID_MATERIAL)) return INVALID_MATERIAL;
+    const MaterialHandle handle = static_cast<MaterialHandle>(materials().size());
+    materials().push_back(std::move(material));
+    return handle;
+}
+
 const ModelPart *part(ModelHandle handle, std::size_t index)
 {
     if (handle >= models().size()) return nullptr;
