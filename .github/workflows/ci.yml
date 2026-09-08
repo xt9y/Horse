@@ -30,16 +30,34 @@ jobs:
             echo "public PathTracer header leaks OpenGL declarations"
             exit 1
           fi
-      - name: Require full reset coverage
+      - name: Require sparse black camera movement path
         run: |
-          grep -q 'RESET_PHASE_GRID = 1' Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp
-          grep -q 'RESET_PHASE_GRID = 1u' Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp
-          grep -q 'uResetAccumulation != 0 ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID' Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp
-          grep -q 'reset ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID' Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp
-          if grep -R -n 'MOVING_PHASE_GRID' Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp; then
-            echo "reset path still uses sparse moving-phase sampling"
-            exit 1
-          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gl_shader = Path('Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp').read_text()
+          metal_shader = Path('Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp').read_text()
+          gl_cpu = Path('Sources/Renderer/PathTracer/PathTracer.cpp').read_text()
+          metal_cpu = Path('Sources/Renderer/PathTracer/PathTracerMetal.cpp').read_text()
+
+          assert 'MOVING_PHASE_GRID = 4' in gl_shader
+          assert 'MOVING_PHASE_GRID = 4u' in metal_shader
+          assert 'uCameraMoving' in gl_shader
+          assert 'camera_moving' in metal_cpu
+          assert 'camera_moving' in gl_cpu
+
+          # Moving frames must clear every pixel, trace only one of 16 phases,
+          # and present unsampled pixels as black instead of reconstructing them.
+          assert 'uCameraMoving != 0 ? MOVING_PHASE_GRID' in gl_shader
+          assert 'camera_moving ? MOVING_PHASE_GRID' in metal_shader
+          assert 'uCameraMoving != 0 && accumulated.a <= 0.0' in gl_shader
+          assert 'uniforms.exposure.y > 0.5f && accumulated.a <= 0.0f' in metal_shader
+
+          # A frame immediately after movement stops must reset fully so stale
+          # sparse samples from the moving camera cannot survive.
+          assert 'was_camera_moving' in gl_cpu
+          assert 'was_camera_moving' in metal_cpu
+          PY
       - name: Require Metal frame completion before shared-state reuse
         run: |
           python3 - <<'PY'
