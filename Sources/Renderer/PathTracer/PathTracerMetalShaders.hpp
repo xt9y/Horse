@@ -52,6 +52,7 @@ struct Hit {
     float distance;
     float3 position;
     float3 normal;
+    float3 geometric_normal;
     float2 uv;
     uint material;
 };
@@ -150,6 +151,7 @@ Hit traceClosest(
     best.distance = max_distance;
     best.position = float3(0.0f);
     best.normal = float3(0.0f, 1.0f, 0.0f);
+    best.geometric_normal = float3(0.0f, 1.0f, 0.0f);
     best.uv = float2(0.0f);
     best.material = 0u;
 
@@ -185,7 +187,12 @@ Hit traceClosest(
                     triangle.n1.xyz * barycentric.y +
                     triangle.n2.xyz * barycentric.z
                 );
-                if (dot(best.normal, direction) > 0.0f) best.normal = -best.normal;
+                best.geometric_normal = normalize(cross(
+                    triangle.p1.xyz - triangle.p0.xyz,
+                    triangle.p2.xyz - triangle.p0.xyz
+                ));
+                if (dot(best.geometric_normal, direction) > 0.0f) best.geometric_normal = -best.geometric_normal;
+                if (dot(best.normal, best.geometric_normal) < 0.0f) best.normal = -best.normal;
                 best.uv =
                     triangle.uv01.xy * barycentric.x +
                     triangle.uv01.zw * barycentric.y +
@@ -332,7 +339,7 @@ float3 tracePath(
             float cosine = max(dot(hit.normal, light_direction), 0.0f);
 
             if (cosine > 0.0f) {
-                float3 shadow_origin = hit.position + hit.normal * RAY_EPSILON * 4.0f;
+                float3 shadow_origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;
                 float shadow_distance = max(light_distance - RAY_EPSILON * 8.0f, 0.0f);
                 if (!traceAny(shadow_origin, light_direction, shadow_distance, nodes, triangles, uniforms)) {
                     float3 incoming = max(uniforms.light_color_tan_half_fov.xyz, float3(0.0f)) *
@@ -345,8 +352,11 @@ float3 tracePath(
         throughput *= albedo;
         if (max(max(throughput.r, throughput.g), throughput.b) < 1.0e-4f) break;
 
-        origin = hit.position + hit.normal * RAY_EPSILON * 4.0f;
+        origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;
         direction = cosineHemisphere(hit.normal, state);
+        if (dot(direction, hit.geometric_normal) <= 0.0f) {
+            direction = cosineHemisphere(hit.geometric_normal, state);
+        }
     }
 
     return radiance;

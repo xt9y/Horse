@@ -90,6 +90,7 @@ struct Hit {
     float distance;
     vec3 position;
     vec3 normal;
+    vec3 geometric_normal;
     vec2 uv;
     uint material;
 };
@@ -167,6 +168,7 @@ Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
     best.distance = max_distance;
     best.position = vec3(0.0);
     best.normal = vec3(0.0, 1.0, 0.0);
+    best.geometric_normal = vec3(0.0, 1.0, 0.0);
     best.uv = vec2(0.0);
     best.material = 0u;
 
@@ -200,7 +202,12 @@ Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
                     triangle.n1.xyz * barycentric.y +
                     triangle.n2.xyz * barycentric.z
                 );
-                if (dot(best.normal, direction) > 0.0) best.normal = -best.normal;
+                best.geometric_normal = normalize(cross(
+                    triangle.p1.xyz - triangle.p0.xyz,
+                    triangle.p2.xyz - triangle.p0.xyz
+                ));
+                if (dot(best.geometric_normal, direction) > 0.0) best.geometric_normal = -best.geometric_normal;
+                if (dot(best.normal, best.geometric_normal) < 0.0) best.normal = -best.normal;
                 best.uv =
                     triangle.uv01.xy * barycentric.x +
                     triangle.uv01.zw * barycentric.y +
@@ -319,7 +326,7 @@ vec3 tracePath(vec3 origin, vec3 direction, inout uint state)
             float cosine = max(dot(hit.normal, light_direction), 0.0);
 
             if (cosine > 0.0) {
-                vec3 shadow_origin = hit.position + hit.normal * RAY_EPSILON * 4.0;
+                vec3 shadow_origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0;
                 float shadow_distance = max(light_distance - RAY_EPSILON * 8.0, 0.0);
                 if (!traceAny(shadow_origin, light_direction, shadow_distance)) {
                     vec3 incoming = max(uLightColor, vec3(0.0)) * max(uLightIntensity, 0.0) / distance_squared;
@@ -331,8 +338,11 @@ vec3 tracePath(vec3 origin, vec3 direction, inout uint state)
         throughput *= albedo;
         if (max(max(throughput.r, throughput.g), throughput.b) < 1.0e-4) break;
 
-        origin = hit.position + hit.normal * RAY_EPSILON * 4.0;
+        origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0;
         direction = cosineHemisphere(hit.normal, state);
+        if (dot(direction, hit.geometric_normal) <= 0.0) {
+            direction = cosineHemisphere(hit.geometric_normal, state);
+        }
     }
 
     return radiance;
