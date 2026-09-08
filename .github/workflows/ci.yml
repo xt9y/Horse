@@ -70,9 +70,13 @@ jobs:
             tests/fbx_canonical_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-canonical-contract
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
+            tests/fbx_rotation_order_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
+            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-rotation-order-contract
+          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
             tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
           LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/fbx-canonical-contract
+          LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/fbx-rotation-order-contract
           LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/earth-fbx-contract /tmp/Earth.fbx
 
   macos:
@@ -116,7 +120,11 @@ jobs:
             tests/fbx_canonical_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-canonical-contract
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
+            tests/fbx_rotation_order_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
+            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-rotation-order-contract
+          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
             tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
           /tmp/fbx-canonical-contract
+          /tmp/fbx-rotation-order-contract
           /tmp/earth-fbx-contract /tmp/Earth.fbx
