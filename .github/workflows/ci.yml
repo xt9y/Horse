@@ -40,6 +40,19 @@ jobs:
             echo "reset path still uses sparse moving-phase sampling"
             exit 1
           fi
+      - name: Require Metal frame completion before shared-state reuse
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('Sources/Renderer/PathTracer/PathTracerMetal.cpp').read_text()
+          begin = source.index('bool dispatchAndPresent(')
+          end = source.index('\n    }\n};', begin)
+          body = source[begin:end]
+          commit = body.index('Metal.commit(command)')
+          wait = body.index('Metal.wait(command)')
+          destroy = body.index('Metal.destroyCommand(command)')
+          assert commit < wait < destroy, 'Metal command must complete before shared uniform/accumulation state can be reused'
+          PY
 
   linux:
     runs-on: ubuntu-latest
