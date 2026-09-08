@@ -928,6 +928,7 @@ struct PathTracer::Impl {
         if (ok) ok = Metal.endEncoding(command) == 0;
         if (ok) ok = Metal.present(command) == 0;
         if (ok) ok = Metal.commit(command) == 0;
+        if (ok) ok = Metal.wait(command) == 0;
         Metal.destroyCommand(command);
         return ok;
     }
