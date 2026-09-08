@@ -408,7 +408,7 @@ kernel void trace_kernel(
     accumulation.write(float4(previous.rgb + sample_radiance, previous.a + 1.0f), pixel);
 }
 
-PresentOut present_vertex(uint id [[vertex_id]])
+vertex PresentOut present_vertex(uint id [[vertex_id]])
 {
     float2 position = id == 0u
         ? float2(-1.0f, -1.0f)
