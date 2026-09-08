@@ -30,6 +30,16 @@ jobs:
             echo "public PathTracer header leaks OpenGL declarations"
             exit 1
           fi
+      - name: Require full reset coverage
+        run: |
+          grep -q 'RESET_PHASE_GRID = 1' Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp
+          grep -q 'RESET_PHASE_GRID = 1u' Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp
+          grep -q 'uResetAccumulation != 0 ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID' Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp
+          grep -q 'reset ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID' Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp
+          if grep -R -n 'MOVING_PHASE_GRID' Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp; then
+            echo "reset path still uses sparse moving-phase sampling"
+            exit 1
+          fi
 
   linux:
     runs-on: ubuntu-latest
