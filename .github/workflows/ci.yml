@@ -66,21 +66,23 @@ jobs:
           LIB="$(find build -type f -name 'libecs-model-rasterizer.so' | head -1)"
           test -n "$LIB"
           LIBDIR="$(cd "$(dirname "$LIB")" && pwd)"
-          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/fbx_canonical_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
-            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-canonical-contract
-          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/fbx_rotation_order_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
-            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-rotation-order-contract
-          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/fbx_semantics_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
-            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-semantics-contract
+          for source in \
+            tests/fbx_canonical_contract.cpp \
+            tests/fbx_rotation_order_contract.cpp \
+            tests/fbx_geometry_semantics_contract.cpp \
+            tests/fbx_material_semantics_contract.cpp \
+            tests/fbx_skin_animation_contract.cpp
+          do
+            name="$(basename "$source" .cpp)"
+            c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources -Itests \
+              "$source" -L"$LIBDIR" -lecs-model-rasterizer \
+              -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o "/tmp/$name"
+            echo "[run] $name"
+            LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" "/tmp/$name"
+          done
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
             tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
-          LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/fbx-canonical-contract
-          LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/fbx-rotation-order-contract
-          LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/fbx-semantics-contract
           LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/earth-fbx-contract /tmp/Earth.fbx
 
   macos:
@@ -120,19 +122,21 @@ jobs:
           LIB="$(find build -type f -name 'libecs-model-rasterizer.dylib' | head -1)"
           test -n "$LIB"
           LIBDIR="$(cd "$(dirname "$LIB")" && pwd)"
-          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/fbx_canonical_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
-            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-canonical-contract
-          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/fbx_rotation_order_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
-            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-rotation-order-contract
-          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/fbx_semantics_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
-            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-semantics-contract
+          for source in \
+            tests/fbx_canonical_contract.cpp \
+            tests/fbx_rotation_order_contract.cpp \
+            tests/fbx_geometry_semantics_contract.cpp \
+            tests/fbx_material_semantics_contract.cpp \
+            tests/fbx_skin_animation_contract.cpp
+          do
+            name="$(basename "$source" .cpp)"
+            c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources -Itests \
+              "$source" -L"$LIBDIR" -lecs-model-rasterizer \
+              -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o "/tmp/$name"
+            echo "[run] $name"
+            "/tmp/$name"
+          done
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
             tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
-          /tmp/fbx-canonical-contract
-          /tmp/fbx-rotation-order-contract
-          /tmp/fbx-semantics-contract
           /tmp/earth-fbx-contract /tmp/Earth.fbx
