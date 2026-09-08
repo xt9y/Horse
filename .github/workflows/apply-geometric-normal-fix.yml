@@ -1,0 +1,72 @@
+name: Apply Geometric Normal Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-geometric-normal-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Patch path tracer shaders
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              if old not in s:
+                  raise SystemExit(f'pattern not found in {path}: {old[:100]!r}')
+              p.write_text(s.replace(old, new, 1))
+
+          gl = 'Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp'
+          replace_once(gl,
+              '    vec3 position;\n    vec3 normal;\n    vec2 uv;',
+              '    vec3 position;\n    vec3 normal;\n    vec3 geometric_normal;\n    vec2 uv;')
+          replace_once(gl,
+              '    best.position = vec3(0.0);\n    best.normal = vec3(0.0, 1.0, 0.0);\n    best.uv = vec2(0.0);',
+              '    best.position = vec3(0.0);\n    best.normal = vec3(0.0, 1.0, 0.0);\n    best.geometric_normal = vec3(0.0, 1.0, 0.0);\n    best.uv = vec2(0.0);')
+          replace_once(gl,
+              '''                best.normal = normalize(\n                    triangle.n0.xyz * barycentric.x +\n                    triangle.n1.xyz * barycentric.y +\n                    triangle.n2.xyz * barycentric.z\n                );\n                if (dot(best.normal, direction) > 0.0) best.normal = -best.normal;''',
+              '''                best.normal = normalize(\n                    triangle.n0.xyz * barycentric.x +\n                    triangle.n1.xyz * barycentric.y +\n                    triangle.n2.xyz * barycentric.z\n                );\n                best.geometric_normal = normalize(cross(\n                    triangle.p1.xyz - triangle.p0.xyz,\n                    triangle.p2.xyz - triangle.p0.xyz\n                ));\n                if (dot(best.geometric_normal, direction) > 0.0) best.geometric_normal = -best.geometric_normal;\n                if (dot(best.normal, best.geometric_normal) < 0.0) best.normal = -best.normal;''')
+          replace_once(gl,
+              'vec3 shadow_origin = hit.position + hit.normal * RAY_EPSILON * 4.0;',
+              'vec3 shadow_origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0;')
+          replace_once(gl,
+              '        origin = hit.position + hit.normal * RAY_EPSILON * 4.0;\n        direction = cosineHemisphere(hit.normal, state);',
+              '''        origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0;\n        direction = cosineHemisphere(hit.normal, state);\n        if (dot(direction, hit.geometric_normal) <= 0.0) {\n            direction = cosineHemisphere(hit.geometric_normal, state);\n        }''')
+
+          metal = 'Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp'
+          replace_once(metal,
+              '    float3 position;\n    float3 normal;\n    float2 uv;',
+              '    float3 position;\n    float3 normal;\n    float3 geometric_normal;\n    float2 uv;')
+          replace_once(metal,
+              '    best.position = float3(0.0f);\n    best.normal = float3(0.0f, 1.0f, 0.0f);\n    best.uv = float2(0.0f);',
+              '    best.position = float3(0.0f);\n    best.normal = float3(0.0f, 1.0f, 0.0f);\n    best.geometric_normal = float3(0.0f, 1.0f, 0.0f);\n    best.uv = float2(0.0f);')
+          replace_once(metal,
+              '''                best.normal = normalize(\n                    triangle.n0.xyz * barycentric.x +\n                    triangle.n1.xyz * barycentric.y +\n                    triangle.n2.xyz * barycentric.z\n                );\n                if (dot(best.normal, direction) > 0.0f) best.normal = -best.normal;''',
+              '''                best.normal = normalize(\n                    triangle.n0.xyz * barycentric.x +\n                    triangle.n1.xyz * barycentric.y +\n                    triangle.n2.xyz * barycentric.z\n                );\n                best.geometric_normal = normalize(cross(\n                    triangle.p1.xyz - triangle.p0.xyz,\n                    triangle.p2.xyz - triangle.p0.xyz\n                ));\n                if (dot(best.geometric_normal, direction) > 0.0f) best.geometric_normal = -best.geometric_normal;\n                if (dot(best.normal, best.geometric_normal) < 0.0f) best.normal = -best.normal;''')
+          replace_once(metal,
+              'float3 shadow_origin = hit.position + hit.normal * RAY_EPSILON * 4.0f;',
+              'float3 shadow_origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;')
+          replace_once(metal,
+              '        origin = hit.position + hit.normal * RAY_EPSILON * 4.0f;\n        direction = cosineHemisphere(hit.normal, state);',
+              '''        origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;\n        direction = cosineHemisphere(hit.normal, state);\n        if (dot(direction, hit.geometric_normal) <= 0.0f) {\n            direction = cosineHemisphere(hit.geometric_normal, state);\n        }''')
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name xt9y
+          git config user.email felix@xt9y.de
+          git add Sources/Renderer/PathTracer/PathTracerWorldFastShaders.hpp \
+                  Sources/Renderer/PathTracer/PathTracerMetalShaders.hpp
+          git commit -m 'fix: offset secondary rays by geometric normals'
+          git push origin HEAD:main
