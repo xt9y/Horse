@@ -65,6 +65,20 @@ std::string triangleGeometry()
         "  }\n";
 }
 
+const Models::Vertex *findVertex(
+    const Models::MeshData& mesh,
+    float x,
+    float y,
+    float z)
+{
+    for (const auto& vertex : mesh.vertices) {
+        if (near(vertex.position.x, x) && near(vertex.position.y, y) && near(vertex.position.z, z)) {
+            return &vertex;
+        }
+    }
+    return nullptr;
+}
+
 void testUnitsAxesHierarchyAndUvs()
 {
     const std::string path = writeFixture(
@@ -95,22 +109,22 @@ void testUnitsAxesHierarchyAndUvs()
     assert(mesh.vertices.size() == 3u);
     assert(mesh.indices.size() == 3u);
 
-    // FBX units are centimeters here. The model's 100x scale therefore
-    // produces one-metre edges after canonicalization.
-    assert(near(mesh.vertices[1].position.x, 1.0f));
-    assert(near(mesh.vertices[1].position.y, 0.0f));
-    assert(near(mesh.vertices[1].position.z, 0.0f));
+    // Handedness conversion may reverse emitted corner order, so verify
+    // source-corner associations by canonical position rather than array slot.
+    const Models::Vertex *origin = findVertex(mesh, 0.0f, 0.0f, 0.0f);
+    const Models::Vertex *right = findVertex(mesh, 1.0f, 0.0f, 0.0f);
+    const Models::Vertex *up = findVertex(mesh, 0.0f, 1.0f, 0.0f);
+    assert(origin != nullptr);
+    assert(right != nullptr);
+    assert(up != nullptr);
 
-    // Source +Z is declared as Up, so the third point becomes Horse +Y.
-    assert(near(mesh.vertices[2].position.x, 0.0f));
-    assert(near(mesh.vertices[2].position.y, 1.0f));
-    assert(near(mesh.vertices[2].position.z, 0.0f));
-
-    // IndexToDirect must be honored, not treated as Direct.
-    assert(near(mesh.vertices[0].uv.x, 0.0f));
-    assert(near(mesh.vertices[0].uv.y, 1.0f));
-    assert(near(mesh.vertices[1].uv.x, 1.0f));
-    assert(near(mesh.vertices[1].uv.y, 0.0f));
+    // IndexToDirect must stay attached to its source polygon corner.
+    assert(near(origin->uv.x, 0.0f));
+    assert(near(origin->uv.y, 1.0f));
+    assert(near(right->uv.x, 1.0f));
+    assert(near(right->uv.y, 0.0f));
+    assert(near(up->uv.x, 0.0f));
+    assert(near(up->uv.y, 0.0f));
 }
 
 void testRotationPivot()
