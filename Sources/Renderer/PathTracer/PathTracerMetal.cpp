@@ -323,6 +323,8 @@ struct PathTracer::Impl {
     std::uint32_t frame_index = 0u;
     std::uint32_t phase_count = 0u;
     bool reset_pending = true;
+    bool camera_moving = false;
+    bool was_camera_moving = false;
     std::uint64_t scene_signature = 0u;
     std::uint64_t camera_signature = 0u;
     std::uint64_t light_signature = 0u;
@@ -368,6 +370,8 @@ struct PathTracer::Impl {
         frame_index = 0u;
         phase_count = 0u;
         reset_pending = true;
+        camera_moving = false;
+        was_camera_moving = false;
     }
 
     void updateTraceResolution()
@@ -914,7 +918,7 @@ struct PathTracer::Impl {
             frame_index,
             reset_pending ? 1u : 0u,
             light.valid ? 1u : 0u,
-            static_cast<std::uint32_t>(std::clamp(settings.samples_per_frame, 1, 4))
+            camera_moving ? 1u : 0u
         };
         return uniforms;
     }
@@ -946,6 +950,7 @@ struct PathTracer::Impl {
 
         PresentUniforms present_uniforms{};
         present_uniforms.exposure[0] = settings.exposure;
+        present_uniforms.exposure[1] = camera_moving ? 1.0f : 0.0f;
         if (Metal.uploadBuffer(present_uniform_buffer, 0u, &present_uniforms, sizeof present_uniforms) != 0) return false;
 
         LWMGLCommand command = Metal.begin();
@@ -1134,10 +1139,15 @@ void PathTracer::render(const Ecs::World& world)
         impl_->world_revision = next_world_revision;
     }
 
-    if (next_camera_signature != impl_->camera_signature) {
+    const bool camera_changed = next_camera_signature != impl_->camera_signature;
+    impl_->camera_moving = camera_changed;
+    if (camera_changed) {
         impl_->camera_signature = next_camera_signature;
         impl_->resetAccumulation();
+    } else if (impl_->was_camera_moving) {
+        impl_->resetAccumulation();
     }
+    impl_->was_camera_moving = camera_changed;
 
     if (next_light_signature != impl_->light_signature) {
         impl_->light_signature = next_light_signature;

@@ -69,6 +69,7 @@ constant int MAX_CLOSEST_STEPS = 8192;
 constant int MAX_SHADOW_STEPS = 4096;
 constant uint STATIONARY_PHASE_GRID = 2u;
 constant uint RESET_PHASE_GRID = 1u;
+constant uint MOVING_PHASE_GRID = 4u;
 
 uint hashUint(uint value)
 {
@@ -365,9 +366,11 @@ kernel void trace_kernel(
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
     const bool reset = uniforms.frame.y != 0u;
+    const bool camera_moving = uniforms.frame.w != 0u;
     if (reset) accumulation.write(float4(0.0f), pixel);
 
-    uint phase_grid = reset ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID;
+    uint phase_grid = camera_moving ? MOVING_PHASE_GRID :
+        (reset ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID);
     uint phase_count = phase_grid * phase_grid;
     uint phase = uniforms.frame.x % phase_count;
     uint phase_x = phase % phase_grid;
@@ -466,9 +469,15 @@ fragment float4 present_fragment(
     float2 sample_uv = float2(in.uv.x, 1.0f - in.uv.y);
     int2 pixel = clamp(int2(sample_uv * float2(size)), int2(0), size - int2(1));
 
-    float4 accumulated = blockComplete(accumulation, pixel, size)
-        ? accumulation.sample(accumulation_sampler, sample_uv)
-        : validAccumulationSample(accumulation, pixel, size);
+    float4 accumulated = accumulation.read(uint2(pixel));
+    if (uniforms.exposure.y > 0.5f && accumulated.a <= 0.0f) {
+        return float4(0.0f, 0.0f, 0.0f, 1.0f);
+    }
+    if (uniforms.exposure.y <= 0.5f) {
+        accumulated = blockComplete(accumulation, pixel, size)
+            ? accumulation.sample(accumulation_sampler, sample_uv)
+            : validAccumulationSample(accumulation, pixel, size);
+    }
 
     float samples = max(accumulated.a, 1.0f);
     float3 linear_color = max(accumulated.rgb / samples, float3(0.0f));

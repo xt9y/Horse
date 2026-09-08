@@ -414,6 +414,7 @@ struct PathTracer::Impl {
         GLint sample_base = -1;
         GLint frame_index = -1;
         GLint reset_accumulation = -1;
+        GLint camera_moving = -1;
         GLint max_bounces = -1;
         GLint has_light = -1;
         GLint light_position = -1;
@@ -425,6 +426,7 @@ struct PathTracer::Impl {
     struct PresentUniformLocations {
         GLint accumulation = -1;
         GLint phase_count = -1;
+        GLint camera_moving = -1;
         GLint exposure = -1;
     };
 
@@ -438,6 +440,8 @@ struct PathTracer::Impl {
     std::uint32_t frame_index = 0u;
     std::uint32_t phase_count = 0u;
     bool reset_pending = true;
+    bool camera_moving = false;
+    bool was_camera_moving = false;
     std::uint64_t scene_signature = 0u;
     std::uint64_t camera_signature = 0u;
     std::uint64_t light_signature = 0u;
@@ -479,6 +483,8 @@ struct PathTracer::Impl {
         frame_index = 0u;
         phase_count = 0u;
         reset_pending = true;
+        camera_moving = false;
+        was_camera_moving = false;
     }
 
     void updateTraceResolution()
@@ -539,6 +545,7 @@ struct PathTracer::Impl {
         trace_uniforms.sample_base = uniformLocation(trace_program, "uSampleBase");
         trace_uniforms.frame_index = uniformLocation(trace_program, "uFrameIndex");
         trace_uniforms.reset_accumulation = uniformLocation(trace_program, "uResetAccumulation");
+        trace_uniforms.camera_moving = uniformLocation(trace_program, "uCameraMoving");
         trace_uniforms.max_bounces = uniformLocation(trace_program, "uMaxBounces");
         trace_uniforms.has_light = uniformLocation(trace_program, "uHasLight");
         trace_uniforms.light_position = uniformLocation(trace_program, "uLightPosition");
@@ -555,6 +562,7 @@ struct PathTracer::Impl {
 
         present_uniforms.accumulation = uniformLocation(present_program, "uAccumulation");
         present_uniforms.phase_count = uniformLocation(present_program, "uPhaseCount");
+        present_uniforms.camera_moving = uniformLocation(present_program, "uCameraMoving");
         present_uniforms.exposure = uniformLocation(present_program, "uExposure");
         GL20.glUseProgram(present_program);
         setInt(present_uniforms.accumulation, 0);
@@ -1046,6 +1054,7 @@ struct PathTracer::Impl {
         setInt(trace_uniforms.sample_base, static_cast<int>(sample_count));
         setInt(trace_uniforms.frame_index, static_cast<int>(frame_index));
         setInt(trace_uniforms.reset_accumulation, reset_pending ? 1 : 0);
+        setInt(trace_uniforms.camera_moving, camera_moving ? 1 : 0);
         setInt(trace_uniforms.max_bounces, std::clamp(settings.max_bounces, 1, 4));
         setInt(trace_uniforms.has_light, light.valid ? 1 : 0);
         setVec3(trace_uniforms.light_position, light.position);
@@ -1082,6 +1091,7 @@ struct PathTracer::Impl {
         GLModern.glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, accumulation);
         setFloat(present_uniforms.phase_count, static_cast<float>(std::max(phase_count, 1u)));
+        setInt(present_uniforms.camera_moving, camera_moving ? 1 : 0);
         setFloat(present_uniforms.exposure, settings.exposure);
 
         glBegin(GL_TRIANGLES);
@@ -1228,10 +1238,15 @@ void PathTracer::render(const Ecs::World& world)
         impl_->world_revision = next_world_revision;
     }
 
-    if (next_camera_signature != impl_->camera_signature) {
+    const bool camera_changed = next_camera_signature != impl_->camera_signature;
+    impl_->camera_moving = camera_changed;
+    if (camera_changed) {
         impl_->camera_signature = next_camera_signature;
         impl_->resetAccumulation();
+    } else if (impl_->was_camera_moving) {
+        impl_->resetAccumulation();
     }
+    impl_->was_camera_moving = camera_changed;
 
     if (next_light_signature != impl_->light_signature) {
         impl_->light_signature = next_light_signature;

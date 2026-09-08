@@ -67,6 +67,7 @@ uniform int uSamplesThisFrame;
 uniform int uSampleBase;
 uniform int uFrameIndex;
 uniform int uResetAccumulation;
+uniform int uCameraMoving;
 uniform int uMaxBounces;
 
 uniform int uHasLight;
@@ -82,6 +83,7 @@ const int MAX_CLOSEST_STEPS = 8192;
 const int MAX_SHADOW_STEPS = 4096;
 const int STATIONARY_PHASE_GRID = 2;
 const int RESET_PHASE_GRID = 1;
+const int MOVING_PHASE_GRID = 4;
 
 struct Hit {
     bool found;
@@ -346,7 +348,8 @@ void main()
         imageStore(uAccumulation, pixel, vec4(0.0));
     }
 
-    int phase_grid = uResetAccumulation != 0 ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID;
+    int phase_grid = uCameraMoving != 0 ? MOVING_PHASE_GRID :
+        (uResetAccumulation != 0 ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID);
     int phase_count = phase_grid * phase_grid;
     int phase = max(uFrameIndex, 0) % phase_count;
     int phase_x = phase % phase_grid;
@@ -392,6 +395,7 @@ inline constexpr const char *present_fragment = R"GLSL(
 #version 430 compatibility
 uniform sampler2D uAccumulation;
 uniform float uPhaseCount;
+uniform int uCameraMoving;
 uniform float uExposure;
 in vec2 vUv;
 layout(location = 0) out vec4 outColor;
@@ -438,9 +442,16 @@ void main()
     ivec2 size = textureSize(uAccumulation, 0);
     ivec2 pixel = clamp(ivec2(vUv * vec2(size)), ivec2(0), size - ivec2(1));
 
-    vec4 accumulated = blockComplete(pixel, size)
-        ? texture(uAccumulation, vUv)
-        : validAccumulationSample(pixel, size);
+    vec4 accumulated = texelFetch(uAccumulation, pixel, 0);
+    if (uCameraMoving != 0 && accumulated.a <= 0.0) {
+        outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    if (uCameraMoving == 0) {
+        accumulated = blockComplete(pixel, size)
+            ? texture(uAccumulation, vUv)
+            : validAccumulationSample(pixel, size);
+    }
 
     float samples = max(accumulated.a, 1.0);
     vec3 linear_color = max(accumulated.rgb / samples, vec3(0.0));
