@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  ngon:
+  semantics:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,12 +22,20 @@ jobs:
           sudo make -C "$RUNNER_TEMP/c-buildsystem" install
       - name: Build Horse
         run: c build
-      - name: Run focused ngon contract
+      - name: Run split FBX semantic contracts
         run: |
           set -euo pipefail
           LIB="$(find build -type f -name 'libecs-model-rasterizer.so' | head -1)"
           LIBDIR="$(cd "$(dirname "$LIB")" && pwd)"
-          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
-            tests/fbx_ngon_debug_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
-            -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/fbx-ngon-debug
-          LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/fbx-ngon-debug
+          for source in \
+            tests/fbx_geometry_semantics_contract.cpp \
+            tests/fbx_material_semantics_contract.cpp \
+            tests/fbx_skin_animation_contract.cpp
+          do
+            name="$(basename "$source" .cpp)"
+            c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources -Itests \
+              "$source" -L"$LIBDIR" -lecs-model-rasterizer \
+              -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o "/tmp/$name"
+            echo "[run] $name"
+            LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" "/tmp/$name"
+          done
