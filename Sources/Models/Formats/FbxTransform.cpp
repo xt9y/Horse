@@ -99,7 +99,7 @@ Animation::Mat4 eulerMatrix(Animation::Vec3 degrees, RotationOrder order)
         case RotationOrder::ZYX: axes = {'Z', 'Y', 'X'}; break;
     }
     Animation::Mat4 result = identity();
-    for (char axis : axes) result = Animation::multiply(result, axisRotation(axis, degrees));
+    for (char axis : axes) result = Animation::multiply(axisRotation(axis, degrees), result);
     return result;
 }
 
