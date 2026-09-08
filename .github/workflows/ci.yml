@@ -62,7 +62,8 @@ jobs:
       - name: Run canonical FBX contracts
         run: |
           set -euo pipefail
-          curl -L https://raw.githubusercontent.com/xt9y/Earth/main/Earth.fbx -o /tmp/Earth.fbx
+          EARTH="tests/fixtures/earth_regression.fbx"
+          test -s "$EARTH"
           LIB="$(find build -type f -name 'libecs-model-rasterizer.so' | head -1)"
           test -n "$LIB"
           LIBDIR="$(cd "$(dirname "$LIB")" && pwd)"
@@ -83,7 +84,7 @@ jobs:
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
             tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
-          LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/earth-fbx-contract /tmp/Earth.fbx
+          LD_LIBRARY_PATH="$LIBDIR:/usr/local/lib:${LD_LIBRARY_PATH:-}" /tmp/earth-fbx-contract "$EARTH"
 
   macos:
     runs-on: macos-15
@@ -118,7 +119,8 @@ jobs:
       - name: Run canonical FBX contracts
         run: |
           set -euo pipefail
-          curl -L https://raw.githubusercontent.com/xt9y/Earth/main/Earth.fbx -o /tmp/Earth.fbx
+          EARTH="tests/fixtures/earth_regression.fbx"
+          test -s "$EARTH"
           LIB="$(find build -type f -name 'libecs-model-rasterizer.dylib' | head -1)"
           test -n "$LIB"
           LIBDIR="$(cd "$(dirname "$LIB")" && pwd)"
@@ -139,4 +141,4 @@ jobs:
           c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
             tests/earth_fbx_contract.cpp -L"$LIBDIR" -lecs-model-rasterizer \
             -Wl,-rpath,"$LIBDIR" -Wl,-rpath,/usr/local/lib -o /tmp/earth-fbx-contract
-          /tmp/earth-fbx-contract /tmp/Earth.fbx
+          /tmp/earth-fbx-contract "$EARTH"
