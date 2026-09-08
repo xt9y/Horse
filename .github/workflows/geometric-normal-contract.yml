@@ -1,0 +1,25 @@
+name: Geometric Normal Contract
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Sources/Renderer/PathTracer/**'
+      - 'tests/path_tracer_geometric_normal_contract.cpp'
+      - '.github/workflows/geometric-normal-contract.yml'
+  pull_request:
+    paths:
+      - 'Sources/Renderer/PathTracer/**'
+      - 'tests/path_tracer_geometric_normal_contract.cpp'
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run contract
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror \
+            tests/path_tracer_geometric_normal_contract.cpp \
+            -o /tmp/path-tracer-geometric-normal-contract
+          /tmp/path-tracer-geometric-normal-contract
