@@ -142,6 +142,13 @@ const MaterialData *material(MaterialHandle handle)
     return handle < materials().size() ? &materials()[handle] : nullptr;
 }
 
+bool updateMaterial(MaterialHandle handle, const MaterialData& replacement)
+{
+    if (handle >= materials().size()) return false;
+    materials()[handle] = replacement;
+    return true;
+}
+
 std::size_t partCount(ModelHandle handle)
 {
     return handle < models().size() ? models()[handle].parts.size() : 0u;
