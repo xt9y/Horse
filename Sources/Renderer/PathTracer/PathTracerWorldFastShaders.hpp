@@ -81,7 +81,7 @@ const float INF = 1.0e30;
 const int MAX_CLOSEST_STEPS = 8192;
 const int MAX_SHADOW_STEPS = 4096;
 const int STATIONARY_PHASE_GRID = 2;
-const int MOVING_PHASE_GRID = 4;
+const int RESET_PHASE_GRID = 1;
 
 struct Hit {
     bool found;
@@ -346,7 +346,7 @@ void main()
         imageStore(uAccumulation, pixel, vec4(0.0));
     }
 
-    int phase_grid = uResetAccumulation != 0 ? MOVING_PHASE_GRID : STATIONARY_PHASE_GRID;
+    int phase_grid = uResetAccumulation != 0 ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID;
     int phase_count = phase_grid * phase_grid;
     int phase = max(uFrameIndex, 0) % phase_count;
     int phase_x = phase % phase_grid;

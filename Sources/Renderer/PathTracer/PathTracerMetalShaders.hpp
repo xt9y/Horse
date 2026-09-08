@@ -68,7 +68,7 @@ constant float INF = 1.0e30f;
 constant int MAX_CLOSEST_STEPS = 8192;
 constant int MAX_SHADOW_STEPS = 4096;
 constant uint STATIONARY_PHASE_GRID = 2u;
-constant uint MOVING_PHASE_GRID = 4u;
+constant uint RESET_PHASE_GRID = 1u;
 
 uint hashUint(uint value)
 {
@@ -367,7 +367,7 @@ kernel void trace_kernel(
     const bool reset = uniforms.frame.y != 0u;
     if (reset) accumulation.write(float4(0.0f), pixel);
 
-    uint phase_grid = reset ? MOVING_PHASE_GRID : STATIONARY_PHASE_GRID;
+    uint phase_grid = reset ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID;
     uint phase_count = phase_grid * phase_grid;
     uint phase = uniforms.frame.x % phase_count;
     uint phase_x = phase % phase_grid;
