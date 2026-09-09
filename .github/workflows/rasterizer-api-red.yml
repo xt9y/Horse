@@ -1,0 +1,19 @@
+name: Rasterizer API RED
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/rasterizer_architecture_contract.cpp'
+      - '.github/workflows/rasterizer-api-red.yml'
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Rasterizer API contract
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Wpedantic -Werror -I. -ISources \
+            -c tests/rasterizer_architecture_contract.cpp \
+            -o /tmp/rasterizer-architecture-contract.o
