@@ -215,7 +215,7 @@ Hit traceClosest(
 float4 sampleTextureSlot(
     int slot,
     float2 uv,
-    array<texture2d<float>, 16> textures,
+    array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
     float2 coordinates = float2(uv.x, 1.0f - uv.y);
@@ -236,6 +236,22 @@ float4 sampleTextureSlot(
         case 13: return textures[13].sample(material_sampler, coordinates);
         case 14: return textures[14].sample(material_sampler, coordinates);
         case 15: return textures[15].sample(material_sampler, coordinates);
+        case 16: return textures[16].sample(material_sampler, coordinates);
+        case 17: return textures[17].sample(material_sampler, coordinates);
+        case 18: return textures[18].sample(material_sampler, coordinates);
+        case 19: return textures[19].sample(material_sampler, coordinates);
+        case 20: return textures[20].sample(material_sampler, coordinates);
+        case 21: return textures[21].sample(material_sampler, coordinates);
+        case 22: return textures[22].sample(material_sampler, coordinates);
+        case 23: return textures[23].sample(material_sampler, coordinates);
+        case 24: return textures[24].sample(material_sampler, coordinates);
+        case 25: return textures[25].sample(material_sampler, coordinates);
+        case 26: return textures[26].sample(material_sampler, coordinates);
+        case 27: return textures[27].sample(material_sampler, coordinates);
+        case 28: return textures[28].sample(material_sampler, coordinates);
+        case 29: return textures[29].sample(material_sampler, coordinates);
+        case 30: return textures[30].sample(material_sampler, coordinates);
+        case 31: return textures[31].sample(material_sampler, coordinates);
         default: return float4(1.0f);
     }
 }
@@ -245,7 +261,7 @@ bool alphaCutoutPass(
     float2 uv,
     device const Material *materials,
     constant TraceUniforms& uniforms,
-    array<texture2d<float>, 16> textures,
+    array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
     const int material_count = max(uniforms.counts.z, 0);
@@ -253,7 +269,7 @@ bool alphaCutoutPass(
     Material material = materials[material_index];
     float alpha = clamp(material.base_color.a, 0.0f, 1.0f);
     int slot = material.data.x;
-    if (slot >= 0 && slot < 16) {
+    if (slot >= 0 && slot < 32) {
         float4 texel = sampleTextureSlot(slot, uv, textures, material_sampler);
         alpha *= texel.a;
     }
@@ -268,7 +284,7 @@ Hit traceClosestAlpha(
     device const Triangle *triangles,
     device const Material *materials,
     constant TraceUniforms& uniforms,
-    array<texture2d<float>, 16> textures,
+    array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
     float3 current_origin = origin;
@@ -307,7 +323,7 @@ bool traceAnyAlpha(
     device const Triangle *triangles,
     device const Material *materials,
     constant TraceUniforms& uniforms,
-    array<texture2d<float>, 16> textures,
+    array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
     Hit hit = traceClosestAlpha(
@@ -331,7 +347,7 @@ float deterministicDepthAlpha(
     device const Triangle *triangles,
     device const Material *materials,
     constant TraceUniforms& uniforms,
-    array<texture2d<float>, 16> textures,
+    array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
     float2 depth_uv = sample_pixel / float2(size);
@@ -370,7 +386,7 @@ float3 materialAlbedo(
     float2 uv,
     device const Material *materials,
     constant TraceUniforms& uniforms,
-    array<texture2d<float>, 16> textures,
+    array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
     const int material_count = max(uniforms.counts.z, 0);
@@ -378,7 +394,7 @@ float3 materialAlbedo(
     Material material = materials[material_index];
     float3 albedo = max(material.base_color.rgb, float3(0.0f));
     int slot = material.data.x;
-    if (slot >= 0 && slot < 16) {
+    if (slot >= 0 && slot < 32) {
         float4 texel = sampleTextureSlot(slot, uv, textures, material_sampler);
         albedo *= pow(max(texel.rgb, float3(0.0f)), float3(2.2f));
     }
@@ -450,7 +466,7 @@ float3 tracePath(
     device const Material *materials,
     device const float4 *gi_data,
     constant TraceUniforms& uniforms,
-    array<texture2d<float>, 16> textures,
+    array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
     Hit hit = traceClosestAlpha(
@@ -509,8 +525,8 @@ kernel void trace_kernel(
     constant TraceUniforms& uniforms [[buffer(3)]],
     device const float4 *gi_data [[buffer(4)]],
     texture2d<float, access::read_write> accumulation [[texture(0)]],
-    array<texture2d<float>, 16> textures [[texture(1)]],
-    texture2d<float, access::write> primary_depth [[texture(17)]],
+    array<texture2d<float>, 32> textures [[texture(1)]],
+    texture2d<float, access::write> primary_depth [[texture(33)]],
     sampler material_sampler [[sampler(0)]],
     uint2 pixel [[thread_position_in_grid]])
 {
