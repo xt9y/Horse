@@ -132,5 +132,13 @@ void build(C_Build *b)
     c_sources(pathtracer_motion_reconstruction_contract, "tests/pathtracer_motion_reconstruction_contract.cpp");
     configureContract(pathtracer_motion_reconstruction_contract);
 
+    C_Target *pathtracer_texture_residency_contract = c_test(b, "pathtracer-texture-residency-contract");
+    c_sources(pathtracer_texture_residency_contract, "tests/pathtracer_texture_residency_contract.cpp");
+    configureContract(pathtracer_texture_residency_contract);
+
+    C_Target *rasterizer_sampler_fallback_contract = c_test(b, "rasterizer-sampler-fallback-contract");
+    c_sources(rasterizer_sampler_fallback_contract, "tests/rasterizer_sampler_fallback_contract.cpp");
+    configureContract(rasterizer_sampler_fallback_contract);
+
     c_default_target(b, library);
 }
