@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <vector>
 
 namespace Renderer::Internal {
@@ -15,7 +14,6 @@ constexpr GLuint kGiBinding = 5u;
 constexpr std::size_t kHeaderVec4Count = 4u;
 
 GLuint buffer = 0u;
-std::uint64_t uploaded_revision = std::numeric_limits<std::uint64_t>::max();
 
 bool available()
 {
@@ -39,10 +37,12 @@ bool upload(const GlobalIllumination::Field *field)
         data[1u] = field->minimum.y;
         data[2u] = field->minimum.z;
         data[3u] = 1.0f;
+
         data[4u] = field->maximum.x;
         data[5u] = field->maximum.y;
         data[6u] = field->maximum.z;
         data[7u] = std::max(field->intensity, 0.0f);
+
         data[8u] = static_cast<float>(field->size_x);
         data[9u] = static_cast<float>(field->size_y);
         data[10u] = static_cast<float>(field->size_z);
@@ -55,6 +55,7 @@ bool upload(const GlobalIllumination::Field *field)
                 data[offset + 0u] = value.x;
                 data[offset + 1u] = value.y;
                 data[offset + 2u] = value.z;
+                data[offset + 3u] = 0.0f;
             }
         }
     }
@@ -67,7 +68,6 @@ bool upload(const GlobalIllumination::Field *field)
         GL_DYNAMIC_DRAW
     );
     GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0u);
-    uploaded_revision = valid ? field->revision : 0u;
     return true;
 }
 
@@ -75,11 +75,7 @@ bool upload(const GlobalIllumination::Field *field)
 
 void bindGlobalIlluminationOpenGL(const GlobalIllumination::Field *field)
 {
-    if (!available()) return;
-    const std::uint64_t revision = field && field->valid() ? field->revision : 0u;
-    if (buffer == 0u || revision != uploaded_revision) {
-        if (!upload(field)) return;
-    }
+    if (!upload(field)) return;
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kGiBinding, buffer);
 }
 
@@ -87,7 +83,6 @@ void shutdownGlobalIlluminationOpenGL()
 {
     if (buffer != 0u && GL15.glDeleteBuffers) GL15.glDeleteBuffers(1, &buffer);
     buffer = 0u;
-    uploaded_revision = std::numeric_limits<std::uint64_t>::max();
 }
 
 } // namespace Renderer::Internal
