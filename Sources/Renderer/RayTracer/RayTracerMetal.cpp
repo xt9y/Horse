@@ -2,6 +2,7 @@
 
 #include "Renderer/RayTracer/RayTracer.hpp"
 
+#include "Models/Core/Texture.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIlluminationMetal.hpp"
 #include "Renderer/RayTracer/RayTracerMetalShaders.hpp"
@@ -34,6 +35,7 @@ struct RayTracer::Impl {
 
     RayTracerSettings settings{};
     bool initialized = false;
+    bool has_alpha_cutouts = true;
     int width = 1;
     int height = 1;
     int trace_width = 1;
@@ -67,6 +69,25 @@ struct RayTracer::Impl {
         const int divisor = std::clamp(settings.resolution_divisor, 4, 8);
         trace_width = std::max(width / divisor, 1);
         trace_height = std::max(height / divisor, 1);
+    }
+
+    void updateAlphaCutoutState()
+    {
+        has_alpha_cutouts = false;
+        for (const Systems::Scene::RenderItem& item : render_items) {
+            const Models::MaterialData *material = item.material;
+            if (!material) continue;
+            if (material->opacity < 0.999f) {
+                has_alpha_cutouts = true;
+                return;
+            }
+            if (material->diffuse_texture == Models::INVALID_TEXTURE) continue;
+            const Models::TextureAsset *texture = Models::texture(material->diffuse_texture);
+            if (texture && texture->image.meaningful_alpha) {
+                has_alpha_cutouts = true;
+                return;
+            }
+        }
     }
 
     bool createPrograms()
@@ -253,6 +274,7 @@ struct RayTracer::Impl {
         }
 
         Systems::Scene::collectRenderItems(world, render_items);
+        updateAlphaCutoutState();
         const std::uint64_t signature = scene.signature(world, render_items);
         if (signature != scene_signature || !resources.ready() ||
             (!scene.triangles().empty() && !acceleration_structure))
@@ -282,9 +304,10 @@ struct RayTracer::Impl {
             scene_signature = signature;
             std::fprintf(
                 stderr,
-                "[RayTracer]: Metal native AS %zu triangles, %zu materials\n",
+                "[RayTracer]: Metal native AS %zu triangles, %zu materials, alpha=%s\n",
                 scene.triangles().size(),
-                scene.materials().size()
+                scene.materials().size(),
+                has_alpha_cutouts ? "cutout" : "opaque"
             );
         }
         world_revision = revision;
@@ -315,7 +338,7 @@ struct RayTracer::Impl {
         if (!resources.ready() || !acceleration_structure || !output_texture || !primary_depth)
             return false;
 
-        const Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
+        Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
             camera,
             light,
             trace_width,
@@ -329,6 +352,7 @@ struct RayTracer::Impl {
             false,
             false
         );
+        trace.counts[3] = has_alpha_cutouts ? 1 : 0;
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
         Systems::MetalPresentUniforms present{};
@@ -526,6 +550,7 @@ void RayTracer::shutdown()
     impl_->destroyPrograms();
     if (Metal.isCreated()) Metal.destroy();
     impl_->render_items.clear();
+    impl_->has_alpha_cutouts = true;
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->scene_signature = 0u;
     impl_->initialized = false;
