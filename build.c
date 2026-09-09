@@ -124,5 +124,13 @@ void build(C_Build *b)
     c_sources(pathtracer_alpha_slot_contract, "tests/pathtracer_alpha_slot_contract.cpp");
     configureContract(pathtracer_alpha_slot_contract);
 
+    C_Target *rasterizer_material_stability_contract = c_test(b, "rasterizer-material-stability-contract");
+    c_sources(rasterizer_material_stability_contract, "tests/rasterizer_material_stability_contract.cpp");
+    configureContract(rasterizer_material_stability_contract);
+
+    C_Target *pathtracer_motion_reconstruction_contract = c_test(b, "pathtracer-motion-reconstruction-contract");
+    c_sources(pathtracer_motion_reconstruction_contract, "tests/pathtracer_motion_reconstruction_contract.cpp");
+    configureContract(pathtracer_motion_reconstruction_contract);
+
     c_default_target(b, library);
 }
