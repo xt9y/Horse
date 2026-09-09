@@ -9,7 +9,6 @@ struct PathTracerSettings {
     bool enabled = true;
     int resolution_divisor = 4;
     int samples_per_frame = 1;
-    int max_bounces = 3;
     float exposure = 1.0f;
 };
 
