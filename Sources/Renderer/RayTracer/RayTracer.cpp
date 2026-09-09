@@ -114,7 +114,7 @@ struct RayTracer::Impl {
 
     void updateResolution()
     {
-        const int divisor = std::clamp(settings.resolution_divisor, 1, 4);
+        const int divisor = std::clamp(settings.resolution_divisor, 4, 8);
         trace_width = std::max(width / divisor, 1);
         trace_height = std::max(height / divisor, 1);
     }
