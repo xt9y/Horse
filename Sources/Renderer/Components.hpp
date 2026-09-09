@@ -50,6 +50,12 @@ struct LightComponent {
     float intensity = 1.0f;
 };
 
+struct GlobalIlluminationComponent {
+    bool enabled = true;
+    float intensity = 1.0f;
+    std::uint8_t bounces = 2;
+};
+
 } // namespace Renderer
 
 #endif
