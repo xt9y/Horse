@@ -88,5 +88,9 @@ void build(C_Build *b)
     c_sources(camera_view_contract, "Sources/Renderer/Math.cpp");
     configureContract(camera_view_contract);
 
+    C_Target *opengl_present_contract = c_test(b, "opengl-present-contract");
+    c_sources(opengl_present_contract, "tests/opengl_present_contract.cpp");
+    configureContract(opengl_present_contract);
+
     c_default_target(b, library);
 }
