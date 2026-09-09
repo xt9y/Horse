@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace Renderer::Internal {
@@ -13,10 +15,15 @@ constexpr std::size_t kHeaderVec4Count = 4u;
 
 LWMGLBuffer buffer = nullptr;
 std::size_t capacity = 0u;
+std::uint64_t uploaded_revision = std::numeric_limits<std::uint64_t>::max();
+bool uploaded_valid = false;
 
 bool upload(const GlobalIllumination::Field *field)
 {
     const bool valid = field && field->valid();
+    const std::uint64_t revision = valid ? field->revision : 0u;
+    if (buffer && revision == uploaded_revision && valid == uploaded_valid) return true;
+
     const std::size_t probe_count = valid ? field->probes.size() : 0u;
     std::vector<float> data((kHeaderVec4Count + probe_count * 4u) * 4u, 0.0f);
 
@@ -58,10 +65,13 @@ bool upload(const GlobalIllumination::Field *field)
             return false;
         }
         capacity = bytes;
-        return true;
+    } else if (Metal.uploadBuffer(buffer, 0u, data.data(), bytes) != 0) {
+        return false;
     }
 
-    return Metal.uploadBuffer(buffer, 0u, data.data(), bytes) == 0;
+    uploaded_revision = revision;
+    uploaded_valid = valid;
+    return true;
 }
 
 } // namespace
@@ -81,6 +91,8 @@ void shutdownGlobalIlluminationMetal()
     if (buffer) Metal.destroyBuffer(buffer);
     buffer = nullptr;
     capacity = 0u;
+    uploaded_revision = std::numeric_limits<std::uint64_t>::max();
+    uploaded_valid = false;
 }
 
 } // namespace Renderer::Internal
