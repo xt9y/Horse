@@ -5,10 +5,7 @@
 
 namespace Renderer::Internal {
 
-void bindGlobalIlluminationOpenGL(
-    unsigned int program,
-    const GlobalIllumination::Field *field
-);
+void bindGlobalIlluminationOpenGL(const GlobalIllumination::Field *field);
 void shutdownGlobalIlluminationOpenGL();
 
 } // namespace Renderer::Internal
