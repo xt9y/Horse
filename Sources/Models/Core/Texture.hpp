@@ -18,6 +18,11 @@ struct TextureAsset {
 };
 
 TextureHandle loadTexture(const std::string& path, std::string *error = nullptr);
+TextureHandle loadTextureWithOpacity(
+    const std::string& color_path,
+    const std::string& opacity_path,
+    std::string *error = nullptr
+);
 TextureHandle loadTextureMemory(
     const std::string& cache_key,
     const void *data,
