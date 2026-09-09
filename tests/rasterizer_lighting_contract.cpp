@@ -15,17 +15,18 @@ static std::string read(const char *path)
 int main()
 {
     const std::string source = read("Sources/Renderer/Rasterizer/Rasterizer.cpp");
+    const std::string shaders = read("Sources/Renderer/Rasterizer/RasterizerShaders.hpp");
 
-    assert(source.find("#version 120") != std::string::npos);
-    assert(source.find("sampler3D uGi0") != std::string::npos);
+    assert(shaders.find("#version 120") != std::string::npos);
+    assert(shaders.find("sampler3D uGi0") != std::string::npos);
     assert(source.find("uploadGlobalIllumination") != std::string::npos);
     assert(source.find("GLModern.glTexImage3D") != std::string::npos);
     assert(source.find("GlobalIllumination::sample(gi") == std::string::npos);
 
     assert(source.find("renderPointShadowMaps") != std::string::npos);
-    assert(source.find("uShadow0") != std::string::npos);
-    assert(source.find("shadowVisibility") != std::string::npos);
+    assert(shaders.find("uShadow0") != std::string::npos);
+    assert(shaders.find("shadowVisibility") != std::string::npos);
     assert(source.find("glCopyTexSubImage2D") != std::string::npos);
-    assert(source.find("discard") != std::string::npos);
+    assert(shaders.find("discard") != std::string::npos);
     return 0;
 }
