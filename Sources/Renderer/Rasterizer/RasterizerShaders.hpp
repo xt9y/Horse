@@ -101,6 +101,13 @@ float shadowDepth(int face, vec2 uv)
     return decodeDepth(texture2D(uShadow5, uv).rgb);
 }
 
+float shadowCompare(int face, vec2 uv, float current, float bias)
+{
+    float half_texel = uShadowTexel * 0.5;
+    vec2 safe_uv = clamp(uv, vec2(half_texel), vec2(1.0 - half_texel));
+    return current - bias <= shadowDepth(face, safe_uv) ? 1.0 : 0.0;
+}
+
 float shadowVisibility(vec3 position, vec3 normal, vec3 light_direction)
 {
     if (uHasShadow == 0 || uShadowFar <= 0.0) return 1.0;
@@ -108,7 +115,7 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 light_direction)
     vec3 n = normalize(normal);
     vec3 l = normalize(light_direction);
     float slope = 1.0 - max(dot(n, l), 0.0);
-    float normal_bias = max(0.001, uShadowFar * (0.0015 + slope * 0.0025));
+    float normal_bias = max(0.001, uShadowFar * (0.0012 + slope * 0.0020));
     vec3 receiver_position = position + n * normal_bias;
 
     vec3 delta = receiver_position - uLightPosition;
@@ -121,15 +128,16 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 light_direction)
     if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) return 1.0;
 
     float current = clamp(length(delta) / uShadowFar, 0.0, 1.0);
-    float depth_bias = 0.0015 + slope * 0.0025;
+    float depth_bias = 0.0012 + slope * 0.0020;
 
-    vec2 o = vec2(uShadowTexel, uShadowTexel);
     float visibility = 0.0;
-    visibility += current - depth_bias <= shadowDepth(face, uv + vec2(-o.x, -o.y)) ? 1.0 : 0.0;
-    visibility += current - depth_bias <= shadowDepth(face, uv + vec2( o.x, -o.y)) ? 1.0 : 0.0;
-    visibility += current - depth_bias <= shadowDepth(face, uv + vec2(-o.x,  o.y)) ? 1.0 : 0.0;
-    visibility += current - depth_bias <= shadowDepth(face, uv + vec2( o.x,  o.y)) ? 1.0 : 0.0;
-    return visibility * 0.25;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 offset = vec2(float(x), float(y)) * uShadowTexel;
+            visibility += shadowCompare(face, uv + offset, current, depth_bias);
+        }
+    }
+    return visibility / 9.0;
 }
 
 vec3 sampleGi(vec3 position, vec3 normal)
@@ -176,9 +184,6 @@ void main()
     vec3 linear_texture = pow(max(texel.rgb, vec3(0.0)), vec3(2.2));
     vec3 albedo = max(uBaseColor.rgb * linear_texture, vec3(0.0));
 
-    // Bound illumination before applying the material. This keeps arbitrarily
-    // strong lights from erasing diffuse texture/albedo detail by driving the
-    // material result itself into the tone-map ceiling.
     vec3 irradiance = max((direct + indirect) * (1.0 / PI), vec3(0.0));
     vec3 bounded_irradiance = vec3(1.0) - exp(-irradiance);
     vec3 linear_color = albedo * clamp(bounded_irradiance + vec3(0.025), vec3(0.0), vec3(1.0));
