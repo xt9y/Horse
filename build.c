@@ -88,6 +88,10 @@ void build(C_Build *b)
     c_sources(camera_view_contract, "Sources/Renderer/Math.cpp");
     configureContract(camera_view_contract);
 
+    C_Target *camera_mouse_grab_contract = c_test(b, "camera-mouse-grab-contract");
+    c_sources(camera_mouse_grab_contract, "tests/camera_mouse_grab_contract.cpp");
+    configureContract(camera_mouse_grab_contract);
+
     C_Target *opengl_present_contract = c_test(b, "opengl-present-contract");
     c_sources(opengl_present_contract, "tests/opengl_present_contract.cpp");
     configureContract(opengl_present_contract);
