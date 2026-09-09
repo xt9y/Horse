@@ -12,20 +12,17 @@ static std::string read(const char *path)
     return out.str();
 }
 
-static void check(const std::string& source)
-{
-    const std::size_t sync = source.find("bool syncScene(");
-    assert(sync != std::string::npos);
-    const std::size_t material_index = source.find("auto materialIndex", sync);
-    assert(material_index != std::string::npos);
-    const std::size_t alpha_priority = source.find("meaningful_alpha", sync);
-    assert(alpha_priority != std::string::npos);
-    assert(alpha_priority < material_index);
-}
-
 int main()
 {
-    check(read("Sources/Renderer/PathTracer/PathTracer.cpp"));
-    check(read("Sources/Renderer/PathTracer/PathTracerMetal.cpp"));
+    const std::string scene = read("Sources/Renderer/Scene.cpp");
+    const std::string gl = read("Sources/Renderer/PathTracer/PathTracer.cpp");
+    const std::string metal = read("Sources/Renderer/PathTracer/PathTracerMetal.cpp");
+
+    assert(scene.find("std::stable_partition") != std::string::npos);
+    assert(scene.find("meaningful_alpha") != std::string::npos);
+    assert(scene.find("Models::texture") != std::string::npos);
+
+    assert(gl.find("kMaximumTextureSlots = 16u") != std::string::npos);
+    assert(metal.find("kMaximumTextureSlots = 16u") != std::string::npos);
     return 0;
 }
