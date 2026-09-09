@@ -85,6 +85,7 @@ const int MAX_SHADOW_STEPS = 4096;
 const int STATIONARY_PHASE_GRID = 2;
 const int RESET_PHASE_GRID = 1;
 const int MOVING_PHASE_GRID = 4;
+const int MOVING_DEPTH_BLOCK = 2;
 
 struct Hit {
     bool found;
@@ -224,6 +225,23 @@ Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
     return best;
 }
 
+float deterministicDepth(vec2 sample_pixel)
+{
+    vec2 depth_uv = sample_pixel / uResolution;
+    vec2 depth_ndc = depth_uv * 2.0 - 1.0;
+    vec3 depth_direction = normalize(
+        uCameraForward +
+        uCameraRight * (depth_ndc.x * uAspect * uTanHalfFov) +
+        uCameraUp * (depth_ndc.y * uTanHalfFov)
+    );
+    Hit depth_hit = traceClosest(uCameraPosition, depth_direction, INF);
+    if (!depth_hit.found) return INF;
+    return max(
+        dot(depth_hit.position - uCameraPosition, normalize(uCameraForward)),
+        RAY_EPSILON
+    );
+}
+
 bool traceAny(vec3 origin, vec3 direction, float max_distance)
 {
     if (uNodeCount <= 0 || uTriangleCount <= 0 || max_distance <= RAY_EPSILON) return false;
@@ -307,23 +325,15 @@ vec3 cosineHemisphere(vec3 normal, inout uint state)
     return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
 }
 
-vec3 tracePath(vec3 origin, vec3 direction, inout uint state, out float primary_depth)
+vec3 tracePath(vec3 origin, vec3 direction, inout uint state)
 {
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
-    primary_depth = INF;
     int bounce_count = clamp(uMaxBounces, 1, 4);
 
     for (int bounce = 0; bounce < bounce_count; ++bounce) {
         Hit hit = traceClosest(origin, direction, INF);
         if (!hit.found) break;
-
-        if (bounce == 0) {
-            primary_depth = max(
-                dot(hit.position - uCameraPosition, normalize(uCameraForward)),
-                RAY_EPSILON
-            );
-        }
 
         vec3 albedo = materialAlbedo(hit.material, hit.uv);
 
@@ -367,6 +377,26 @@ void main()
         imageStore(uAccumulation, pixel, vec4(0.0));
     }
 
+    if (uCameraMoving != 0) {
+        if ((pixel.x % MOVING_DEPTH_BLOCK) == 0 && (pixel.y % MOVING_DEPTH_BLOCK) == 0) {
+            vec2 sample_pixel = min(
+                vec2(pixel) + vec2(float(MOVING_DEPTH_BLOCK) * 0.5),
+                uResolution - vec2(0.5)
+            );
+            float depth_value = deterministicDepth(sample_pixel);
+            ivec2 block_end = min(pixel + ivec2(MOVING_DEPTH_BLOCK), size);
+            for (int y = pixel.y; y < block_end.y; ++y) {
+                for (int x = pixel.x; x < block_end.x; ++x) {
+                    ivec2 target = ivec2(x, y);
+                    imageStore(uPrimaryDepth, target, vec4(depth_value, 0.0, 0.0, 1.0));
+                }
+            }
+        }
+    } else if (uResetAccumulation != 0) {
+        float depth_value = deterministicDepth(vec2(pixel) + vec2(0.5));
+        imageStore(uPrimaryDepth, pixel, vec4(depth_value, 0.0, 0.0, 1.0));
+    }
+
     int phase_grid = uCameraMoving != 0 ? MOVING_PHASE_GRID :
         (uResetAccumulation != 0 ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID);
     int phase_count = phase_grid * phase_grid;
@@ -394,10 +424,7 @@ void main()
         uCameraUp * (ndc.y * uTanHalfFov)
     );
 
-    float primary_depth = INF;
-    vec3 sample_radiance = tracePath(uCameraPosition, direction, state, primary_depth);
-    imageStore(uPrimaryDepth, pixel, vec4(primary_depth, 0.0, 0.0, 0.0));
-
+    vec3 sample_radiance = tracePath(uCameraPosition, direction, state);
     vec4 previous = uResetAccumulation != 0 ? vec4(0.0) : imageLoad(uAccumulation, pixel);
     imageStore(uAccumulation, pixel, vec4(previous.rgb + sample_radiance, previous.a + 1.0));
 }
