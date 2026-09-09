@@ -5,6 +5,8 @@
 #include "Models/Core/Texture.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/Math.hpp"
+#include "Renderer/Scene.hpp"
 #include "Renderer/PathTracer/PathTracerShaders.hpp"
 
 #include <lwcgl/glmodern.h>
@@ -31,13 +33,14 @@
 namespace Renderer {
 namespace {
 
-using Mat4 = std::array<float, 16>;
-
-struct Vec3f {
-    float x = 0.0f;
-    float y = 0.0f;
-    float z = 0.0f;
-};
+using Mat4 = Math::Mat4;
+using Vec3f = Vec3;
+using Math::cross;
+using Math::inverseModelMatrix;
+using Math::modelMatrix;
+using Math::normalize;
+using Math::transformNormal;
+using Math::transformPoint;
 
 constexpr float kPi = 3.14159265358979323846f;
 constexpr std::uint32_t kLeafBit = 0x80000000u;
@@ -48,28 +51,6 @@ constexpr std::size_t kMaximumTextureSlots = 16u;
 Vec3f subtract(const Vec3f& a, const Vec3f& b)
 {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-float dot(const Vec3f& a, const Vec3f& b)
-{
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-Vec3f cross(const Vec3f& a, const Vec3f& b)
-{
-    return {
-        a.y * b.z - a.z * b.y,
-        a.z * b.x - a.x * b.z,
-        a.x * b.y - a.y * b.x,
-    };
-}
-
-Vec3f normalize(const Vec3f& value)
-{
-    const float length_squared = dot(value, value);
-    if (length_squared <= 1.0e-20f) return {0.0f, 1.0f, 0.0f};
-    const float inverse_length = 1.0f / std::sqrt(length_squared);
-    return {value.x * inverse_length, value.y * inverse_length, value.z * inverse_length};
 }
 
 Vec3f minVec(const Vec3f& a, const Vec3f& b)
@@ -85,143 +66,6 @@ Vec3f maxVec(const Vec3f& a, const Vec3f& b)
 float component(const Vec3f& value, int axis)
 {
     return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
-}
-
-Mat4 identityMatrix()
-{
-    return {
-        1.0f, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f, 0.0f, 0.0f,
-        0.0f, 0.0f, 1.0f, 0.0f,
-        0.0f, 0.0f, 0.0f, 1.0f,
-    };
-}
-
-Mat4 multiply(const Mat4& a, const Mat4& b)
-{
-    Mat4 result{};
-    for (int column = 0; column < 4; ++column) {
-        for (int row = 0; row < 4; ++row) {
-            for (int k = 0; k < 4; ++k) {
-                result[column * 4 + row] += a[k * 4 + row] * b[column * 4 + k];
-            }
-        }
-    }
-    return result;
-}
-
-Mat4 translation(float x, float y, float z)
-{
-    Mat4 result = identityMatrix();
-    result[12] = x;
-    result[13] = y;
-    result[14] = z;
-    return result;
-}
-
-Mat4 scaling(float x, float y, float z)
-{
-    Mat4 result{};
-    result[0] = x;
-    result[5] = y;
-    result[10] = z;
-    result[15] = 1.0f;
-    return result;
-}
-
-Mat4 rotationX(float degrees)
-{
-    const float radians = degrees * (kPi / 180.0f);
-    const float cosine = std::cos(radians);
-    const float sine = std::sin(radians);
-    Mat4 result = identityMatrix();
-    result[5] = cosine;
-    result[6] = sine;
-    result[9] = -sine;
-    result[10] = cosine;
-    return result;
-}
-
-Mat4 rotationY(float degrees)
-{
-    const float radians = degrees * (kPi / 180.0f);
-    const float cosine = std::cos(radians);
-    const float sine = std::sin(radians);
-    Mat4 result = identityMatrix();
-    result[0] = cosine;
-    result[2] = -sine;
-    result[8] = sine;
-    result[10] = cosine;
-    return result;
-}
-
-Mat4 rotationZ(float degrees)
-{
-    const float radians = degrees * (kPi / 180.0f);
-    const float cosine = std::cos(radians);
-    const float sine = std::sin(radians);
-    Mat4 result = identityMatrix();
-    result[0] = cosine;
-    result[1] = sine;
-    result[4] = -sine;
-    result[5] = cosine;
-    return result;
-}
-
-Mat4 modelMatrix(const Transform& transform)
-{
-    return multiply(
-        multiply(
-            multiply(
-                multiply(
-                    translation(transform.position.x, transform.position.y, transform.position.z),
-                    rotationX(transform.rotation.x)
-                ),
-                rotationY(transform.rotation.y)
-            ),
-            rotationZ(transform.rotation.z)
-        ),
-        scaling(transform.scale.x, transform.scale.y, transform.scale.z)
-    );
-}
-
-Mat4 inverseModelMatrix(const Transform& transform)
-{
-    const float x = std::abs(transform.scale.x) > 1.0e-8f ? 1.0f / transform.scale.x : 0.0f;
-    const float y = std::abs(transform.scale.y) > 1.0e-8f ? 1.0f / transform.scale.y : 0.0f;
-    const float z = std::abs(transform.scale.z) > 1.0e-8f ? 1.0f / transform.scale.z : 0.0f;
-
-    return multiply(
-        multiply(
-            multiply(
-                multiply(
-                    scaling(x, y, z),
-                    rotationZ(-transform.rotation.z)
-                ),
-                rotationY(-transform.rotation.y)
-            ),
-            rotationX(-transform.rotation.x)
-        ),
-        translation(-transform.position.x, -transform.position.y, -transform.position.z)
-    );
-}
-
-Vec3f transformPoint(const Mat4& matrix, const Vec3f& point)
-{
-    return {
-        matrix[0] * point.x + matrix[4] * point.y + matrix[8] * point.z + matrix[12],
-        matrix[1] * point.x + matrix[5] * point.y + matrix[9] * point.z + matrix[13],
-        matrix[2] * point.x + matrix[6] * point.y + matrix[10] * point.z + matrix[14],
-    };
-}
-
-Vec3f transformNormal(const Mat4& world_to_object, const Vec3f& normal)
-{
-    return normalize({
-        world_to_object[0] * normal.x + world_to_object[1] * normal.y + world_to_object[2] * normal.z,
-        world_to_object[4] * normal.x + world_to_object[5] * normal.y + world_to_object[6] * normal.z,
-        world_to_object[8] * normal.x + world_to_object[9] * normal.y + world_to_object[10] * normal.z,
-    });
 }
 
 void hashValue(std::uint64_t& hash, std::uint32_t value)
@@ -463,6 +307,7 @@ struct PathTracer::Impl {
     std::vector<GpuNode> gpu_nodes;
     std::vector<GpuTriangle> gpu_triangles;
     std::vector<GpuMaterial> gpu_materials;
+    std::vector<Scene::RenderItem> render_items;
     std::array<GLuint, kMaximumTextureSlots> texture_slots{};
     std::size_t texture_slot_count = 0u;
 
@@ -733,56 +578,51 @@ struct PathTracer::Impl {
         return node_index;
     }
 
-    std::uint64_t sceneSignature(const Ecs::World& world) const
-    {
-        std::uint64_t hash = 1469598103934665603ull;
-        for (const Ecs::Entity entity : world.entities()) {
-            const RenderableComponent *renderable = world.get<RenderableComponent>(entity);
-            const MeshComponent *mesh = world.get<MeshComponent>(entity);
-            const Transform *transform = world.get<Transform>(entity);
-            if (!renderable || !renderable->visible || !mesh || !transform) continue;
+std::uint64_t sceneSignature(
+    const Ecs::World& world,
+    const std::vector<Scene::RenderItem>& items
+) const
+{
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const Scene::RenderItem& item : items) {
+        hashValue(hash, item.entity);
+        hashValue(hash, item.mesh_component->mesh);
+        hashValue(hash, item.mesh_component->material);
+        hashTransform(hash, *item.transform);
 
-            hashValue(hash, entity);
-            hashValue(hash, mesh->mesh);
-            hashValue(hash, mesh->material);
-            hashTransform(hash, *transform);
-
-            const Animation::SkinBindingComponent *binding = world.get<Animation::SkinBindingComponent>(entity);
-            if (binding && binding->animator != Ecs::INVALID_ENTITY) {
-                const Animation::AnimatorComponent *animator =
-                    world.get<Animation::AnimatorComponent>(binding->animator);
-                if (animator) {
-                    hashValue(hash, binding->animator);
-                    hashValue(hash, animator->pose.revision);
-                }
-            }
+        const Animation::SkinBindingComponent *binding =
+  world.get<Animation::SkinBindingComponent>(item.entity);
+        if (binding && binding->animator != Ecs::INVALID_ENTITY) {
+  const Animation::AnimatorComponent *animator =
+      world.get<Animation::AnimatorComponent>(binding->animator);
+  if (animator) {
+      hashValue(hash, binding->animator);
+      hashValue(hash, animator->pose.revision);
+  }
         }
-        return hash;
     }
+    return hash;
+}
 
-    CameraState cameraState(const Ecs::World& world) const
-    {
-        CameraState state;
-        const Ecs::Entity camera_entity = Camera::activeCamera(world);
-        if (camera_entity == Ecs::INVALID_ENTITY) return state;
+CameraState cameraState(const Scene::CameraState& source) const
+{
+    CameraState state;
+    if (!source.valid) return state;
 
-        const Transform *transform = world.get<Transform>(camera_entity);
-        const Camera::CameraComponent *camera = world.get<Camera::CameraComponent>(camera_entity);
-        if (!transform || !camera) return state;
+    const Vec3 forward = Camera::flightDirection(
+        source.transform.rotation.y,
+        source.transform.rotation.x
+    );
+    const Vec3 right = Camera::strafeDirection(source.transform.rotation.y);
 
-        const Vec3 forward_value = Camera::flightDirection(transform->rotation.y, transform->rotation.x);
-        const Vec3 right_value = Camera::strafeDirection(transform->rotation.y);
-        const Vec3f forward{forward_value.x, forward_value.y, forward_value.z};
-        const Vec3f right{right_value.x, right_value.y, right_value.z};
-
-        state.valid = true;
-        state.position = {transform->position.x, transform->position.y, transform->position.z};
-        state.forward = normalize(forward);
-        state.right = normalize(right);
-        state.up = normalize(cross(state.right, state.forward));
-        state.fov_degrees = std::clamp(camera->fov_degrees, 1.0f, 179.0f);
-        return state;
-    }
+    state.valid = true;
+    state.position = source.transform.position;
+    state.forward = normalize(forward);
+    state.right = normalize(right);
+    state.up = normalize(cross(state.right, state.forward));
+    state.fov_degrees = std::clamp(source.fov_degrees, 1.0f, 179.0f);
+    return state;
+}
 
     std::uint64_t cameraSignature(const CameraState& camera) const
     {
@@ -798,20 +638,17 @@ struct PathTracer::Impl {
         return hash;
     }
 
-    LightState lightState(const Ecs::World& world) const
-    {
-        LightState result;
-        world.each<LightComponent, Transform>(
-            [&](Ecs::Entity, const LightComponent& light, const Transform& transform) {
-                if (result.valid || light.type != LightType::Point) return;
-                result.valid = true;
-                result.position = {transform.position.x, transform.position.y, transform.position.z};
-                result.color = {light.color.x, light.color.y, light.color.z};
-                result.intensity = std::max(light.intensity, 0.0f);
-            }
-        );
-        return result;
-    }
+LightState lightState(const Scene::LightState& source) const
+{
+    LightState result;
+    if (!source.valid || source.light.type != LightType::Point) return result;
+
+    result.valid = true;
+    result.position = source.transform.position;
+    result.color = source.light.color;
+    result.intensity = std::max(source.light.intensity, 0.0f);
+    return result;
+}
 
     std::uint64_t lightSignature(const LightState& light) const
     {
@@ -827,7 +664,10 @@ struct PathTracer::Impl {
         return hash;
     }
 
-    bool syncScene(const Ecs::World& world)
+    bool syncScene(
+        const Ecs::World& world,
+        const std::vector<Scene::RenderItem>& items
+    )
     {
         gpu_nodes.clear();
         gpu_triangles.clear();
@@ -877,18 +717,16 @@ struct PathTracer::Impl {
 
         gpu_triangles.reserve(262144u);
 
-        for (const Ecs::Entity entity : world.entities()) {
-            if (gpu_triangles.size() >= kMaximumTriangles) break;
+        for (const Scene::RenderItem& item : items) {
+    if (gpu_triangles.size() >= kMaximumTriangles) break;
 
-            const RenderableComponent *renderable = world.get<RenderableComponent>(entity);
-            const MeshComponent *mesh_component = world.get<MeshComponent>(entity);
-            const Transform *transform = world.get<Transform>(entity);
-            if (!renderable || !renderable->visible || !mesh_component || !transform) continue;
+    const Ecs::Entity entity = item.entity;
+    const MeshComponent *mesh_component = item.mesh_component;
+    const Transform *transform = item.transform;
+    const Models::MeshData *mesh = item.mesh;
+    if (!mesh || mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
 
-            const Models::MeshData *mesh = Models::mesh(mesh_component->mesh);
-            if (!mesh || mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
-
-            const Models::MaterialData *material = Models::material(mesh_component->material);
+    const Models::MaterialData *material = item.material;
             if (material && material->opacity < 0.5f) continue;
 
             const std::uint32_t material_index = materialIndex(mesh_component->material);
@@ -1214,21 +1052,25 @@ void PathTracer::render(const Ecs::World& world)
         }
     }
 
-    const Impl::CameraState camera = impl_->cameraState(world);
+    const Scene::CameraState scene_camera = Scene::cameraState(world);
+    const Impl::CameraState camera = impl_->cameraState(scene_camera);
     if (!camera.valid) {
         glClear(GL_COLOR_BUFFER_BIT);
         return;
     }
 
-    const Impl::LightState light = impl_->lightState(world);
+    const Scene::LightState scene_light = Scene::lightState(world);
+    const Impl::LightState light = impl_->lightState(scene_light);
     const std::uint64_t next_camera_signature = impl_->cameraSignature(camera);
     const std::uint64_t next_light_signature = impl_->lightSignature(light);
     const std::uint64_t next_world_revision = world.changeRevision();
 
     if (next_world_revision != impl_->world_revision) {
-        const std::uint64_t next_scene_signature = impl_->sceneSignature(world);
+        Scene::collectRenderItems(world, impl_->render_items);
+        const std::uint64_t next_scene_signature =
+            impl_->sceneSignature(world, impl_->render_items);
         if (next_scene_signature != impl_->scene_signature) {
-            if (!impl_->syncScene(world)) {
+            if (!impl_->syncScene(world, impl_->render_items)) {
                 std::fprintf(stderr, "[PathTracer]: failed to synchronize world cache\n");
                 return;
             }
@@ -1275,6 +1117,7 @@ void PathTracer::shutdown()
     impl_->gpu_nodes.clear();
     impl_->gpu_triangles.clear();
     impl_->gpu_materials.clear();
+    impl_->render_items.clear();
     impl_->texture_slots.fill(0u);
     impl_->texture_slot_count = 0u;
     impl_->scene_signature = 0u;
