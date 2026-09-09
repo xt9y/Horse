@@ -181,12 +181,17 @@ bool load(const std::string& path, Document *document, std::string *error)
             std::string library;
             std::getline(stream >> std::ws, library);
             MaterialMap loaded;
-            std::string ignored_error;
+            std::string material_error;
             const std::filesystem::path material_path =
                 (object_path.parent_path() / library).lexically_normal();
-            if (loadMaterialLibrary(material_path.string(), &loaded, &ignored_error)) {
-                materials.insert(loaded.begin(), loaded.end());
+            if (!loadMaterialLibrary(material_path.string(), &loaded, &material_error)) {
+                if (error) {
+                    *error = "failed to load OBJ material library '" + material_path.string() + "'";
+                    if (!material_error.empty()) *error += ": " + material_error;
+                }
+                return false;
             }
+            materials.insert(loaded.begin(), loaded.end());
         } else if (key == "usemtl") {
             std::string name;
             std::getline(stream >> std::ws, name);
