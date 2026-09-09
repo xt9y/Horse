@@ -30,6 +30,8 @@ int main()
     const std::string textures = read("Sources/Renderer/Systems/OpenGL/TextureCache.hpp");
     const std::string gl_resources = read("Sources/Renderer/Systems/OpenGLSceneResources.cpp");
     const std::string metal_resources = read("Sources/Renderer/Systems/MetalSceneResources.hpp");
+    const std::string gi_gl = read("Sources/Renderer/GlobalIlluminationOpenGL.cpp");
+    const std::string gi_metal = read("Sources/Renderer/GlobalIlluminationMetal.cpp");
     const std::string rasterizer = read("Sources/Renderer/Rasterizer/Rasterizer.cpp");
     const std::string pathtracer = read("Sources/Renderer/PathTracer/PathTracer.cpp");
     const std::string pathtracer_metal = read("Sources/Renderer/PathTracer/PathTracerMetal.cpp");
@@ -41,6 +43,10 @@ int main()
     const std::string build = read("build.c");
 
     assert(camera.find("world.markChanged()") == std::string::npos);
+    assert(gi_gl.find("uploaded_revision") != std::string::npos);
+    assert(gi_gl.find("revision == uploaded_revision") != std::string::npos);
+    assert(gi_metal.find("uploaded_revision") != std::string::npos);
+    assert(gi_metal.find("revision == uploaded_revision") != std::string::npos);
 
     assert(scene.find("namespace Renderer::Systems::Scene") != std::string::npos);
     assert(scene_compat.find("namespace Scene = Systems::Scene") != std::string::npos);
