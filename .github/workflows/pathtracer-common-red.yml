@@ -1,0 +1,29 @@
+name: PathTracer Common RED
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pathtracer-common-red.yml'
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require common renderer modules in both PathTracer backends
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for path in (
+              Path('Sources/Renderer/PathTracer/PathTracer.cpp'),
+              Path('Sources/Renderer/PathTracer/PathTracerMetal.cpp'),
+          ):
+              source = path.read_text()
+              assert '#include "Renderer/Math.hpp"' in source, path
+              assert '#include "Renderer/Scene.hpp"' in source, path
+              assert 'Scene::collectRenderItems' in source, path
+              assert 'Scene::cameraState' in source, path
+              assert 'Scene::lightState' in source, path
+          PY
