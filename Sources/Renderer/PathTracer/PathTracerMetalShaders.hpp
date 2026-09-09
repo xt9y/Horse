@@ -71,6 +71,7 @@ constant int MAX_SHADOW_STEPS = 4096;
 constant uint STATIONARY_PHASE_GRID = 2u;
 constant uint RESET_PHASE_GRID = 1u;
 constant uint MOVING_PHASE_GRID = 4u;
+constant uint MOVING_DEPTH_BLOCK = 2u;
 
 uint hashUint(uint value)
 {
@@ -208,6 +209,41 @@ Hit traceClosest(
     return best;
 }
 
+float deterministicDepth(
+    float2 sample_pixel,
+    uint2 size,
+    device const Node *nodes,
+    device const Triangle *triangles,
+    constant TraceUniforms& uniforms)
+{
+    float2 depth_uv = sample_pixel / float2(size);
+    float2 depth_ndc = depth_uv * 2.0f - 1.0f;
+    depth_ndc.y = -depth_ndc.y;
+    float3 depth_direction = normalize(
+        uniforms.camera_forward.xyz +
+        uniforms.camera_right.xyz * (
+            depth_ndc.x * uniforms.resolution_aspect.z * uniforms.light_color_tan_half_fov.w
+        ) +
+        uniforms.camera_up.xyz * (depth_ndc.y * uniforms.light_color_tan_half_fov.w)
+    );
+    Hit depth_hit = traceClosest(
+        uniforms.camera_position.xyz,
+        depth_direction,
+        INF,
+        nodes,
+        triangles,
+        uniforms
+    );
+    if (!depth_hit.found) return INF;
+    return max(
+        dot(
+            depth_hit.position - uniforms.camera_position.xyz,
+            normalize(uniforms.camera_forward.xyz)
+        ),
+        RAY_EPSILON
+    );
+}
+
 bool traceAny(
     float3 origin,
     float3 direction,
@@ -319,27 +355,15 @@ float3 tracePath(
     device const Material *materials,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 16> textures,
-    sampler material_sampler,
-    thread float& primary_depth)
+    sampler material_sampler)
 {
     float3 radiance = float3(0.0f);
     float3 throughput = float3(1.0f);
-    primary_depth = INF;
     int bounce_count = clamp(uniforms.counts.w, 1, 4);
 
     for (int bounce = 0; bounce < bounce_count; ++bounce) {
         Hit hit = traceClosest(origin, direction, INF, nodes, triangles, uniforms);
         if (!hit.found) break;
-
-        if (bounce == 0) {
-            primary_depth = max(
-                dot(
-                    hit.position - uniforms.camera_position.xyz,
-                    normalize(uniforms.camera_forward.xyz)
-                ),
-                RAY_EPSILON
-            );
-        }
 
         float3 albedo = materialAlbedo(hit.material, hit.uv, materials, uniforms, textures, material_sampler);
 
@@ -392,6 +416,38 @@ kernel void trace_kernel(
     const bool camera_moving = uniforms.frame.w != 0u;
     if (reset) accumulation.write(float4(0.0f), pixel);
 
+    if (camera_moving) {
+        if ((pixel.x % MOVING_DEPTH_BLOCK) == 0u && (pixel.y % MOVING_DEPTH_BLOCK) == 0u) {
+            float2 sample_pixel = min(
+                float2(pixel) + float2(float(MOVING_DEPTH_BLOCK) * 0.5f),
+                float2(size) - float2(0.5f)
+            );
+            float depth_value = deterministicDepth(
+                sample_pixel,
+                size,
+                nodes,
+                triangles,
+                uniforms
+            );
+            uint2 block_end = min(pixel + uint2(MOVING_DEPTH_BLOCK), size);
+            for (uint y = pixel.y; y < block_end.y; ++y) {
+                for (uint x = pixel.x; x < block_end.x; ++x) {
+                    uint2 target = uint2(x, y);
+                    primary_depth.write(float4(depth_value, 0.0f, 0.0f, 1.0f), target);
+                }
+            }
+        }
+    } else if (reset) {
+        float depth_value = deterministicDepth(
+            float2(pixel) + float2(0.5f),
+            size,
+            nodes,
+            triangles,
+            uniforms
+        );
+        primary_depth.write(float4(depth_value, 0.0f, 0.0f, 1.0f), pixel);
+    }
+
     uint phase_grid = camera_moving ? MOVING_PHASE_GRID :
         (reset ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID);
     uint phase_count = phase_grid * phase_grid;
@@ -419,7 +475,6 @@ kernel void trace_kernel(
         uniforms.camera_up.xyz * (ndc.y * uniforms.light_color_tan_half_fov.w)
     );
 
-    float primary_depth_value = INF;
     float3 sample_radiance = tracePath(
         uniforms.camera_position.xyz,
         direction,
@@ -429,10 +484,8 @@ kernel void trace_kernel(
         materials,
         uniforms,
         textures,
-        material_sampler,
-        primary_depth_value
+        material_sampler
     );
-    primary_depth.write(float4(primary_depth_value, 0.0f, 0.0f, 0.0f), pixel);
 
     float4 previous = reset ? float4(0.0f) : accumulation.read(pixel);
     accumulation.write(float4(previous.rgb + sample_radiance, previous.a + 1.0f), pixel);
