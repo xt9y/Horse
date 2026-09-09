@@ -105,9 +105,15 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 light_direction)
 {
     if (uHasShadow == 0 || uShadowFar <= 0.0) return 1.0;
 
-    vec3 delta = position - uLightPosition;
+    vec3 n = normalize(normal);
+    vec3 l = normalize(light_direction);
+    float slope = 1.0 - max(dot(n, l), 0.0);
+    float normal_bias = max(0.001, uShadowFar * (0.0015 + slope * 0.0025));
+    vec3 receiver_position = position + n * normal_bias;
+
+    vec3 delta = receiver_position - uLightPosition;
     int face = shadowFace(delta);
-    vec4 clip = shadowClip(face, position);
+    vec4 clip = shadowClip(face, receiver_position);
     if (clip.w <= 0.0) return 1.0;
 
     vec3 ndc = clip.xyz / clip.w;
@@ -115,15 +121,14 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 light_direction)
     if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0) return 1.0;
 
     float current = clamp(length(delta) / uShadowFar, 0.0, 1.0);
-    float slope = 1.0 - max(dot(normalize(normal), normalize(light_direction)), 0.0);
-    float bias = 0.0015 + slope * 0.0035;
+    float depth_bias = 0.0015 + slope * 0.0025;
 
     vec2 o = vec2(uShadowTexel, uShadowTexel);
     float visibility = 0.0;
-    visibility += current - bias <= shadowDepth(face, uv + vec2(-o.x, -o.y)) ? 1.0 : 0.0;
-    visibility += current - bias <= shadowDepth(face, uv + vec2( o.x, -o.y)) ? 1.0 : 0.0;
-    visibility += current - bias <= shadowDepth(face, uv + vec2(-o.x,  o.y)) ? 1.0 : 0.0;
-    visibility += current - bias <= shadowDepth(face, uv + vec2( o.x,  o.y)) ? 1.0 : 0.0;
+    visibility += current - depth_bias <= shadowDepth(face, uv + vec2(-o.x, -o.y)) ? 1.0 : 0.0;
+    visibility += current - depth_bias <= shadowDepth(face, uv + vec2( o.x, -o.y)) ? 1.0 : 0.0;
+    visibility += current - depth_bias <= shadowDepth(face, uv + vec2(-o.x,  o.y)) ? 1.0 : 0.0;
+    visibility += current - depth_bias <= shadowDepth(face, uv + vec2( o.x,  o.y)) ? 1.0 : 0.0;
     return visibility * 0.25;
 }
 
@@ -168,10 +173,13 @@ void main()
     }
 
     vec3 indirect = sampleGi(vWorldPosition, normal);
-    vec3 albedo = max(uBaseColor.rgb * texel.rgb, vec3(0.0));
-    vec3 lit = albedo * (direct + indirect) * (1.0 / PI);
-    lit += albedo * 0.025;
-    gl_FragColor = vec4(clamp(lit, vec3(0.0), vec3(1.0)), alpha);
+    vec3 linear_texture = pow(max(texel.rgb, vec3(0.0)), vec3(2.2));
+    vec3 albedo = max(uBaseColor.rgb * linear_texture, vec3(0.0));
+    vec3 linear_color = albedo * (direct + indirect) * (1.0 / PI);
+    linear_color += albedo * 0.025;
+    vec3 mapped = linear_color / (vec3(1.0) + linear_color);
+    mapped = pow(mapped, vec3(1.0 / 2.2));
+    gl_FragColor = vec4(mapped, alpha);
 }
 )GLSL";
 
