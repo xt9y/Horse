@@ -77,7 +77,7 @@ in vec4 vColor;
 layout(location = 0) out vec4 outColor;
 void main()
 {
-    vec4 texel = texture(uAtlas, vec2(vUv.x, 1.0 - vUv.y));
+    vec4 texel = texture(uAtlas, vUv);
     if (texel.a * vColor.a < 0.5) discard;
 
     if (vDepthTest > 0.5) {
@@ -188,7 +188,7 @@ void drawFixedBatch(const std::vector<FontVertex>& vertices, bool depth_test)
     glBegin(GL_TRIANGLES);
     for (const FontVertex& vertex : vertices) {
         glColor4f(vertex.color[0], vertex.color[1], vertex.color[2], vertex.color[3]);
-        glTexCoord2f(vertex.uv_depth[0], 1.0f - vertex.uv_depth[1]);
+        glTexCoord2f(vertex.uv_depth[0], vertex.uv_depth[1]);
         glVertex4f(vertex.clip[0], vertex.clip[1], vertex.clip[2], vertex.clip[3]);
     }
     glEnd();
