@@ -76,8 +76,8 @@ int main()
     assert(raytracer_header.find("class RayTracer final : public IRenderer") != std::string::npos);
     assert(raytracer_header.find("struct RayTracerSettings") != std::string::npos);
     assert(raytracer_header.find("int resolution_divisor = 4;") != std::string::npos);
-    assert(raytracer.find("std::clamp(settings.resolution_divisor, 1, 8)") != std::string::npos);
-    assert(raytracer_metal.find("std::clamp(settings.resolution_divisor, 1, 8)") != std::string::npos);
+    assert(raytracer.find("std::clamp(settings.resolution_divisor, 4, 8)") != std::string::npos);
+    assert(raytracer_metal.find("std::clamp(settings.resolution_divisor, 4, 8)") != std::string::npos);
     assert(raytracer_metal.find("Renderer/RayTracer/RayTracerMetalShaders.hpp") != std::string::npos);
     assert(raytracer_metal.find("Renderer/PathTracer/PathTracerMetalShaders.hpp") == std::string::npos);
     assert(raytracer_metal.find("Metal.createTriangleAccelerationStructure") != std::string::npos);
