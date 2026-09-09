@@ -39,6 +39,9 @@ protected:
     void present(Internal::FrameOutput& output) override;
 
 private:
+#ifdef __APPLE__
+    void legacyRender(const Ecs::World& world);
+#endif
     Impl *impl_;
 };
 
