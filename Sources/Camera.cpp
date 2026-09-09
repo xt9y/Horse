@@ -56,10 +56,16 @@ void Controller::update(Ecs::World& world, float delta_seconds)
 
     const Renderer::Transform previous = *transform;
 
-    constexpr float mouse_sensitivity = 0.12f;
-    transform->rotation.y -= static_cast<float>(Mouse.getDX()) * mouse_sensitivity;
-    transform->rotation.x += static_cast<float>(Mouse.getDY()) * mouse_sensitivity;
-    transform->rotation.x = std::clamp(transform->rotation.x, -89.0f, 89.0f);
+    const bool mouse_grabbed = Mouse.isGrabbed() != LWCGL_FALSE;
+    const int mouse_dx = Mouse.getDX();
+    const int mouse_dy = Mouse.getDY();
+
+    if (mouse_grabbed) {
+        constexpr float mouse_sensitivity = 0.12f;
+        transform->rotation.y -= static_cast<float>(mouse_dx) * mouse_sensitivity;
+        transform->rotation.x += static_cast<float>(mouse_dy) * mouse_sensitivity;
+        transform->rotation.x = std::clamp(transform->rotation.x, -89.0f, 89.0f);
+    }
 
     const Renderer::Vec3 forward = flightDirection(
         transform->rotation.y,
