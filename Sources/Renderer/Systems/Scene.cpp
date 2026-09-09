@@ -1,11 +1,11 @@
-#include "Renderer/Scene.hpp"
+#include "Renderer/Systems/Scene.hpp"
 
 #include "Camera.hpp"
 #include "Models/Core/Texture.hpp"
 
 #include <algorithm>
 
-namespace Renderer::Scene {
+namespace Renderer::Systems::Scene {
 namespace {
 
 bool usesAlphaTexture(const RenderItem& item)
@@ -81,4 +81,4 @@ void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
     std::stable_partition(out.begin(), out.end(), usesAlphaTexture);
 }
 
-} // namespace Renderer::Scene
+} // namespace Renderer::Systems::Scene

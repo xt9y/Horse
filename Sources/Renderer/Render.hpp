@@ -6,5 +6,6 @@
 #include "Renderer/Renderer.hpp"
 #include "Renderer/PathTracer/PathTracer.hpp"
 #include "Renderer/Rasterizer/Rasterizer.hpp"
+#include "Renderer/RayTracer/RayTracer.hpp"
 
 #endif

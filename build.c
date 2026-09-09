@@ -66,14 +66,30 @@ void build(C_Build *b)
     c_sources(library, "Sources/*/*.cpp");
     c_sources(library, "Sources/Models/*/*.cpp");
     c_sources(library, "Sources/Renderer/Rasterizer/Rasterizer.cpp");
+
+    // Renderer-wide systems shared by raster, path-traced and ray-traced backends.
+    c_sources(library, "Sources/Renderer/Systems/Scene.cpp");
+    c_sources(library, "Sources/Renderer/Systems/SceneCache.cpp");
+    c_sources(library, "Sources/Renderer/Systems/Uniforms.cpp");
+    c_sources(library, "Sources/Renderer/Systems/OpenGL/Program.cpp");
+    c_sources(library, "Sources/Renderer/Systems/OpenGL/TextureCache.cpp");
+
 #ifdef __APPLE__
+    c_sources(library, "Sources/Renderer/Systems/MetalSceneResources.cpp");
     c_sources(library, "Sources/Renderer/PathTracer/PathTracerMetal.cpp");
+    c_sources(library, "Sources/Renderer/RayTracer/RayTracerMetal.cpp");
 #else
+    c_sources(library, "Sources/Renderer/Systems/OpenGLSceneResources.cpp");
     c_sources(library, "Sources/Renderer/PathTracer/PathTracer.cpp");
+    c_sources(library, "Sources/Renderer/RayTracer/RayTracer.cpp");
 #endif
 
     c_flag(library, "-std=c++20");
     configureLibrary(library);
+
+    C_Target *renderer_systems_contract = c_test(b, "renderer-systems-contract");
+    c_sources(renderer_systems_contract, "tests/renderer_systems_contract.cpp");
+    configureContract(renderer_systems_contract);
 
     c_default_target(b, library);
 }

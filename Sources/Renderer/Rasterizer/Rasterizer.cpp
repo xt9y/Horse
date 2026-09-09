@@ -1,13 +1,14 @@
 #include "Renderer/Rasterizer/Rasterizer.hpp"
 
 #include "Camera.hpp"
-#include "Models/Core/Texture.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Rasterizer/RasterizerShaders.hpp"
-#include "Renderer/Scene.hpp"
+#include "Renderer/Systems/OpenGL/Program.hpp"
+#include "Renderer/Systems/OpenGL/TextureCache.hpp"
+#include "Renderer/Systems/Scene.hpp"
 
 #include <lwcgl/glmodern.h>
 #include <lwcgl/lwcgl.h>
@@ -21,7 +22,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <unordered_map>
 #include <vector>
 
 #ifndef GL_TEXTURE_3D
@@ -119,7 +119,7 @@ void applyInfinitePerspective(float fov_degrees, float aspect, float near_plane)
     glLoadMatrixf(projection);
 }
 
-Math::Mat4 cameraView(const Scene::CameraState& camera)
+Math::Mat4 cameraView(const Systems::Scene::CameraState& camera)
 {
     const Vec3 forward = Math::normalize(Camera::flightDirection(
         camera.transform.rotation.y,
@@ -153,73 +153,6 @@ void hashTransform(std::uint64_t& hash, const Transform& transform)
     hashVec3(hash, transform.position);
     hashVec3(hash, transform.rotation);
     hashVec3(hash, transform.scale);
-}
-
-GLuint compileShader(GLenum stage, const char *source)
-{
-    const GLuint shader = GL20.glCreateShader(stage);
-    if (shader == 0u) return 0u;
-    GL20.glShaderSource(shader, 1, &source, nullptr);
-    GL20.glCompileShader(shader);
-
-    GLint status = 0;
-    GL20.glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-    if (status == GL_TRUE) return shader;
-
-    GLint length = 0;
-    GL20.glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
-    std::vector<char> log(static_cast<std::size_t>(std::max(length, 1)), '\0');
-    GL20.glGetShaderInfoLog(shader, length, nullptr, log.data());
-    std::fprintf(stderr, "[Rasterizer]: shader compile failed: %s\n", log.data());
-    GL20.glDeleteShader(shader);
-    return 0u;
-}
-
-GLuint createProgram(const char *vertex_source, const char *fragment_source)
-{
-    const GLuint vertex = compileShader(GL_VERTEX_SHADER, vertex_source);
-    if (vertex == 0u) return 0u;
-    const GLuint fragment = compileShader(GL_FRAGMENT_SHADER, fragment_source);
-    if (fragment == 0u) {
-        GL20.glDeleteShader(vertex);
-        return 0u;
-    }
-
-    const GLuint program = GL20.glCreateProgram();
-    if (program == 0u) {
-        GL20.glDeleteShader(vertex);
-        GL20.glDeleteShader(fragment);
-        return 0u;
-    }
-
-    GL20.glAttachShader(program, vertex);
-    GL20.glAttachShader(program, fragment);
-    GL20.glLinkProgram(program);
-
-    GLint status = 0;
-    GL20.glGetProgramiv(program, GL_LINK_STATUS, &status);
-    if (status != GL_TRUE) {
-        GLint length = 0;
-        GL20.glGetProgramiv(program, GL_INFO_LOG_LENGTH, &length);
-        std::vector<char> log(static_cast<std::size_t>(std::max(length, 1)), '\0');
-        GL20.glGetProgramInfoLog(program, length, nullptr, log.data());
-        std::fprintf(stderr, "[Rasterizer]: program link failed: %s\n", log.data());
-        GL20.glDeleteProgram(program);
-        GL20.glDeleteShader(vertex);
-        GL20.glDeleteShader(fragment);
-        return 0u;
-    }
-
-    GL20.glDetachShader(program, vertex);
-    GL20.glDetachShader(program, fragment);
-    GL20.glDeleteShader(vertex);
-    GL20.glDeleteShader(fragment);
-    return program;
-}
-
-GLint uniform(GLuint program, const char *name)
-{
-    return GL20.glGetUniformLocation(program, name);
 }
 
 void setInt(GLint location, int value)
@@ -296,11 +229,11 @@ struct Rasterizer::Impl {
     bool enabled = true;
     int width = 1;
     int height = 1;
-    std::unordered_map<std::uint32_t, unsigned int> textures;
-    std::vector<Scene::RenderItem> render_items;
+    Systems::OpenGL::TextureCache textures;
+    std::vector<Systems::Scene::RenderItem> render_items;
 
-    GLuint main_program = 0u;
-    GLuint shadow_program = 0u;
+    Systems::OpenGL::Program main_program;
+    Systems::OpenGL::Program shadow_program;
     MainUniforms main_uniforms{};
     ShadowUniforms shadow_uniforms{};
 
@@ -379,152 +312,91 @@ struct Rasterizer::Impl {
 
     unsigned int fallbackTexture()
     {
-        const auto found = textures.find(Models::INVALID_TEXTURE);
-        if (found != textures.end()) return found->second;
-
-        GLModern.glActiveTexture(GL_TEXTURE0);
-        GLuint texture_id = 0u;
-        glGenTextures(1, &texture_id);
-        if (texture_id == 0u) return 0u;
-
-        const std::uint8_t white[4] = {255u, 255u, 255u, 255u};
-        glBindTexture(GL_TEXTURE_2D, texture_id);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(
-            GL_TEXTURE_2D,
-            0,
-            GL_RGBA,
-            1,
-            1,
-            0,
-            GL_RGBA,
-            GL_UNSIGNED_BYTE,
-            white
-        );
-
-        textures.emplace(Models::INVALID_TEXTURE, texture_id);
-        return texture_id;
+        return textures.white();
     }
 
     unsigned int textureFor(std::uint32_t handle)
     {
-        if (handle == Models::INVALID_TEXTURE) return fallbackTexture();
-        const auto found = textures.find(handle);
-        if (found != textures.end()) return found->second;
-
-        const Models::TextureAsset* asset = Models::texture(handle);
-        if (!asset || asset->image.width <= 0 || asset->image.height <= 0 || asset->image.rgba.empty()) {
-            return 0u;
-        }
-
-        GLModern.glActiveTexture(GL_TEXTURE0);
-        GLuint texture_id = 0u;
-        glGenTextures(1, &texture_id);
-        if (texture_id == 0u) return 0u;
-
-        glBindTexture(GL_TEXTURE_2D, texture_id);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(
-            GL_TEXTURE_2D,
-            0,
-            GL_RGBA,
-            asset->image.width,
-            asset->image.height,
-            0,
-            GL_RGBA,
-            GL_UNSIGNED_BYTE,
-            asset->image.rgba.data()
-        );
-
-        textures.emplace(handle, texture_id);
-        return texture_id;
+        return textures.texture(handle);
     }
 
     void clearTextures()
     {
-        for (const auto& entry : textures) {
-            const GLuint id = static_cast<GLuint>(entry.second);
-            if (id != 0u) glDeleteTextures(1, &id);
-        }
         textures.clear();
     }
 
     bool createPrograms()
     {
-        main_program = createProgram(
-            RasterizerShaders::main_vertex,
-            RasterizerShaders::main_fragment
-        );
-        shadow_program = createProgram(
-            RasterizerShaders::shadow_vertex,
-            RasterizerShaders::shadow_fragment
-        );
-        if (main_program == 0u || shadow_program == 0u) return false;
+        if (!main_program.createGraphics(
+                RasterizerShaders::main_vertex,
+                RasterizerShaders::main_fragment,
+                "Rasterizer"))
+        {
+            return false;
+        }
+        if (!shadow_program.createGraphics(
+                RasterizerShaders::shadow_vertex,
+                RasterizerShaders::shadow_fragment,
+                "Rasterizer Shadow"))
+        {
+            main_program.destroy();
+            return false;
+        }
 
-        main_uniforms.diffuse = uniform(main_program, "uDiffuse");
-        main_uniforms.gi[0] = uniform(main_program, "uGi0");
-        main_uniforms.gi[1] = uniform(main_program, "uGi1");
-        main_uniforms.gi[2] = uniform(main_program, "uGi2");
-        main_uniforms.gi[3] = uniform(main_program, "uGi3");
-        main_uniforms.shadow[0] = uniform(main_program, "uShadow0");
-        main_uniforms.shadow[1] = uniform(main_program, "uShadow1");
-        main_uniforms.shadow[2] = uniform(main_program, "uShadow2");
-        main_uniforms.shadow[3] = uniform(main_program, "uShadow3");
-        main_uniforms.shadow[4] = uniform(main_program, "uShadow4");
-        main_uniforms.shadow[5] = uniform(main_program, "uShadow5");
-        main_uniforms.has_texture = uniform(main_program, "uHasTexture");
-        main_uniforms.has_gi = uniform(main_program, "uHasGi");
-        main_uniforms.light_type = uniform(main_program, "uLightType");
-        main_uniforms.has_shadow = uniform(main_program, "uHasShadow");
-        main_uniforms.base_color = uniform(main_program, "uBaseColor");
-        main_uniforms.light_position = uniform(main_program, "uLightPosition");
-        main_uniforms.light_color = uniform(main_program, "uLightColor");
-        main_uniforms.light_intensity = uniform(main_program, "uLightIntensity");
-        main_uniforms.gi_minimum = uniform(main_program, "uGiMinimum");
-        main_uniforms.gi_maximum = uniform(main_program, "uGiMaximum");
-        main_uniforms.gi_intensity = uniform(main_program, "uGiIntensity");
-        main_uniforms.shadow_far = uniform(main_program, "uShadowFar");
-        main_uniforms.shadow_texel = uniform(main_program, "uShadowTexel");
-        main_uniforms.model = uniform(main_program, "uModel");
-        main_uniforms.normal_matrix = uniform(main_program, "uNormalMatrix");
-        main_uniforms.shadow_matrix[0] = uniform(main_program, "uShadowMatrix0");
-        main_uniforms.shadow_matrix[1] = uniform(main_program, "uShadowMatrix1");
-        main_uniforms.shadow_matrix[2] = uniform(main_program, "uShadowMatrix2");
-        main_uniforms.shadow_matrix[3] = uniform(main_program, "uShadowMatrix3");
-        main_uniforms.shadow_matrix[4] = uniform(main_program, "uShadowMatrix4");
-        main_uniforms.shadow_matrix[5] = uniform(main_program, "uShadowMatrix5");
+        main_uniforms.diffuse = main_program.uniform("uDiffuse");
+        main_uniforms.gi[0] = main_program.uniform("uGi0");
+        main_uniforms.gi[1] = main_program.uniform("uGi1");
+        main_uniforms.gi[2] = main_program.uniform("uGi2");
+        main_uniforms.gi[3] = main_program.uniform("uGi3");
+        main_uniforms.shadow[0] = main_program.uniform("uShadow0");
+        main_uniforms.shadow[1] = main_program.uniform("uShadow1");
+        main_uniforms.shadow[2] = main_program.uniform("uShadow2");
+        main_uniforms.shadow[3] = main_program.uniform("uShadow3");
+        main_uniforms.shadow[4] = main_program.uniform("uShadow4");
+        main_uniforms.shadow[5] = main_program.uniform("uShadow5");
+        main_uniforms.has_texture = main_program.uniform("uHasTexture");
+        main_uniforms.has_gi = main_program.uniform("uHasGi");
+        main_uniforms.light_type = main_program.uniform("uLightType");
+        main_uniforms.has_shadow = main_program.uniform("uHasShadow");
+        main_uniforms.base_color = main_program.uniform("uBaseColor");
+        main_uniforms.light_position = main_program.uniform("uLightPosition");
+        main_uniforms.light_color = main_program.uniform("uLightColor");
+        main_uniforms.light_intensity = main_program.uniform("uLightIntensity");
+        main_uniforms.gi_minimum = main_program.uniform("uGiMinimum");
+        main_uniforms.gi_maximum = main_program.uniform("uGiMaximum");
+        main_uniforms.gi_intensity = main_program.uniform("uGiIntensity");
+        main_uniforms.shadow_far = main_program.uniform("uShadowFar");
+        main_uniforms.shadow_texel = main_program.uniform("uShadowTexel");
+        main_uniforms.model = main_program.uniform("uModel");
+        main_uniforms.normal_matrix = main_program.uniform("uNormalMatrix");
+        main_uniforms.shadow_matrix[0] = main_program.uniform("uShadowMatrix0");
+        main_uniforms.shadow_matrix[1] = main_program.uniform("uShadowMatrix1");
+        main_uniforms.shadow_matrix[2] = main_program.uniform("uShadowMatrix2");
+        main_uniforms.shadow_matrix[3] = main_program.uniform("uShadowMatrix3");
+        main_uniforms.shadow_matrix[4] = main_program.uniform("uShadowMatrix4");
+        main_uniforms.shadow_matrix[5] = main_program.uniform("uShadowMatrix5");
 
-        shadow_uniforms.diffuse = uniform(shadow_program, "uDiffuse");
-        shadow_uniforms.has_texture = uniform(shadow_program, "uHasTexture");
-        shadow_uniforms.base_alpha = uniform(shadow_program, "uBaseAlpha");
-        shadow_uniforms.light_position = uniform(shadow_program, "uLightPosition");
-        shadow_uniforms.shadow_far = uniform(shadow_program, "uShadowFar");
-        shadow_uniforms.model = uniform(shadow_program, "uModel");
+        shadow_uniforms.diffuse = shadow_program.uniform("uDiffuse");
+        shadow_uniforms.has_texture = shadow_program.uniform("uHasTexture");
+        shadow_uniforms.base_alpha = shadow_program.uniform("uBaseAlpha");
+        shadow_uniforms.light_position = shadow_program.uniform("uLightPosition");
+        shadow_uniforms.shadow_far = shadow_program.uniform("uShadowFar");
+        shadow_uniforms.model = shadow_program.uniform("uModel");
 
-        GL20.glUseProgram(main_program);
+        main_program.use();
         setInt(main_uniforms.diffuse, 0);
         for (int i = 0; i < 4; ++i) setInt(main_uniforms.gi[i], kGiTextureUnit + i);
         for (int i = 0; i < 6; ++i) setInt(main_uniforms.shadow[i], kShadowTextureUnit + i);
-        GL20.glUseProgram(shadow_program);
+        shadow_program.use();
         setInt(shadow_uniforms.diffuse, 0);
-        GL20.glUseProgram(0u);
+        Systems::OpenGL::unbindProgram();
         return true;
     }
 
     void destroyPrograms()
     {
-        if (main_program != 0u) GL20.glDeleteProgram(main_program);
-        if (shadow_program != 0u) GL20.glDeleteProgram(shadow_program);
-        main_program = 0u;
-        shadow_program = 0u;
+        main_program.destroy();
+        shadow_program.destroy();
         main_uniforms = {};
         shadow_uniforms = {};
     }
@@ -596,7 +468,7 @@ struct Rasterizer::Impl {
         gi_uploaded = false;
     }
 
-    std::uint64_t currentShadowSignature(const Scene::LightState& light) const
+    std::uint64_t currentShadowSignature(const Systems::Scene::LightState& light) const
     {
         std::uint64_t hash = 1469598103934665603ull;
         hashValue(hash, light.valid ? 1u : 0u);
@@ -607,7 +479,7 @@ struct Rasterizer::Impl {
             hashTransform(hash, light.transform);
         }
         hashValue(hash, static_cast<std::uint32_t>(render_items.size()));
-        for (const Scene::RenderItem& item : render_items) {
+        for (const Systems::Scene::RenderItem& item : render_items) {
             hashValue(hash, static_cast<std::uint32_t>(item.entity));
             if (item.mesh_component) {
                 hashValue(hash, item.mesh_component->mesh);
@@ -621,7 +493,7 @@ struct Rasterizer::Impl {
     float calculateShadowFar(Vec3 light_position) const
     {
         float far_distance_squared = 1.0f;
-        for (const Scene::RenderItem& item : render_items) {
+        for (const Systems::Scene::RenderItem& item : render_items) {
             if (!item.mesh || !item.transform) continue;
             const Math::Mat4 model = Math::modelMatrix(*item.transform);
             const Models::Vec3 model_minimum = item.mesh->bounds.minimum;
@@ -797,7 +669,7 @@ struct Rasterizer::Impl {
 
     void drawGeometry(bool shadow_pass)
     {
-        for (const Scene::RenderItem& item : render_items) {
+        for (const Systems::Scene::RenderItem& item : render_items) {
             const Models::MeshData* mesh = item.mesh;
             if (!mesh || mesh->indices.empty() || !item.transform) continue;
 
@@ -851,7 +723,7 @@ struct Rasterizer::Impl {
         }
     }
 
-    bool renderPointShadowMaps(const Scene::LightState& light)
+    bool renderPointShadowMaps(const Systems::Scene::LightState& light)
     {
         if (!light.valid || light.light.type != LightType::Point || light.light.intensity <= 0.0f) {
             shadow_valid = false;
@@ -902,7 +774,7 @@ struct Rasterizer::Impl {
         glViewport(0, 0, shadow_size, shadow_size);
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 
-        GL20.glUseProgram(shadow_program);
+        shadow_program.use();
         setVec3(shadow_uniforms.light_position, light.transform.position);
         setFloat(shadow_uniforms.shadow_far, shadow_far);
 
@@ -944,7 +816,7 @@ struct Rasterizer::Impl {
             }
         }
 
-        GL20.glUseProgram(0u);
+        Systems::OpenGL::unbindProgram();
         if (offscreen) {
             glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0u);
             glDrawBuffer(GL_BACK);
@@ -960,7 +832,7 @@ struct Rasterizer::Impl {
     }
 
     void bindGlobalState(
-        const Scene::LightState& light,
+        const Systems::Scene::LightState& light,
         const GlobalIllumination::Field *gi)
     {
         int light_type = 0;
@@ -1003,15 +875,15 @@ struct Rasterizer::Impl {
 
     void draw(const Ecs::World& world, const GlobalIllumination::Field *gi)
     {
-        Scene::collectRenderItems(world, render_items);
-        const Scene::LightState light = Scene::lightState(world);
+        Systems::Scene::collectRenderItems(world, render_items);
+        const Systems::Scene::LightState light = Systems::Scene::lightState(world);
         renderPointShadowMaps(light);
 
         glViewport(0, 0, width, height);
         glClearColor(0.035f, 0.035f, 0.045f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        const Scene::CameraState camera = Scene::cameraState(world);
+        const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
         applyInfinitePerspective(
@@ -1030,10 +902,10 @@ struct Rasterizer::Impl {
         glDisable(GL_LIGHTING);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
-        GL20.glUseProgram(main_program);
+        main_program.use();
         bindGlobalState(light, gi);
         drawGeometry(false);
-        GL20.glUseProgram(0u);
+        Systems::OpenGL::unbindProgram();
 
         GLModern.glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, 0u);

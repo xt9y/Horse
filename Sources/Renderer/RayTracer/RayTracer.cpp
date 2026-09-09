@@ -1,14 +1,12 @@
 #ifndef __APPLE__
 
-#include "Renderer/PathTracer/PathTracer.hpp"
+#include "Renderer/RayTracer/RayTracer.hpp"
 
 #include "Renderer/FontPass.hpp"
-#include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/GlobalIlluminationOpenGL.hpp"
 #include "Renderer/PathTracer/PathTracerShaders.hpp"
 #include "Renderer/Systems/OpenGL/Program.hpp"
 #include "Renderer/Systems/OpenGLSceneResources.hpp"
-#include "Renderer/Systems/ProgressiveState.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
 
@@ -17,7 +15,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -36,27 +33,6 @@ namespace Renderer {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
-
-void hashValue(std::uint64_t& hash, std::uint32_t value)
-{
-    hash ^= static_cast<std::uint64_t>(value);
-    hash *= 1099511628211ull;
-}
-
-void hashFloat(std::uint64_t& hash, float value)
-{
-    hashValue(hash, std::bit_cast<std::uint32_t>(value));
-}
-
-std::uint64_t globalIlluminationSignature(const GlobalIllumination::Field *field)
-{
-    if (!field || !field->valid()) return 0u;
-    std::uint64_t hash = 1469598103934665603ull;
-    hashValue(hash, static_cast<std::uint32_t>(field->revision));
-    hashValue(hash, static_cast<std::uint32_t>(field->revision >> 32u));
-    hashFloat(hash, field->intensity);
-    return hash;
-}
 
 void setInt(GLint location, int value)
 {
@@ -80,7 +56,7 @@ void setVec3(GLint location, const Vec3& value)
 
 } // namespace
 
-struct PathTracer::Impl {
+struct RayTracer::Impl {
     struct TraceUniforms {
         GLint resolution = -1;
         GLint camera_position = -1;
@@ -111,7 +87,7 @@ struct PathTracer::Impl {
         GLint exposure = -1;
     };
 
-    PathTracerSettings settings{};
+    RayTracerSettings settings{};
     bool initialized = false;
     int width = 1;
     int height = 1;
@@ -122,12 +98,11 @@ struct PathTracer::Impl {
 
     Systems::SceneCache scene;
     Systems::OpenGLSceneResources resources;
-    Systems::ProgressiveState progressive;
     std::vector<Systems::Scene::RenderItem> render_items;
 
     Systems::OpenGL::Program trace_program;
     Systems::OpenGL::Program present_program;
-    GLuint accumulation = 0u;
+    GLuint output = 0u;
     GLuint primary_depth = 0u;
     TraceUniforms trace_uniforms{};
     PresentUniforms present_uniforms{};
@@ -137,7 +112,7 @@ struct PathTracer::Impl {
         return initialized && settings.enabled;
     }
 
-    void updateTraceResolution()
+    void updateResolution()
     {
         const int divisor = std::clamp(settings.resolution_divisor, 1, 4);
         trace_width = std::max(width / divisor, 1);
@@ -169,25 +144,23 @@ struct PathTracer::Impl {
         return true;
     }
 
-    bool createTraceTargets()
+    bool createTargets()
     {
-        if (!createFloatTexture(accumulation, GL_LINEAR)) return false;
+        if (!createFloatTexture(output, GL_LINEAR)) return false;
         if (!createFloatTexture(primary_depth, GL_NEAREST)) {
-            glDeleteTextures(1, &accumulation);
-            accumulation = 0u;
+            glDeleteTextures(1, &output);
+            output = 0u;
             return false;
         }
-        progressive.reset();
         return true;
     }
 
-    void destroyTraceTargets()
+    void destroyTargets()
     {
-        if (accumulation != 0u) glDeleteTextures(1, &accumulation);
+        if (output != 0u) glDeleteTextures(1, &output);
         if (primary_depth != 0u) glDeleteTextures(1, &primary_depth);
-        accumulation = 0u;
+        output = 0u;
         primary_depth = 0u;
-        progressive.reset();
     }
 
     void cacheUniforms()
@@ -231,11 +204,11 @@ struct PathTracer::Impl {
 
     bool createPrograms()
     {
-        if (!trace_program.createCompute(PathTracerShaders::trace, "PathTracer")) return false;
+        if (!trace_program.createCompute(PathTracerShaders::trace, "RayTracer")) return false;
         if (!present_program.createGraphics(
                 PathTracerShaders::present_vertex,
                 PathTracerShaders::present_fragment,
-                "PathTracer"))
+                "RayTracer"))
         {
             trace_program.destroy();
             return false;
@@ -265,18 +238,17 @@ struct PathTracer::Impl {
                     Systems::OpenGLSceneResources::MaximumTextureSlots,
                     &error))
             {
-                std::fprintf(stderr, "[PathTracer]: scene cache failed: %s\n", error.c_str());
+                std::fprintf(stderr, "[RayTracer]: scene cache failed: %s\n", error.c_str());
                 return false;
             }
             if (!resources.sync(scene, &error)) {
-                std::fprintf(stderr, "[PathTracer]: OpenGL scene upload failed: %s\n", error.c_str());
+                std::fprintf(stderr, "[RayTracer]: OpenGL scene upload failed: %s\n", error.c_str());
                 return false;
             }
             scene_signature = signature;
-            progressive.sceneChanged();
             std::fprintf(
                 stderr,
-                "[PathTracer]: world cache %zu triangles, %zu nodes, %zu materials\n",
+                "[RayTracer]: world cache %zu triangles, %zu nodes, %zu materials\n",
                 scene.triangles().size(),
                 scene.nodes().size(),
                 scene.materials().size()
@@ -288,7 +260,6 @@ struct PathTracer::Impl {
 
     void dispatch(const Systems::CameraState& camera, const Systems::LightState& light)
     {
-        const int samples = std::clamp(settings.samples_per_frame, 1, 4);
         trace_program.use();
         setVec2(trace_uniforms.resolution, static_cast<float>(trace_width), static_cast<float>(trace_height));
         setVec3(trace_uniforms.camera_position, camera.position);
@@ -300,18 +271,18 @@ struct PathTracer::Impl {
         setInt(trace_uniforms.node_count, static_cast<int>(scene.nodes().size()));
         setInt(trace_uniforms.triangle_count, static_cast<int>(scene.triangles().size()));
         setInt(trace_uniforms.material_count, static_cast<int>(scene.materials().size()));
-        setInt(trace_uniforms.samples_this_frame, samples);
-        setInt(trace_uniforms.sample_base, static_cast<int>(progressive.sampleCount()));
-        setInt(trace_uniforms.frame_index, static_cast<int>(progressive.frameIndex()));
-        setInt(trace_uniforms.reset_accumulation, progressive.resetPending() ? 1 : 0);
-        setInt(trace_uniforms.camera_moving, progressive.cameraMoving() ? 1 : 0);
+        setInt(trace_uniforms.samples_this_frame, 1);
+        setInt(trace_uniforms.sample_base, 0);
+        setInt(trace_uniforms.frame_index, 0);
+        setInt(trace_uniforms.reset_accumulation, 1);
+        setInt(trace_uniforms.camera_moving, 0);
         setInt(trace_uniforms.has_light, light.valid && light.type == LightType::Point ? 1 : 0);
         setVec3(trace_uniforms.light_position, light.position);
         setVec3(trace_uniforms.light_color, light.color);
         setFloat(trace_uniforms.light_intensity, light.intensity);
 
         resources.bind();
-        GL42.glBindImageTexture(0u, accumulation, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+        GL42.glBindImageTexture(0u, output, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
         GL42.glBindImageTexture(1u, primary_depth, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
         GL43.glDispatchCompute(
             static_cast<GLuint>((trace_width + 7) / 8),
@@ -320,7 +291,6 @@ struct PathTracer::Impl {
         );
         GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
         Systems::OpenGL::unbindProgram();
-        progressive.advance(static_cast<std::uint32_t>(samples));
     }
 
     void compose()
@@ -330,35 +300,38 @@ struct PathTracer::Impl {
         glDisable(GL_CULL_FACE);
         glDisable(GL_LIGHTING);
         glDisable(GL_BLEND);
+
         present_program.use();
         GLModern.glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, accumulation);
-        setFloat(present_uniforms.phase_count, static_cast<float>(std::max(progressive.phaseCount(), 1u)));
-        setInt(present_uniforms.camera_moving, progressive.cameraMoving() ? 1 : 0);
+        glBindTexture(GL_TEXTURE_2D, output);
+        setFloat(present_uniforms.phase_count, 1.0f);
+        setInt(present_uniforms.camera_moving, 0);
         setFloat(present_uniforms.exposure, settings.exposure);
+
         glBegin(GL_TRIANGLES);
         glVertex2f(-1.0f, -1.0f);
         glVertex2f(3.0f, -1.0f);
         glVertex2f(-1.0f, 3.0f);
         glEnd();
+
         Systems::OpenGL::unbindProgram();
     }
 };
 
-PathTracer::PathTracer() : impl_(new Impl) {}
+RayTracer::RayTracer() : impl_(new Impl) {}
 
-PathTracer::~PathTracer()
+RayTracer::~RayTracer()
 {
     shutdown();
     delete impl_;
     impl_ = nullptr;
 }
 
-bool PathTracer::init()
+bool RayTracer::init()
 {
     if (impl_->initialized) return true;
     if (!lwcglModernGLAvailable() && lwcglLoadModernGL() != 0) {
-        std::fprintf(stderr, "[PathTracer]: modern OpenGL unavailable\n");
+        std::fprintf(stderr, "[RayTracer]: modern OpenGL unavailable\n");
         return false;
     }
 
@@ -369,28 +342,23 @@ bool PathTracer::init()
     {
         std::fprintf(
             stderr,
-            "[PathTracer]: OpenGL 4.3 compatibility context required; found %d.%d\n",
+            "[RayTracer]: OpenGL 4.3 compatibility context required; found %d.%d\n",
             major,
             minor
         );
         return false;
     }
 
-    impl_->updateTraceResolution();
-    if (!impl_->createPrograms() || !impl_->createTraceTargets()) {
+    impl_->updateResolution();
+    if (!impl_->createPrograms() || !impl_->createTargets()) {
         shutdown();
         return false;
     }
 
-    glDisable(GL_LIGHTING);
-    glDisable(GL_COLOR_MATERIAL);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     impl_->initialized = true;
     std::fprintf(
         stderr,
-        "[PathTracer]: OpenGL %d.%d, output %dx%d, trace %dx%d\n",
+        "[RayTracer]: OpenGL %d.%d, output %dx%d, trace %dx%d\n",
         major,
         minor,
         impl_->width,
@@ -401,25 +369,27 @@ bool PathTracer::init()
     return true;
 }
 
-void PathTracer::resize(int width, int height)
+void RayTracer::resize(int width, int height)
 {
     impl_->width = std::max(width, 1);
     impl_->height = std::max(height, 1);
     const int previous_width = impl_->trace_width;
     const int previous_height = impl_->trace_height;
-    impl_->updateTraceResolution();
-    if (!impl_->initialized) return;
-    if (previous_width == impl_->trace_width && previous_height == impl_->trace_height) {
-        impl_->progressive.resetAccumulation();
+    impl_->updateResolution();
+    if (!impl_->initialized ||
+        (previous_width == impl_->trace_width && previous_height == impl_->trace_height))
+    {
         return;
     }
-    impl_->destroyTraceTargets();
-    if (!impl_->createTraceTargets()) shutdown();
+
+    impl_->destroyTargets();
+    if (!impl_->createTargets()) shutdown();
 }
 
-bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
+bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
     if (!impl_->initialized) return false;
+
     output.api = Internal::GraphicsApi::OpenGL;
     output.depth = Internal::DepthSource::None;
     output.width = impl_->width;
@@ -434,25 +404,20 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 
     const int previous_width = impl_->trace_width;
     const int previous_height = impl_->trace_height;
-    impl_->updateTraceResolution();
+    impl_->updateResolution();
     if (previous_width != impl_->trace_width || previous_height != impl_->trace_height) {
-        impl_->destroyTraceTargets();
-        if (!impl_->createTraceTargets()) return false;
+        impl_->destroyTargets();
+        if (!impl_->createTargets()) return false;
     }
 
     if (!impl_->syncSceneIfNeeded(world)) return false;
+
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
     if (!camera.valid) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         return true;
     }
     const Systems::LightState light = Systems::lightState(Systems::Scene::lightState(world));
-
-    impl_->progressive.updateCamera(Systems::cameraSignature(camera));
-    impl_->progressive.updateLight(Systems::lightSignature(light));
-    impl_->progressive.updateGlobalIllumination(
-        globalIlluminationSignature(output.global_illumination)
-    );
 
     Internal::bindGlobalIlluminationOpenGL(output.global_illumination);
     impl_->dispatch(camera, light);
@@ -465,50 +430,48 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     return true;
 }
 
-void PathTracer::present(Internal::FrameOutput& output)
+void RayTracer::present(Internal::FrameOutput& output)
 {
     (void)output;
 }
 
-void PathTracer::shutdown()
+void RayTracer::shutdown()
 {
     if (!impl_) return;
+
     Internal::shutdownFonts(Internal::GraphicsApi::OpenGL);
     Internal::shutdownGlobalIlluminationOpenGL();
     impl_->resources.clear();
     impl_->scene.clear();
-    impl_->destroyTraceTargets();
+    impl_->destroyTargets();
     impl_->destroyPrograms();
     impl_->render_items.clear();
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->scene_signature = 0u;
     impl_->initialized = false;
-    impl_->progressive.reset();
 }
 
-bool PathTracer::initialized() const
+bool RayTracer::initialized() const
 {
     return impl_ && impl_->initialized;
 }
 
-bool PathTracer::enabled() const
+bool RayTracer::enabled() const
 {
     return impl_ && impl_->settings.enabled;
 }
 
-void PathTracer::setEnabled(bool enabled)
+void RayTracer::setEnabled(bool enabled)
 {
-    if (!impl_) return;
-    impl_->settings.enabled = enabled;
-    impl_->progressive.resetAccumulation();
+    if (impl_) impl_->settings.enabled = enabled;
 }
 
-PathTracerSettings& PathTracer::settings()
+RayTracerSettings& RayTracer::settings()
 {
     return impl_->settings;
 }
 
-const PathTracerSettings& PathTracer::settings() const
+const RayTracerSettings& RayTracer::settings() const
 {
     return impl_->settings;
 }

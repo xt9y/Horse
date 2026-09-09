@@ -1,13 +1,11 @@
 #ifdef __APPLE__
 
-#include "Renderer/PathTracer/PathTracer.hpp"
+#include "Renderer/RayTracer/RayTracer.hpp"
 
 #include "Renderer/FontPass.hpp"
-#include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/GlobalIlluminationMetal.hpp"
 #include "Renderer/PathTracer/PathTracerMetalShaders.hpp"
 #include "Renderer/Systems/MetalSceneResources.hpp"
-#include "Renderer/Systems/ProgressiveState.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
 #include "Renderer/Systems/Uniforms.hpp"
@@ -16,7 +14,6 @@
 #include <lwmgl/lwmgl.h>
 
 #include <algorithm>
-#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -25,33 +22,9 @@
 #include <vector>
 
 namespace Renderer {
-namespace {
 
-void hashValue(std::uint64_t& hash, std::uint32_t value)
-{
-    hash ^= static_cast<std::uint64_t>(value);
-    hash *= 1099511628211ull;
-}
-
-void hashFloat(std::uint64_t& hash, float value)
-{
-    hashValue(hash, std::bit_cast<std::uint32_t>(value));
-}
-
-std::uint64_t globalIlluminationSignature(const GlobalIllumination::Field *field)
-{
-    if (!field || !field->valid()) return 0u;
-    std::uint64_t hash = 1469598103934665603ull;
-    hashValue(hash, static_cast<std::uint32_t>(field->revision));
-    hashValue(hash, static_cast<std::uint32_t>(field->revision >> 32u));
-    hashFloat(hash, field->intensity);
-    return hash;
-}
-
-} // namespace
-
-struct PathTracer::Impl {
-    PathTracerSettings settings{};
+struct RayTracer::Impl {
+    RayTracerSettings settings{};
     bool initialized = false;
     int width = 1;
     int height = 1;
@@ -62,7 +35,6 @@ struct PathTracer::Impl {
 
     Systems::SceneCache scene;
     Systems::MetalSceneResources resources;
-    Systems::ProgressiveState progressive;
     std::vector<Systems::Scene::RenderItem> render_items;
 
     LWMGLLibrary shader_library = nullptr;
@@ -71,19 +43,16 @@ struct PathTracer::Impl {
     LWMGLFunction present_fragment_function = nullptr;
     LWMGLComputePipeline trace_pipeline = nullptr;
     LWMGLRenderPipeline present_pipeline = nullptr;
-    LWMGLTexture accumulation = nullptr;
+    LWMGLTexture output_texture = nullptr;
     LWMGLTexture primary_depth = nullptr;
     LWMGLSampler material_sampler = nullptr;
     LWMGLSampler present_sampler = nullptr;
     LWMGLBuffer trace_uniform_buffer = nullptr;
     LWMGLBuffer present_uniform_buffer = nullptr;
 
-    bool active() const
-    {
-        return initialized && settings.enabled;
-    }
+    bool active() const { return initialized && settings.enabled; }
 
-    void updateTraceResolution()
+    void updateResolution()
     {
         const int divisor = std::clamp(settings.resolution_divisor, 1, 4);
         trace_width = std::max(width / divisor, 1);
@@ -97,12 +66,10 @@ struct PathTracer::Impl {
             std::strlen(PathTracerMetalShaders::source)
         );
         if (!shader_library) return false;
-
         trace_function = Metal.createFunction(shader_library, "trace_kernel");
         present_vertex_function = Metal.createFunction(shader_library, "present_vertex");
         present_fragment_function = Metal.createFunction(shader_library, "present_fragment");
         if (!trace_function || !present_vertex_function || !present_fragment_function) return false;
-
         trace_pipeline = Metal.createComputePipeline(trace_function);
         present_pipeline = Metal.createRenderPipeline(
             present_vertex_function,
@@ -157,14 +124,8 @@ struct PathTracer::Impl {
 
     bool createUniformBuffers()
     {
-        const LWMGLBufferDesc trace_desc = {
-            sizeof(Systems::MetalTraceUniforms),
-            LWMGL_STORAGE_SHARED
-        };
-        const LWMGLBufferDesc present_desc = {
-            sizeof(Systems::MetalPresentUniforms),
-            LWMGL_STORAGE_SHARED
-        };
+        const LWMGLBufferDesc trace_desc = {sizeof(Systems::MetalTraceUniforms), LWMGL_STORAGE_SHARED};
+        const LWMGLBufferDesc present_desc = {sizeof(Systems::MetalPresentUniforms), LWMGL_STORAGE_SHARED};
         Systems::MetalTraceUniforms trace{};
         Systems::MetalPresentUniforms present{};
         trace_uniform_buffer = Metal.createBuffer(&trace_desc, &trace);
@@ -180,17 +141,17 @@ struct PathTracer::Impl {
         present_uniform_buffer = nullptr;
     }
 
-    bool createTraceTargets()
+    bool createTargets()
     {
-        const LWMGLTextureDesc accumulation_desc = {
+        const LWMGLTextureDesc output_desc = {
             static_cast<std::uint32_t>(trace_width),
             static_cast<std::uint32_t>(trace_height),
             LWMGL_RGBA32_FLOAT,
             LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_READ | LWMGL_TEXTURE_WRITE,
             LWMGL_STORAGE_PRIVATE
         };
-        accumulation = Metal.createTexture(&accumulation_desc);
-        if (!accumulation) return false;
+        output_texture = Metal.createTexture(&output_desc);
+        if (!output_texture) return false;
 
         const LWMGLTextureDesc depth_desc = {
             static_cast<std::uint32_t>(trace_width),
@@ -201,21 +162,19 @@ struct PathTracer::Impl {
         };
         primary_depth = Metal.createTexture(&depth_desc);
         if (!primary_depth) {
-            Metal.destroyTexture(accumulation);
-            accumulation = nullptr;
+            Metal.destroyTexture(output_texture);
+            output_texture = nullptr;
             return false;
         }
-        progressive.reset();
         return true;
     }
 
-    void destroyTraceTargets()
+    void destroyTargets()
     {
         if (primary_depth) Metal.destroyTexture(primary_depth);
-        if (accumulation) Metal.destroyTexture(accumulation);
+        if (output_texture) Metal.destroyTexture(output_texture);
         primary_depth = nullptr;
-        accumulation = nullptr;
-        progressive.reset();
+        output_texture = nullptr;
     }
 
     bool syncSceneIfNeeded(const Ecs::World& world)
@@ -233,38 +192,23 @@ struct PathTracer::Impl {
                     Systems::MetalSceneResources::MaximumTextureSlots,
                     &error))
             {
-                std::fprintf(stderr, "[PathTracer]: scene cache failed: %s\n", error.c_str());
+                std::fprintf(stderr, "[RayTracer]: scene cache failed: %s\n", error.c_str());
                 return false;
             }
             if (!resources.sync(scene, &error)) {
-                std::fprintf(stderr, "[PathTracer]: Metal scene upload failed: %s\n", error.c_str());
+                std::fprintf(stderr, "[RayTracer]: Metal scene upload failed: %s\n", error.c_str());
                 return false;
             }
             scene_signature = signature;
-            progressive.sceneChanged();
             std::fprintf(
                 stderr,
-                "[PathTracer]: Metal world cache %zu triangles, %zu nodes, %zu materials\n",
+                "[RayTracer]: Metal world cache %zu triangles, %zu nodes, %zu materials\n",
                 scene.triangles().size(),
                 scene.nodes().size(),
                 scene.materials().size()
             );
         }
         world_revision = revision;
-        return true;
-    }
-
-    bool beginClearDrawable(LWMGLCommand& out_command)
-    {
-        out_command = nullptr;
-        LWMGLCommand command = Metal.begin();
-        if (!command) return false;
-        const LWMGLClearColor clear = {0.0, 0.0, 0.0, 1.0};
-        if (Metal.beginRenderToDrawable(command, clear, 1) != 0) {
-            Metal.destroyCommand(command);
-            return false;
-        }
-        out_command = command;
         return true;
     }
 
@@ -275,7 +219,7 @@ struct PathTracer::Impl {
         LWMGLCommand& out_command)
     {
         out_command = nullptr;
-        if (!resources.ready() || !accumulation || !primary_depth) return false;
+        if (!resources.ready() || !output_texture || !primary_depth) return false;
 
         const Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
             camera,
@@ -287,26 +231,25 @@ struct PathTracer::Impl {
             scene.nodes().size(),
             scene.triangles().size(),
             scene.materials().size(),
-            progressive.frameIndex(),
-            progressive.resetPending(),
-            progressive.cameraMoving()
+            0u,
+            true,
+            false
         );
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
         Systems::MetalPresentUniforms present{};
         present.exposure[0] = settings.exposure;
-        present.exposure[1] = progressive.cameraMoving() ? 1.0f : 0.0f;
+        present.exposure[1] = 0.0f;
         if (Metal.uploadBuffer(present_uniform_buffer, 0u, &present, sizeof present) != 0) return false;
 
         LWMGLCommand command = Metal.begin();
         if (!command) return false;
-
         bool ok = Metal.beginCompute(command) == 0;
         if (ok) ok = Metal.setComputePipeline(command, trace_pipeline) == 0;
         if (ok) ok = resources.bind(command, 1u);
         if (ok) ok = Metal.setBuffer(command, trace_uniform_buffer, 0u, 3u) == 0;
         if (ok) ok = Internal::bindGlobalIlluminationMetal(command, global_illumination, 4u);
-        if (ok) ok = Metal.setTexture(command, accumulation, 0u) == 0;
+        if (ok) ok = Metal.setTexture(command, output_texture, 0u) == 0;
         if (ok) ok = Metal.setTexture(command, primary_depth, 33u) == 0;
         if (ok) ok = Metal.setSampler(command, material_sampler, 0u) == 0;
         if (ok) ok = Metal.dispatch(
@@ -321,61 +264,56 @@ struct PathTracer::Impl {
         if (ok) ok = Metal.beginRenderToDrawable(command, clear, 1) == 0;
         if (ok) ok = Metal.setRenderPipeline(command, present_pipeline) == 0;
         if (ok) ok = Metal.setFragmentBuffer(command, present_uniform_buffer, 0u, 0u) == 0;
-        if (ok) ok = Metal.setFragmentTexture(command, accumulation, 0u) == 0;
+        if (ok) ok = Metal.setFragmentTexture(command, output_texture, 0u) == 0;
         if (ok) ok = Metal.setFragmentSampler(command, present_sampler, 0u) == 0;
         if (ok) ok = Metal.draw(command, 0u, 3u) == 0;
 
         if (!ok) {
-            std::fprintf(stderr, "[PathTracer]: Metal frame composition failed: %s\n", lwmglGetLastError());
+            std::fprintf(stderr, "[RayTracer]: Metal frame failed: %s\n", lwmglGetLastError());
             Metal.destroyCommand(command);
             return false;
         }
-
-        progressive.advance(static_cast<std::uint32_t>(std::clamp(settings.samples_per_frame, 1, 4)));
         out_command = command;
         return true;
     }
 };
 
-PathTracer::PathTracer() : impl_(new Impl) {}
+RayTracer::RayTracer() : impl_(new Impl) {}
 
-PathTracer::~PathTracer()
+RayTracer::~RayTracer()
 {
     shutdown();
     delete impl_;
     impl_ = nullptr;
 }
 
-bool PathTracer::init()
+bool RayTracer::init()
 {
     if (impl_->initialized) return true;
     if (!Display.isCreated() || !Display.getNativeWindow()) {
-        std::fprintf(stderr, "[PathTracer]: lwcgl Display must be created before Metal PathTracer\n");
+        std::fprintf(stderr, "[RayTracer]: lwcgl Display must be created before Metal RayTracer\n");
         return false;
     }
-
     if (Metal.create(Display.getNativeWindow()) != 0) {
-        std::fprintf(stderr, "[PathTracer]: Metal init failed: %s\n", lwmglGetLastError());
+        std::fprintf(stderr, "[RayTracer]: Metal init failed: %s\n", lwmglGetLastError());
         return false;
     }
 
     impl_->width = std::max(Display.getWidth(), 1);
     impl_->height = std::max(Display.getHeight(), 1);
-    impl_->updateTraceResolution();
+    impl_->updateResolution();
     std::string resource_error;
     if (
-        Metal.resize(
-            static_cast<std::uint32_t>(impl_->width),
-            static_cast<std::uint32_t>(impl_->height)) != 0 ||
+        Metal.resize(static_cast<std::uint32_t>(impl_->width), static_cast<std::uint32_t>(impl_->height)) != 0 ||
         !impl_->createPrograms() ||
         !impl_->createSamplers() ||
         !impl_->createUniformBuffers() ||
         !impl_->resources.init(&resource_error) ||
-        !impl_->createTraceTargets())
+        !impl_->createTargets())
     {
         std::fprintf(
             stderr,
-            "[PathTracer]: Metal resource initialization failed: %s%s%s\n",
+            "[RayTracer]: Metal resource initialization failed: %s%s%s\n",
             lwmglGetLastError(),
             resource_error.empty() ? "" : " / ",
             resource_error.c_str()
@@ -385,64 +323,37 @@ bool PathTracer::init()
     }
 
     impl_->initialized = true;
-    LWMGLDeviceInfo info{};
-    if (Metal.getDeviceInfo(&info) == 0) {
-        std::fprintf(
-            stderr,
-            "[PathTracer]: Metal %s, output %dx%d, trace %dx%d\n",
-            info.name,
-            impl_->width,
-            impl_->height,
-            impl_->trace_width,
-            impl_->trace_height
-        );
-    } else {
-        std::fprintf(
-            stderr,
-            "[PathTracer]: Metal, output %dx%d, trace %dx%d\n",
-            impl_->width,
-            impl_->height,
-            impl_->trace_width,
-            impl_->trace_height
-        );
-    }
+    std::fprintf(
+        stderr,
+        "[RayTracer]: Metal output %dx%d, trace %dx%d\n",
+        impl_->width,
+        impl_->height,
+        impl_->trace_width,
+        impl_->trace_height
+    );
     return true;
 }
 
-void PathTracer::resize(int width, int height)
+void RayTracer::resize(int width, int height)
 {
     impl_->width = std::max(width, 1);
     impl_->height = std::max(height, 1);
     const int previous_width = impl_->trace_width;
     const int previous_height = impl_->trace_height;
-    impl_->updateTraceResolution();
-
+    impl_->updateResolution();
     if (!impl_->initialized) return;
-    if (Metal.resize(
-            static_cast<std::uint32_t>(impl_->width),
-            static_cast<std::uint32_t>(impl_->height)) != 0)
-    {
-        std::fprintf(stderr, "[PathTracer]: Metal resize failed: %s\n", lwmglGetLastError());
+    if (Metal.resize(static_cast<std::uint32_t>(impl_->width), static_cast<std::uint32_t>(impl_->height)) != 0) {
         shutdown();
         return;
     }
-
-    if (impl_->trace_width == previous_width && impl_->trace_height == previous_height) {
-        impl_->progressive.resetAccumulation();
-        return;
-    }
-
-    impl_->destroyTraceTargets();
-    if (!impl_->createTraceTargets()) {
-        std::fprintf(stderr, "[PathTracer]: failed to resize Metal trace targets\n");
-        shutdown();
-    }
+    if (previous_width == impl_->trace_width && previous_height == impl_->trace_height) return;
+    impl_->destroyTargets();
+    if (!impl_->createTargets()) shutdown();
 }
 
-bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
+bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
     if (!impl_->initialized) return false;
-
     output.api = Internal::GraphicsApi::Metal;
     output.depth = Internal::DepthSource::None;
     output.width = impl_->width;
@@ -451,109 +362,76 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     output.depth_texture = nullptr;
 
     if (!impl_->active()) {
-        LWMGLCommand command = nullptr;
-        if (!impl_->beginClearDrawable(command)) return false;
+        LWMGLCommand command = Metal.begin();
+        if (!command) return false;
+        const LWMGLClearColor clear = {0.0, 0.0, 0.0, 1.0};
+        if (Metal.beginRenderToDrawable(command, clear, 1) != 0) {
+            Metal.destroyCommand(command);
+            return false;
+        }
         output.command = command;
         return true;
     }
 
     const int previous_width = impl_->trace_width;
     const int previous_height = impl_->trace_height;
-    impl_->updateTraceResolution();
+    impl_->updateResolution();
     if (previous_width != impl_->trace_width || previous_height != impl_->trace_height) {
-        impl_->destroyTraceTargets();
-        if (!impl_->createTraceTargets()) return false;
+        impl_->destroyTargets();
+        if (!impl_->createTargets()) return false;
     }
 
     if (!impl_->syncSceneIfNeeded(world)) return false;
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
-    if (!camera.valid) {
-        LWMGLCommand command = nullptr;
-        if (!impl_->beginClearDrawable(command)) return false;
-        output.command = command;
-        return true;
-    }
+    if (!camera.valid) return false;
     const Systems::LightState light = Systems::lightState(Systems::Scene::lightState(world));
-
-    impl_->progressive.updateCamera(Systems::cameraSignature(camera));
-    impl_->progressive.updateLight(Systems::lightSignature(light));
-    impl_->progressive.updateGlobalIllumination(
-        globalIlluminationSignature(output.global_illumination)
-    );
 
     LWMGLCommand command = nullptr;
     if (!impl_->dispatchAndCompose(camera, light, output.global_illumination, command)) return false;
-
     output.command = command;
     output.depth = Internal::DepthSource::LinearTexture;
     output.depth_texture = impl_->primary_depth;
     return true;
 }
 
-void PathTracer::present(Internal::FrameOutput& output)
+void RayTracer::present(Internal::FrameOutput& output)
 {
     LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
     if (!command) return;
-
     bool ok = Metal.present(command) == 0;
     if (ok) ok = Metal.commit(command) == 0;
     if (ok) ok = Metal.wait(command) == 0;
     if (!ok) {
-        std::fprintf(stderr, "[PathTracer]: Metal presentation failed: %s\n", lwmglGetLastError());
+        std::fprintf(stderr, "[RayTracer]: Metal presentation failed: %s\n", lwmglGetLastError());
     }
-
     Metal.destroyCommand(command);
     output.command = nullptr;
 }
 
-void PathTracer::shutdown()
+void RayTracer::shutdown()
 {
     if (!impl_) return;
-
     if (Metal.isCreated()) Metal.waitIdle();
     Internal::shutdownFonts(Internal::GraphicsApi::Metal);
     Internal::shutdownGlobalIlluminationMetal();
     impl_->resources.clear();
     impl_->scene.clear();
-    impl_->destroyTraceTargets();
+    impl_->destroyTargets();
     impl_->destroyUniformBuffers();
     impl_->destroySamplers();
     impl_->destroyPrograms();
     if (Metal.isCreated()) Metal.destroy();
-
     impl_->render_items.clear();
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->scene_signature = 0u;
     impl_->initialized = false;
-    impl_->progressive.reset();
 }
 
-bool PathTracer::initialized() const
-{
-    return impl_ && impl_->initialized;
-}
-
-bool PathTracer::enabled() const
-{
-    return impl_ && impl_->settings.enabled;
-}
-
-void PathTracer::setEnabled(bool enabled)
-{
-    if (!impl_) return;
-    impl_->settings.enabled = enabled;
-    impl_->progressive.resetAccumulation();
-}
-
-PathTracerSettings& PathTracer::settings()
-{
-    return impl_->settings;
-}
-
-const PathTracerSettings& PathTracer::settings() const
-{
-    return impl_->settings;
-}
+bool RayTracer::initialized() const { return impl_ && impl_->initialized; }
+bool RayTracer::enabled() const { return impl_ && impl_->settings.enabled; }
+void RayTracer::setEnabled(bool enabled) { if (impl_) impl_->settings.enabled = enabled; }
+RayTracerSettings& RayTracer::settings() { return impl_->settings; }
+const RayTracerSettings& RayTracer::settings() const { return impl_->settings; }
 
 } // namespace Renderer
 

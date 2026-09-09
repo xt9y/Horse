@@ -4,7 +4,7 @@
 #include "Font.hpp"
 #include "Renderer/FontLayout.hpp"
 #include "Renderer/Math.hpp"
-#include "Renderer/Scene.hpp"
+#include "Renderer/Systems/Scene.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -109,7 +109,7 @@ bool worldClip(
 void appendWorldText(
     const Font::TextComponent& text,
     const Transform& transform,
-    const Scene::CameraState& camera,
+    const Systems::Scene::CameraState& camera,
     const FrameOutput& output,
     std::vector<FontLayout::GlyphQuad>& glyphs,
     FontBatches& batches)
@@ -191,7 +191,7 @@ void collectFontVertices(
     batches.depth.clear();
     batches.overlay.clear();
 
-    const Scene::CameraState camera = Scene::cameraState(world);
+    const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
     std::vector<FontLayout::GlyphQuad> glyphs;
 
     for (const Ecs::Entity entity : world.entities()) {
