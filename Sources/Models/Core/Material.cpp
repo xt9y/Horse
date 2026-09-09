@@ -128,6 +128,19 @@ bool loadMaterialLibrary(
         }
     }
 
+    for (auto& [name, material] : *materials) {
+        (void)name;
+        if (material.texture_path.empty() || material.opacity_texture_path.empty()) continue;
+
+        std::string texture_error;
+        const TextureHandle masked = loadTextureWithOpacity(
+            material.texture_path,
+            material.opacity_texture_path,
+            &texture_error
+        );
+        if (masked != INVALID_TEXTURE) material.diffuse_texture = masked;
+    }
+
     return true;
 }
 
