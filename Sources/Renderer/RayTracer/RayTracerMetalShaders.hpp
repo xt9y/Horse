@@ -159,6 +159,7 @@ Hit traceClosestAlpha(
     const int triangle_count = max(uniforms.counts.y, 0);
     if (triangle_count <= 0) return hit;
 
+    const bool alpha_cutouts = uniforms.counts.w != 0;
     intersector<triangle_data> triangle_intersector;
     triangle_intersector.assume_geometry_type(geometry_type::triangle);
     triangle_intersector.assume_identity_transforms(true);
@@ -181,7 +182,9 @@ Hit traceClosestAlpha(
         const float2 uv = triangleUv(triangle, result.triangle_barycentric_coord);
         const uint material = as_type<uint>(triangle.p0.w);
 
-        if (!alphaCutoutPass(material, uv, materials, uniforms, textures, material_sampler)) {
+        if (alpha_cutouts &&
+            !alphaCutoutPass(material, uv, materials, uniforms, textures, material_sampler))
+        {
             const float step = result.distance + RAY_EPSILON * 2.0f;
             travelled += step;
             current_origin += direction * step;
@@ -228,6 +231,16 @@ bool traceAnyAlpha(
     array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
+    if (uniforms.counts.w == 0) {
+        intersector<> shadow_intersector;
+        shadow_intersector.assume_geometry_type(geometry_type::triangle);
+        shadow_intersector.assume_identity_transforms(true);
+        shadow_intersector.accept_any_intersection(true);
+        ray r(origin, direction, RAY_EPSILON, max_distance);
+        intersection_result<> result = shadow_intersector.intersect(r, acceleration_structure);
+        return result.type != intersection_type::none;
+    }
+
     Hit hit = traceClosestAlpha(
         origin,
         direction,
