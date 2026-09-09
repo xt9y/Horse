@@ -140,5 +140,9 @@ void build(C_Build *b)
     c_sources(rasterizer_sampler_fallback_contract, "tests/rasterizer_sampler_fallback_contract.cpp");
     configureContract(rasterizer_sampler_fallback_contract);
 
+    C_Target *rasterizer_shadow_quality_contract = c_test(b, "rasterizer-shadow-quality-contract");
+    c_sources(rasterizer_shadow_quality_contract, "tests/rasterizer_shadow_quality_contract.cpp");
+    configureContract(rasterizer_shadow_quality_contract);
+
     c_default_target(b, library);
 }
