@@ -57,9 +57,24 @@ int main()
 
     Models::MeshData mesh;
     mesh.vertices = {
-        Models::Vertex{.position = {0.0f, 0.0f, 0.0f}},
-        Models::Vertex{.position = {1.0f, 0.0f, 0.0f}},
-        Models::Vertex{.position = {0.0f, 1.0f, 0.0f}},
+        Models::Vertex{
+            .position = {0.0f, 0.0f, 0.0f},
+            .normal = {0.0f, 0.0f, 1.0f},
+            .uv = {0.0f, 0.0f},
+            .skin = {},
+        },
+        Models::Vertex{
+            .position = {1.0f, 0.0f, 0.0f},
+            .normal = {0.0f, 0.0f, 1.0f},
+            .uv = {1.0f, 0.0f},
+            .skin = {},
+        },
+        Models::Vertex{
+            .position = {0.0f, 1.0f, 0.0f},
+            .normal = {0.0f, 0.0f, 1.0f},
+            .uv = {0.0f, 1.0f},
+            .skin = {},
+        },
     };
     mesh.indices = {0u, 1u, 2u};
     mesh.bounds.minimum = {0.0f, 0.0f, 0.0f};
