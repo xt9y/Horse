@@ -282,9 +282,42 @@ struct Rasterizer::Impl {
     int shadow_size = 0;
     bool shadow_valid = false;
 
+    unsigned int fallbackTexture()
+    {
+        const auto found = textures.find(Models::INVALID_TEXTURE);
+        if (found != textures.end()) return found->second;
+
+        GLModern.glActiveTexture(GL_TEXTURE0);
+        GLuint texture_id = 0u;
+        glGenTextures(1, &texture_id);
+        if (texture_id == 0u) return 0u;
+
+        const std::uint8_t white[4] = {255u, 255u, 255u, 255u};
+        glBindTexture(GL_TEXTURE_2D, texture_id);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(
+            GL_TEXTURE_2D,
+            0,
+            GL_RGBA,
+            1,
+            1,
+            0,
+            GL_RGBA,
+            GL_UNSIGNED_BYTE,
+            white
+        );
+
+        textures.emplace(Models::INVALID_TEXTURE, texture_id);
+        return texture_id;
+    }
+
     unsigned int textureFor(std::uint32_t handle)
     {
-        if (handle == Models::INVALID_TEXTURE) return 0u;
+        if (handle == Models::INVALID_TEXTURE) return fallbackTexture();
         const auto found = textures.find(handle);
         if (found != textures.end()) return found->second;
 
@@ -601,20 +634,25 @@ struct Rasterizer::Impl {
             const float opacity = material ? std::clamp(material->opacity, 0.0f, 1.0f) : 1.0f;
             if (opacity < 0.5f) continue;
 
-            const unsigned int texture_id = material ? textureFor(material->diffuse_texture) : 0u;
+            const bool requested_texture = material && material->diffuse_texture != Models::INVALID_TEXTURE;
+            const unsigned int texture_id = requested_texture ? textureFor(material->diffuse_texture) : 0u;
+            const bool has_texture = requested_texture && texture_id != 0u;
+            const unsigned int bound_texture = texture_id != 0u ? texture_id : fallbackTexture();
+            if (bound_texture == 0u) continue;
+
             GLModern.glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture_id));
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(bound_texture));
 
             const Math::Mat4 model = Math::modelMatrix(*item.transform);
             if (shadow_pass) {
-                setInt(shadow_uniforms.has_texture, texture_id != 0u ? 1 : 0);
+                setInt(shadow_uniforms.has_texture, has_texture ? 1 : 0);
                 setFloat(shadow_uniforms.base_alpha, opacity);
                 setMatrix(shadow_uniforms.model, model);
             } else {
                 const Vec3 base_color = material
                     ? Vec3{material->color.x, material->color.y, material->color.z}
                     : Vec3{1.0f, 1.0f, 1.0f};
-                setInt(main_uniforms.has_texture, texture_id != 0u ? 1 : 0);
+                setInt(main_uniforms.has_texture, has_texture ? 1 : 0);
                 setVec4(main_uniforms.base_color, base_color.x, base_color.y, base_color.z, opacity);
                 setMatrix(main_uniforms.model, model);
                 setMatrix(main_uniforms.normal_matrix, transpose(Math::inverseModelMatrix(*item.transform)));
@@ -816,6 +854,11 @@ bool Rasterizer::init()
         return false;
     }
     if (!impl_->createPrograms()) {
+        impl_->destroyPrograms();
+        return false;
+    }
+    if (impl_->fallbackTexture() == 0u) {
+        std::fprintf(stderr, "[Rasterizer]: failed to create complete diffuse fallback texture\n");
         impl_->destroyPrograms();
         return false;
     }
