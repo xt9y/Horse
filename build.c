@@ -96,5 +96,9 @@ void build(C_Build *b)
     c_sources(font_opengl_uv_contract, "tests/font_opengl_uv_contract.cpp");
     configureContract(font_opengl_uv_contract);
 
+    C_Target *global_illumination_contract = c_test(b, "global-illumination-contract");
+    c_sources(global_illumination_contract, "tests/global_illumination_contract.cpp");
+    configureContract(global_illumination_contract);
+
     c_default_target(b, library);
 }
