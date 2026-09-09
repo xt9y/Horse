@@ -89,6 +89,7 @@ const int RESET_PHASE_GRID = 1;
 const int MOVING_PHASE_GRID = 4;
 const int MOVING_DEPTH_BLOCK = 2;
 const int GI_HEADER_VEC4S = 4;
+const float ALPHA_CUTOFF = 0.5;
 
 struct Hit {
     bool found;
@@ -166,6 +167,21 @@ bool hitTriangle(
     return true;
 }
 
+vec4 sampleTextureSlot(int slot, vec2 uv);
+
+bool alphaCutoutPass(uint material_index, vec2 uv)
+{
+    if (material_index >= uint(max(uMaterialCount, 0))) return true;
+    Material material = materials[material_index];
+    float alpha = clamp(material.base_color.a, 0.0, 1.0);
+    int slot = material.data.x;
+    if (slot >= 0 && slot < 16) {
+        vec4 texel = sampleTextureSlot(slot, uv);
+        alpha *= texel.a;
+    }
+    return alpha >= ALPHA_CUTOFF;
+}
+
 Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
 {
     Hit best;
@@ -199,6 +215,13 @@ Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
                 vec3 barycentric;
                 if (!hitTriangle(origin, direction, triangle, distance, barycentric)) continue;
 
+                uint material_index = floatBitsToUint(triangle.p0.w);
+                vec2 candidate_uv =
+                    triangle.uv01.xy * barycentric.x +
+                    triangle.uv01.zw * barycentric.y +
+                    triangle.uv2.xy * barycentric.z;
+                if (!alphaCutoutPass(material_index, candidate_uv)) continue;
+
                 best.found = true;
                 best.distance = distance;
                 best.position = origin + direction * distance;
@@ -213,11 +236,8 @@ Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
                 ));
                 if (dot(best.geometric_normal, direction) > 0.0) best.geometric_normal = -best.geometric_normal;
                 if (dot(best.normal, best.geometric_normal) < 0.0) best.normal = -best.normal;
-                best.uv =
-                    triangle.uv01.xy * barycentric.x +
-                    triangle.uv01.zw * barycentric.y +
-                    triangle.uv2.xy * barycentric.z;
-                best.material = floatBitsToUint(triangle.p0.w);
+                best.uv = candidate_uv;
+                best.material = material_index;
             }
             node_index = node.extra.x;
         } else {
@@ -267,7 +287,14 @@ bool traceAny(vec3 origin, vec3 direction, float max_distance)
                 Triangle triangle = triangles[triangle_index];
                 float distance = max_distance;
                 vec3 barycentric;
-                if (hitTriangle(origin, direction, triangle, distance, barycentric)) return true;
+                if (!hitTriangle(origin, direction, triangle, distance, barycentric)) continue;
+                uint material_index = floatBitsToUint(triangle.p0.w);
+                vec2 candidate_uv =
+                    triangle.uv01.xy * barycentric.x +
+                    triangle.uv01.zw * barycentric.y +
+                    triangle.uv2.xy * barycentric.z;
+                if (!alphaCutoutPass(material_index, candidate_uv)) continue;
+                return true;
             }
             node_index = node.extra.x;
         } else {
