@@ -26,6 +26,6 @@ int main()
     assert(source.find("uShadow0") != std::string::npos);
     assert(source.find("shadowVisibility") != std::string::npos);
     assert(source.find("glCopyTexSubImage2D") != std::string::npos);
-    assert(source.find("GL_ALPHA_TEST") != std::string::npos);
+    assert(source.find("discard") != std::string::npos);
     return 0;
 }
