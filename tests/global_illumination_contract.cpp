@@ -33,6 +33,7 @@ int main()
 
     assert(renderer_h.find("const GlobalIllumination::Field *global_illumination") != std::string::npos);
     assert(renderer_cpp.find("GlobalIllumination::update(world)") != std::string::npos);
+    assert(renderer_cpp.find("bindGlobalIlluminationOpenGL") == std::string::npos);
     assert(gi.find("kProbeBudgetPerFrame") != std::string::npos);
     assert(gi.find("geometrySignature") != std::string::npos);
     assert(gi.find("lightSignature") != std::string::npos);
@@ -45,6 +46,7 @@ int main()
     assert(pathtracer_metal.find("settings.max_bounces") == std::string::npos);
     assert(pathtracer_gl.find("globalIlluminationSignature") != std::string::npos);
     assert(pathtracer_metal.find("globalIlluminationSignature") != std::string::npos);
+    assert(pathtracer_gl.find("bindGlobalIlluminationOpenGL(output.global_illumination)") != std::string::npos);
 
     assert(pathtracer_glsl.find("layout(std430, binding = 5) readonly buffer SharedGiField") != std::string::npos);
     assert(pathtracer_glsl.find("sampleGlobalIllumination") != std::string::npos);
