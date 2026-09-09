@@ -92,5 +92,9 @@ void build(C_Build *b)
     c_sources(opengl_present_contract, "tests/opengl_present_contract.cpp");
     configureContract(opengl_present_contract);
 
+    C_Target *font_opengl_uv_contract = c_test(b, "font-opengl-uv-contract");
+    c_sources(font_opengl_uv_contract, "tests/font_opengl_uv_contract.cpp");
+    configureContract(font_opengl_uv_contract);
+
     c_default_target(b, library);
 }
