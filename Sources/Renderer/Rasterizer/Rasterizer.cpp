@@ -1,5 +1,6 @@
 #include "Renderer/Rasterizer/Rasterizer.hpp"
 
+#include "Camera.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/FontPass.hpp"
@@ -33,6 +34,17 @@ void applyInfinitePerspective(float fov_degrees, float aspect, float near_plane)
         0.0f, 0.0f, -2.0f * safe_near, 0.0f,
     };
     glLoadMatrixf(projection);
+}
+
+Math::Mat4 cameraView(const Scene::CameraState& camera)
+{
+    const Vec3 forward = Math::normalize(Camera::flightDirection(
+        camera.transform.rotation.y,
+        camera.transform.rotation.x
+    ));
+    const Vec3 right = Math::normalize(Camera::strafeDirection(camera.transform.rotation.y));
+    const Vec3 up = Math::normalize(Math::cross(right, forward));
+    return Math::viewMatrix(camera.transform.position, forward, right, up);
 }
 
 } // namespace
@@ -136,7 +148,7 @@ struct Rasterizer::Impl {
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
         if (camera.valid) {
-            const Math::Mat4 view = Math::inverseModelMatrix(camera.transform);
+            const Math::Mat4 view = cameraView(camera);
             glMultMatrixf(view.data());
         }
 
