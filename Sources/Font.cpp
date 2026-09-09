@@ -18,6 +18,7 @@ Ecs::Entity screen(
         .position = position,
         .scale = scale,
         .color = color,
+        .depth_test = false,
     });
     return entity;
 }
@@ -27,7 +28,8 @@ Ecs::Entity world(
     std::string text,
     const Renderer::Transform& transform,
     float scale,
-    Renderer::Vec4 color)
+    Renderer::Vec4 color,
+    bool depth_test)
 {
     const Ecs::Entity entity = ecs.createEntity();
     ecs.add<Renderer::Transform>(entity, transform);
@@ -36,6 +38,7 @@ Ecs::Entity world(
         .space = Space::World,
         .scale = scale,
         .color = color,
+        .depth_test = depth_test,
     });
     return entity;
 }
