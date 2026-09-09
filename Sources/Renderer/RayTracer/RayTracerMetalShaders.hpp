@@ -160,6 +160,8 @@ Hit traceClosestAlpha(
     if (triangle_count <= 0) return hit;
 
     intersector<triangle_data> triangle_intersector;
+    triangle_intersector.assume_geometry_type(geometry_type::triangle);
+    triangle_intersector.assume_identity_transforms(true);
     float3 current_origin = origin;
     float travelled = 0.0f;
 
