@@ -116,5 +116,13 @@ void build(C_Build *b)
     c_sources(material_opacity_mask_contract, "tests/material_opacity_mask_contract.cpp");
     configureContract(material_opacity_mask_contract);
 
+    C_Target *rasterizer_output_contract = c_test(b, "rasterizer-output-contract");
+    c_sources(rasterizer_output_contract, "tests/rasterizer_output_contract.cpp");
+    configureContract(rasterizer_output_contract);
+
+    C_Target *pathtracer_alpha_slot_contract = c_test(b, "pathtracer-alpha-slot-contract");
+    c_sources(pathtracer_alpha_slot_contract, "tests/pathtracer_alpha_slot_contract.cpp");
+    configureContract(pathtracer_alpha_slot_contract);
+
     c_default_target(b, library);
 }
