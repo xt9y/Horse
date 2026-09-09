@@ -1,8 +1,23 @@
 #include "Renderer/Scene.hpp"
 
 #include "Camera.hpp"
+#include "Models/Core/Texture.hpp"
+
+#include <algorithm>
 
 namespace Renderer::Scene {
+namespace {
+
+bool usesAlphaTexture(const RenderItem& item)
+{
+    if (!item.material || item.material->diffuse_texture == Models::INVALID_TEXTURE) {
+        return false;
+    }
+    const Models::TextureAsset* texture = Models::texture(item.material->diffuse_texture);
+    return texture && texture->image.meaningful_alpha;
+}
+
+} // namespace
 
 CameraState cameraState(const Ecs::World& world)
 {
@@ -62,6 +77,8 @@ void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
             .material = Models::material(mesh_component->material),
         });
     }
+
+    std::stable_partition(out.begin(), out.end(), usesAlphaTexture);
 }
 
 } // namespace Renderer::Scene
