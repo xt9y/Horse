@@ -1,10 +1,15 @@
-name: Rasterizer Runtime RED
+name: Rasterizer Runtime Contract
 
 on:
   push:
     branches: [main]
     paths:
       - 'tests/rasterizer_runtime_contract.cpp'
+      - 'Sources/Renderer/Rasterizer/Rasterizer.cpp'
+      - 'Sources/Renderer/Rasterizer/Rasterizer.hpp'
+      - 'Sources/Renderer/Scene.cpp'
+      - 'Sources/Renderer/Math.cpp'
+      - 'build.c'
       - '.github/workflows/rasterizer-runtime-red.yml'
 
 jobs:
