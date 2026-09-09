@@ -1135,6 +1135,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         impl_->resetAccumulation();
     }
 
+    Internal::bindGlobalIlluminationOpenGL(output.global_illumination);
     impl_->dispatch(camera, light);
     impl_->compose();
 
