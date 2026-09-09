@@ -66,12 +66,15 @@ constant uint LEAF_BIT = 0x80000000u;
 constant float PI = 3.14159265358979323846f;
 constant float RAY_EPSILON = 0.0025f;
 constant float INF = 1.0e30f;
+constant float SH_Y00 = 0.2820947918f;
+constant float SH_Y1 = 0.4886025119f;
 constant int MAX_CLOSEST_STEPS = 8192;
 constant int MAX_SHADOW_STEPS = 4096;
 constant uint STATIONARY_PHASE_GRID = 2u;
 constant uint RESET_PHASE_GRID = 1u;
 constant uint MOVING_PHASE_GRID = 4u;
 constant uint MOVING_DEPTH_BLOCK = 2u;
+constant int GI_HEADER_VEC4S = 4;
 
 uint hashUint(uint value)
 {
@@ -333,68 +336,100 @@ float3 materialAlbedo(
     return clamp(albedo, float3(0.0f), float3(1.0f));
 }
 
-float3 cosineHemisphere(float3 normal, thread uint& state)
+int giProbeIndex(int3 coordinate, int3 dimensions)
 {
-    float u1 = randomFloat(state);
-    float u2 = randomFloat(state);
-    float radius = sqrt(u1);
-    float phi = 2.0f * PI * u2;
-    float3 local = float3(radius * cos(phi), radius * sin(phi), sqrt(max(0.0f, 1.0f - u1)));
-    float3 helper = fabs(normal.z) < 0.999f ? float3(0.0f, 0.0f, 1.0f) : float3(1.0f, 0.0f, 0.0f);
-    float3 tangent = normalize(cross(helper, normal));
-    float3 bitangent = cross(normal, tangent);
-    return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
+    return coordinate.x + dimensions.x * (coordinate.y + dimensions.y * coordinate.z);
+}
+
+float3 giCoefficient(
+    device const float4 *gi_data,
+    int3 coordinate,
+    int3 dimensions,
+    int coefficient)
+{
+    int probe = giProbeIndex(coordinate, dimensions);
+    return gi_data[GI_HEADER_VEC4S + probe * 4 + coefficient].xyz;
+}
+
+float3 sampleGlobalIllumination(
+    device const float4 *gi_data,
+    float3 position,
+    float3 normal)
+{
+    if (gi_data[0].w < 0.5f) return float3(0.0f);
+
+    float3 minimum = gi_data[0].xyz;
+    float3 maximum = gi_data[1].xyz;
+    float intensity = max(gi_data[1].w, 0.0f);
+    int3 dimensions = max(int3(gi_data[2].xyz + float3(0.5f)), int3(2));
+    float3 extent = max(maximum - minimum, float3(1.0e-6f));
+    float3 grid = clamp((position - minimum) / extent, float3(0.0f), float3(1.0f)) * float3(dimensions - 1);
+    int3 i0 = int3(floor(grid));
+    int3 i1 = min(i0 + int3(1), dimensions - int3(1));
+    float3 t = grid - float3(i0);
+
+    float3 coefficients[4];
+    for (int coefficient = 0; coefficient < 4; ++coefficient) {
+        float3 c000 = giCoefficient(gi_data, int3(i0.x, i0.y, i0.z), dimensions, coefficient);
+        float3 c100 = giCoefficient(gi_data, int3(i1.x, i0.y, i0.z), dimensions, coefficient);
+        float3 c010 = giCoefficient(gi_data, int3(i0.x, i1.y, i0.z), dimensions, coefficient);
+        float3 c110 = giCoefficient(gi_data, int3(i1.x, i1.y, i0.z), dimensions, coefficient);
+        float3 c001 = giCoefficient(gi_data, int3(i0.x, i0.y, i1.z), dimensions, coefficient);
+        float3 c101 = giCoefficient(gi_data, int3(i1.x, i0.y, i1.z), dimensions, coefficient);
+        float3 c011 = giCoefficient(gi_data, int3(i0.x, i1.y, i1.z), dimensions, coefficient);
+        float3 c111 = giCoefficient(gi_data, int3(i1.x, i1.y, i1.z), dimensions, coefficient);
+        float3 c00 = mix(c000, c100, t.x);
+        float3 c10 = mix(c010, c110, t.x);
+        float3 c01 = mix(c001, c101, t.x);
+        float3 c11 = mix(c011, c111, t.x);
+        coefficients[coefficient] = mix(mix(c00, c10, t.y), mix(c01, c11, t.y), t.z);
+    }
+
+    float3 n = normalize(normal);
+    float3 irradiance = coefficients[0] * (PI * SH_Y00);
+    irradiance += coefficients[1] * ((2.0f * PI / 3.0f) * SH_Y1 * n.x);
+    irradiance += coefficients[2] * ((2.0f * PI / 3.0f) * SH_Y1 * n.y);
+    irradiance += coefficients[3] * ((2.0f * PI / 3.0f) * SH_Y1 * n.z);
+    return max(irradiance, float3(0.0f)) * intensity;
 }
 
 float3 tracePath(
     float3 origin,
     float3 direction,
-    thread uint& state,
     device const Node *nodes,
     device const Triangle *triangles,
     device const Material *materials,
+    device const float4 *gi_data,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 16> textures,
     sampler material_sampler)
 {
+    Hit hit = traceClosest(origin, direction, INF, nodes, triangles, uniforms);
+    if (!hit.found) return float3(0.0f);
+
+    float3 albedo = materialAlbedo(hit.material, hit.uv, materials, uniforms, textures, material_sampler);
     float3 radiance = float3(0.0f);
-    float3 throughput = float3(1.0f);
-    int bounce_count = clamp(uniforms.counts.w, 1, 4);
 
-    for (int bounce = 0; bounce < bounce_count; ++bounce) {
-        Hit hit = traceClosest(origin, direction, INF, nodes, triangles, uniforms);
-        if (!hit.found) break;
+    if (uniforms.frame.z != 0u && uniforms.light_position_intensity.w > 0.0f) {
+        float3 to_light = uniforms.light_position_intensity.xyz - hit.position;
+        float distance_squared = max(dot(to_light, to_light), 1.0e-4f);
+        float light_distance = sqrt(distance_squared);
+        float3 light_direction = to_light / light_distance;
+        float cosine = max(dot(hit.normal, light_direction), 0.0f);
 
-        float3 albedo = materialAlbedo(hit.material, hit.uv, materials, uniforms, textures, material_sampler);
-
-        if (uniforms.frame.z != 0u && uniforms.light_position_intensity.w > 0.0f) {
-            float3 to_light = uniforms.light_position_intensity.xyz - hit.position;
-            float distance_squared = max(dot(to_light, to_light), 1.0e-4f);
-            float light_distance = sqrt(distance_squared);
-            float3 light_direction = to_light / light_distance;
-            float cosine = max(dot(hit.normal, light_direction), 0.0f);
-
-            if (cosine > 0.0f) {
-                float3 shadow_origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;
-                float shadow_distance = max(light_distance - RAY_EPSILON * 8.0f, 0.0f);
-                if (!traceAny(shadow_origin, light_direction, shadow_distance, nodes, triangles, uniforms)) {
-                    float3 incoming = max(uniforms.light_color_tan_half_fov.xyz, float3(0.0f)) *
-                        max(uniforms.light_position_intensity.w, 0.0f) / distance_squared;
-                    radiance += throughput * albedo * incoming * (cosine / PI);
-                }
+        if (cosine > 0.0f) {
+            float3 shadow_origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;
+            float shadow_distance = max(light_distance - RAY_EPSILON * 8.0f, 0.0f);
+            if (!traceAny(shadow_origin, light_direction, shadow_distance, nodes, triangles, uniforms)) {
+                float3 incoming = max(uniforms.light_color_tan_half_fov.xyz, float3(0.0f)) *
+                    max(uniforms.light_position_intensity.w, 0.0f) / distance_squared;
+                radiance += albedo * incoming * (cosine / PI);
             }
-        }
-
-        throughput *= albedo;
-        if (max(max(throughput.r, throughput.g), throughput.b) < 1.0e-4f) break;
-
-        origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;
-        direction = cosineHemisphere(hit.normal, state);
-        if (dot(direction, hit.geometric_normal) <= 0.0f) {
-            direction = cosineHemisphere(hit.geometric_normal, state);
         }
     }
 
+    float3 indirect_irradiance = sampleGlobalIllumination(gi_data, hit.position, hit.normal);
+    radiance += albedo * indirect_irradiance * (1.0f / PI);
     return radiance;
 }
 
@@ -403,6 +438,7 @@ kernel void trace_kernel(
     device const Triangle *triangles [[buffer(1)]],
     device const Material *materials [[buffer(2)]],
     constant TraceUniforms& uniforms [[buffer(3)]],
+    device const float4 *gi_data [[buffer(4)]],
     texture2d<float, access::read_write> accumulation [[texture(0)]],
     array<texture2d<float>, 16> textures [[texture(1)]],
     texture2d<float, access::write> primary_depth [[texture(17)]],
@@ -478,10 +514,10 @@ kernel void trace_kernel(
     float3 sample_radiance = tracePath(
         uniforms.camera_position.xyz,
         direction,
-        state,
         nodes,
         triangles,
         materials,
+        gi_data,
         uniforms,
         textures,
         material_sampler
