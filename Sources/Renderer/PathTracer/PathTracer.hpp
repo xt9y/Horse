@@ -41,6 +41,7 @@ protected:
 private:
 #ifdef __APPLE__
     void legacyRender(const Ecs::World& world);
+    void legacyShutdown();
 #endif
     Impl *impl_;
 };
