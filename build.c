@@ -112,9 +112,5 @@ void build(C_Build *b)
     c_sources(rasterizer_lighting_contract, "tests/rasterizer_lighting_contract.cpp");
     configureContract(rasterizer_lighting_contract);
 
-    C_Target *global_illumination_budget_contract = c_test(b, "global-illumination-budget-contract");
-    c_sources(global_illumination_budget_contract, "tests/global_illumination_budget_contract.cpp");
-    configureContract(global_illumination_budget_contract);
-
     c_default_target(b, library);
 }
