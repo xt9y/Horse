@@ -75,6 +75,7 @@ constant uint RESET_PHASE_GRID = 1u;
 constant uint MOVING_PHASE_GRID = 4u;
 constant uint MOVING_DEPTH_BLOCK = 2u;
 constant int GI_HEADER_VEC4S = 4;
+constant float ALPHA_CUTOFF = 0.5f;
 
 uint hashUint(uint value)
 {
@@ -316,6 +317,131 @@ float4 sampleTextureSlot(
     }
 }
 
+bool alphaCutoutPass(
+    uint material_index,
+    float2 uv,
+    device const Material *materials,
+    constant TraceUniforms& uniforms,
+    array<texture2d<float>, 16> textures,
+    sampler material_sampler)
+{
+    const int material_count = max(uniforms.counts.z, 0);
+    if (material_index >= uint(material_count)) return true;
+    Material material = materials[material_index];
+    float alpha = clamp(material.base_color.a, 0.0f, 1.0f);
+    int slot = material.data.x;
+    if (slot >= 0 && slot < 16) {
+        float4 texel = sampleTextureSlot(slot, uv, textures, material_sampler);
+        alpha *= texel.a;
+    }
+    return alpha >= ALPHA_CUTOFF;
+}
+
+Hit traceClosestAlpha(
+    float3 origin,
+    float3 direction,
+    float max_distance,
+    device const Node *nodes,
+    device const Triangle *triangles,
+    device const Material *materials,
+    constant TraceUniforms& uniforms,
+    array<texture2d<float>, 16> textures,
+    sampler material_sampler)
+{
+    float3 current_origin = origin;
+    float travelled = 0.0f;
+    Hit result;
+    result.found = false;
+    result.distance = max_distance;
+
+    for (int layer = 0; layer < 32; ++layer) {
+        float remaining = max_distance >= INF * 0.5f
+            ? INF
+            : max(max_distance - travelled, 0.0f);
+        if (remaining <= RAY_EPSILON) return result;
+
+        Hit hit = traceClosest(current_origin, direction, remaining, nodes, triangles, uniforms);
+        if (!hit.found) return result;
+        if (!alphaCutoutPass(hit.material, hit.uv, materials, uniforms, textures, material_sampler)) {
+            float step = hit.distance + RAY_EPSILON * 2.0f;
+            travelled += step;
+            current_origin += direction * step;
+            continue;
+        }
+
+        hit.distance += travelled;
+        hit.position = origin + direction * hit.distance;
+        return hit;
+    }
+    return result;
+}
+
+bool traceAnyAlpha(
+    float3 origin,
+    float3 direction,
+    float max_distance,
+    device const Node *nodes,
+    device const Triangle *triangles,
+    device const Material *materials,
+    constant TraceUniforms& uniforms,
+    array<texture2d<float>, 16> textures,
+    sampler material_sampler)
+{
+    Hit hit = traceClosestAlpha(
+        origin,
+        direction,
+        max_distance,
+        nodes,
+        triangles,
+        materials,
+        uniforms,
+        textures,
+        material_sampler
+    );
+    return hit.found && hit.distance < max_distance;
+}
+
+float deterministicDepthAlpha(
+    float2 sample_pixel,
+    uint2 size,
+    device const Node *nodes,
+    device const Triangle *triangles,
+    device const Material *materials,
+    constant TraceUniforms& uniforms,
+    array<texture2d<float>, 16> textures,
+    sampler material_sampler)
+{
+    float2 depth_uv = sample_pixel / float2(size);
+    float2 depth_ndc = depth_uv * 2.0f - 1.0f;
+    depth_ndc.y = -depth_ndc.y;
+    float3 depth_direction = normalize(
+        uniforms.camera_forward.xyz +
+        uniforms.camera_right.xyz * (
+            depth_ndc.x * uniforms.resolution_aspect.z * uniforms.light_color_tan_half_fov.w
+        ) +
+        uniforms.camera_up.xyz * (depth_ndc.y * uniforms.light_color_tan_half_fov.w)
+    );
+    Hit depth_hit = traceClosestAlpha(
+        uniforms.camera_position.xyz,
+        depth_direction,
+        INF,
+        nodes,
+        triangles,
+        materials,
+        uniforms,
+        textures,
+        material_sampler
+    );
+    if (!depth_hit.found) return INF;
+    return max(
+        dot(
+            depth_hit.position - uniforms.camera_position.xyz,
+            normalize(uniforms.camera_forward.xyz)
+        ),
+        RAY_EPSILON
+    );
+}
+
 float3 materialAlbedo(
     uint material_index,
     float2 uv,
@@ -404,7 +530,17 @@ float3 tracePath(
     array<texture2d<float>, 16> textures,
     sampler material_sampler)
 {
-    Hit hit = traceClosest(origin, direction, INF, nodes, triangles, uniforms);
+    Hit hit = traceClosestAlpha(
+        origin,
+        direction,
+        INF,
+        nodes,
+        triangles,
+        materials,
+        uniforms,
+        textures,
+        material_sampler
+    );
     if (!hit.found) return float3(0.0f);
 
     float3 albedo = materialAlbedo(hit.material, hit.uv, materials, uniforms, textures, material_sampler);
@@ -420,7 +556,17 @@ float3 tracePath(
         if (cosine > 0.0f) {
             float3 shadow_origin = hit.position + hit.geometric_normal * RAY_EPSILON * 4.0f;
             float shadow_distance = max(light_distance - RAY_EPSILON * 8.0f, 0.0f);
-            if (!traceAny(shadow_origin, light_direction, shadow_distance, nodes, triangles, uniforms)) {
+            if (!traceAnyAlpha(
+                shadow_origin,
+                light_direction,
+                shadow_distance,
+                nodes,
+                triangles,
+                materials,
+                uniforms,
+                textures,
+                material_sampler
+            )) {
                 float3 incoming = max(uniforms.light_color_tan_half_fov.xyz, float3(0.0f)) *
                     max(uniforms.light_position_intensity.w, 0.0f) / distance_squared;
                 radiance += albedo * incoming * (cosine / PI);
@@ -458,12 +604,15 @@ kernel void trace_kernel(
                 float2(pixel) + float2(float(MOVING_DEPTH_BLOCK) * 0.5f),
                 float2(size) - float2(0.5f)
             );
-            float depth_value = deterministicDepth(
+            float depth_value = deterministicDepthAlpha(
                 sample_pixel,
                 size,
                 nodes,
                 triangles,
-                uniforms
+                materials,
+                uniforms,
+                textures,
+                material_sampler
             );
             uint2 block_end = min(pixel + uint2(MOVING_DEPTH_BLOCK), size);
             for (uint y = pixel.y; y < block_end.y; ++y) {
@@ -474,12 +623,15 @@ kernel void trace_kernel(
             }
         }
     } else if (reset) {
-        float depth_value = deterministicDepth(
+        float depth_value = deterministicDepthAlpha(
             float2(pixel) + float2(0.5f),
             size,
             nodes,
             triangles,
-            uniforms
+            materials,
+            uniforms,
+            textures,
+            material_sampler
         );
         primary_depth.write(float4(depth_value, 0.0f, 0.0f, 1.0f), pixel);
     }
