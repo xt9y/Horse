@@ -69,7 +69,6 @@ constant float INF = 1.0e30f;
 constant float SH_Y00 = 0.2820947918f;
 constant float SH_Y1 = 0.4886025119f;
 constant int MAX_CLOSEST_STEPS = 8192;
-constant int MAX_SHADOW_STEPS = 4096;
 constant uint STATIONARY_PHASE_GRID = 2u;
 constant uint RESET_PHASE_GRID = 1u;
 constant uint MOVING_PHASE_GRID = 4u;
@@ -211,82 +210,6 @@ Hit traceClosest(
     }
 
     return best;
-}
-
-float deterministicDepth(
-    float2 sample_pixel,
-    uint2 size,
-    device const Node *nodes,
-    device const Triangle *triangles,
-    constant TraceUniforms& uniforms)
-{
-    float2 depth_uv = sample_pixel / float2(size);
-    float2 depth_ndc = depth_uv * 2.0f - 1.0f;
-    depth_ndc.y = -depth_ndc.y;
-    float3 depth_direction = normalize(
-        uniforms.camera_forward.xyz +
-        uniforms.camera_right.xyz * (
-            depth_ndc.x * uniforms.resolution_aspect.z * uniforms.light_color_tan_half_fov.w
-        ) +
-        uniforms.camera_up.xyz * (depth_ndc.y * uniforms.light_color_tan_half_fov.w)
-    );
-    Hit depth_hit = traceClosest(
-        uniforms.camera_position.xyz,
-        depth_direction,
-        INF,
-        nodes,
-        triangles,
-        uniforms
-    );
-    if (!depth_hit.found) return INF;
-    return max(
-        dot(
-            depth_hit.position - uniforms.camera_position.xyz,
-            normalize(uniforms.camera_forward.xyz)
-        ),
-        RAY_EPSILON
-    );
-}
-
-bool traceAny(
-    float3 origin,
-    float3 direction,
-    float max_distance,
-    device const Node *nodes,
-    device const Triangle *triangles,
-    constant TraceUniforms& uniforms)
-{
-    const int node_count = max(uniforms.counts.x, 0);
-    const int triangle_count = max(uniforms.counts.y, 0);
-    if (node_count <= 0 || triangle_count <= 0 || max_distance <= RAY_EPSILON) return false;
-
-    float3 inverse_direction = safeInverse(direction);
-    uint node_index = 0u;
-    int steps = 0;
-
-    while (node_index < uint(node_count) && steps++ < MAX_SHADOW_STEPS) {
-        Node node = nodes[node_index];
-        if (aabbEntry(origin, inverse_direction, float3(node.bmin), float3(node.bmax), max_distance) >= INF) {
-            node_index = node.extra.x;
-            continue;
-        }
-
-        if ((node.meta & LEAF_BIT) != 0u) {
-            uint count = node.meta & ~LEAF_BIT;
-            uint end = min(node.first + count, uint(triangle_count));
-            for (uint triangle_index = node.first; triangle_index < end; ++triangle_index) {
-                Triangle triangle = triangles[triangle_index];
-                float distance = max_distance;
-                float3 barycentric;
-                if (hitTriangle(origin, direction, triangle, distance, barycentric)) return true;
-            }
-            node_index = node.extra.x;
-        } else {
-            node_index = node.first;
-        }
-    }
-
-    return false;
 }
 
 float4 sampleTextureSlot(
@@ -690,30 +613,65 @@ vertex PresentOut present_vertex(uint id [[vertex_id]])
     return out;
 }
 
-float4 validAccumulationSample(texture2d<float> accumulation, int2 pixel, int2 size)
+float4 reconstructSparseSample(texture2d<float> accumulation, int2 pixel, int2 size)
 {
     pixel = clamp(pixel, int2(0), size - int2(1));
-    float4 exact = accumulation.read(uint2(pixel));
-    if (exact.a > 0.0f) return exact;
-
     int2 block = (pixel / 4) * 4;
-    float4 best = float4(0.0f);
-    int best_distance = 1000;
+    int2 phase_offset = int2(-1);
+    float4 fallback = float4(0.0f);
 
     for (int phase = 0; phase < 16; ++phase) {
         int2 candidate = block + int2(phase & 3, (phase >> 2) & 3);
-        candidate = clamp(candidate, int2(0), size - int2(1));
-        float4 candidate_sample = accumulation.read(uint2(candidate));
-        if (candidate_sample.a <= 0.0f) continue;
-
-        int distance = abs(candidate.x - pixel.x) + abs(candidate.y - pixel.y);
-        if (distance < best_distance) {
-            best = candidate_sample;
-            best_distance = distance;
-        }
+        if (candidate.x >= size.x || candidate.y >= size.y) continue;
+        float4 sample_value = accumulation.read(uint2(candidate));
+        if (sample_value.a <= 0.0f) continue;
+        phase_offset = candidate - block;
+        fallback = sample_value;
+        break;
     }
 
-    return best;
+    if (phase_offset.x < 0) {
+        int best_distance = 1000000;
+        for (int y = -4; y <= 4; ++y) {
+            for (int x = -4; x <= 4; ++x) {
+                int2 candidate = clamp(pixel + int2(x, y), int2(0), size - int2(1));
+                float4 sample_value = accumulation.read(uint2(candidate));
+                if (sample_value.a <= 0.0f) continue;
+                int distance = x * x + y * y;
+                if (distance < best_distance) {
+                    fallback = sample_value;
+                    phase_offset = int2(candidate.x & 3, candidate.y & 3);
+                    best_distance = distance;
+                }
+            }
+        }
+        if (phase_offset.x < 0) return float4(0.0f);
+    }
+
+    float2 lattice = (float2(pixel) - float2(phase_offset)) * 0.25f;
+    int2 max_cell = max((size - int2(1) - phase_offset) / 4, int2(0));
+    float2 grid = clamp(lattice, float2(0.0f), float2(max_cell));
+    int2 cell0 = int2(floor(grid));
+    int2 cell1 = min(cell0 + int2(1), max_cell);
+    float2 t = grid - float2(cell0);
+
+    int2 p00 = cell0 * 4 + phase_offset;
+    int2 p10 = int2(cell1.x, cell0.y) * 4 + phase_offset;
+    int2 p01 = int2(cell0.x, cell1.y) * 4 + phase_offset;
+    int2 p11 = cell1 * 4 + phase_offset;
+
+    float4 s00 = accumulation.read(uint2(p00));
+    float4 s10 = accumulation.read(uint2(p10));
+    float4 s01 = accumulation.read(uint2(p01));
+    float4 s11 = accumulation.read(uint2(p11));
+
+    float w00 = (1.0f - t.x) * (1.0f - t.y) * (s00.a > 0.0f ? 1.0f : 0.0f);
+    float w10 = t.x * (1.0f - t.y) * (s10.a > 0.0f ? 1.0f : 0.0f);
+    float w01 = (1.0f - t.x) * t.y * (s01.a > 0.0f ? 1.0f : 0.0f);
+    float w11 = t.x * t.y * (s11.a > 0.0f ? 1.0f : 0.0f);
+    float weight_sum = w00 + w10 + w01 + w11;
+    if (weight_sum <= 1.0e-6f) return fallback;
+    return (s00 * w00 + s10 * w10 + s01 * w01 + s11 * w11) / weight_sum;
 }
 
 bool blockComplete(texture2d<float> accumulation, int2 pixel, int2 size)
@@ -721,7 +679,7 @@ bool blockComplete(texture2d<float> accumulation, int2 pixel, int2 size)
     int2 block = (pixel / 4) * 4;
     for (int phase = 0; phase < 16; ++phase) {
         int2 candidate = block + int2(phase & 3, (phase >> 2) & 3);
-        candidate = clamp(candidate, int2(0), size - int2(1));
+        if (candidate.x >= size.x || candidate.y >= size.y) continue;
         if (accumulation.read(uint2(candidate)).a <= 0.0f) return false;
     }
     return true;
@@ -737,14 +695,13 @@ fragment float4 present_fragment(
     float2 sample_uv = float2(in.uv.x, 1.0f - in.uv.y);
     int2 pixel = clamp(int2(sample_uv * float2(size)), int2(0), size - int2(1));
 
-    float4 accumulated = accumulation.read(uint2(pixel));
-    if (uniforms.exposure.y > 0.5f && accumulated.a <= 0.0f) {
-        return float4(0.0f, 0.0f, 0.0f, 1.0f);
-    }
-    if (uniforms.exposure.y <= 0.5f) {
+    float4 accumulated;
+    if (uniforms.exposure.y > 0.5f) {
+        accumulated = reconstructSparseSample(accumulation, pixel, size);
+    } else {
         accumulated = blockComplete(accumulation, pixel, size)
             ? accumulation.sample(accumulation_sampler, sample_uv)
-            : validAccumulationSample(accumulation, pixel, size);
+            : reconstructSparseSample(accumulation, pixel, size);
     }
 
     float samples = max(accumulated.a, 1.0f);
