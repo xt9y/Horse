@@ -5,6 +5,7 @@
 #include "Models/Core/Texture.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/FontPass.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scene.hpp"
 #include "Renderer/PathTracer/PathTracerShaders.hpp"
@@ -294,6 +295,7 @@ struct PathTracer::Impl {
     GLuint trace_program = 0u;
     GLuint present_program = 0u;
     GLuint accumulation = 0u;
+    GLuint primary_depth = 0u;
     GLuint node_buffer = 0u;
     GLuint triangle_buffer = 0u;
     GLuint material_buffer = 0u;
@@ -339,15 +341,15 @@ struct PathTracer::Impl {
         trace_height = std::max(height / divisor, 1);
     }
 
-    bool createAccumulation()
+    bool createFloatTexture(GLuint& target, GLint filter)
     {
         GLuint texture = 0u;
         glGenTextures(1, &texture);
         if (texture == 0u) return false;
 
         glBindTexture(GL_TEXTURE_2D, texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(
@@ -361,16 +363,28 @@ struct PathTracer::Impl {
             GL_FLOAT,
             nullptr
         );
+        target = texture;
+        return true;
+    }
 
-        accumulation = texture;
+    bool createTraceTargets()
+    {
+        if (!createFloatTexture(accumulation, GL_LINEAR)) return false;
+        if (!createFloatTexture(primary_depth, GL_NEAREST)) {
+            glDeleteTextures(1, &accumulation);
+            accumulation = 0u;
+            return false;
+        }
         resetFrameHistory();
         return true;
     }
 
-    void destroyAccumulation()
+    void destroyTraceTargets()
     {
         if (accumulation != 0u) glDeleteTextures(1, &accumulation);
+        if (primary_depth != 0u) glDeleteTextures(1, &primary_depth);
         accumulation = 0u;
+        primary_depth = 0u;
         resetFrameHistory();
     }
 
@@ -578,51 +592,51 @@ struct PathTracer::Impl {
         return node_index;
     }
 
-std::uint64_t sceneSignature(
-    const Ecs::World& world,
-    const std::vector<Scene::RenderItem>& items
-) const
-{
-    std::uint64_t hash = 1469598103934665603ull;
-    for (const Scene::RenderItem& item : items) {
-        hashValue(hash, item.entity);
-        hashValue(hash, item.mesh_component->mesh);
-        hashValue(hash, item.mesh_component->material);
-        hashTransform(hash, *item.transform);
+    std::uint64_t sceneSignature(
+        const Ecs::World& world,
+        const std::vector<Scene::RenderItem>& items
+    ) const
+    {
+        std::uint64_t hash = 1469598103934665603ull;
+        for (const Scene::RenderItem& item : items) {
+            hashValue(hash, item.entity);
+            hashValue(hash, item.mesh_component->mesh);
+            hashValue(hash, item.mesh_component->material);
+            hashTransform(hash, *item.transform);
 
-        const Animation::SkinBindingComponent *binding =
-  world.get<Animation::SkinBindingComponent>(item.entity);
-        if (binding && binding->animator != Ecs::INVALID_ENTITY) {
-  const Animation::AnimatorComponent *animator =
-      world.get<Animation::AnimatorComponent>(binding->animator);
-  if (animator) {
-      hashValue(hash, binding->animator);
-      hashValue(hash, animator->pose.revision);
-  }
+            const Animation::SkinBindingComponent *binding =
+                world.get<Animation::SkinBindingComponent>(item.entity);
+            if (binding && binding->animator != Ecs::INVALID_ENTITY) {
+                const Animation::AnimatorComponent *animator =
+                    world.get<Animation::AnimatorComponent>(binding->animator);
+                if (animator) {
+                    hashValue(hash, binding->animator);
+                    hashValue(hash, animator->pose.revision);
+                }
+            }
         }
+        return hash;
     }
-    return hash;
-}
 
-CameraState cameraState(const Scene::CameraState& source) const
-{
-    CameraState state;
-    if (!source.valid) return state;
+    CameraState cameraState(const Scene::CameraState& source) const
+    {
+        CameraState state;
+        if (!source.valid) return state;
 
-    const Vec3 forward = Camera::flightDirection(
-        source.transform.rotation.y,
-        source.transform.rotation.x
-    );
-    const Vec3 right = Camera::strafeDirection(source.transform.rotation.y);
+        const Vec3 forward = Camera::flightDirection(
+            source.transform.rotation.y,
+            source.transform.rotation.x
+        );
+        const Vec3 right = Camera::strafeDirection(source.transform.rotation.y);
 
-    state.valid = true;
-    state.position = source.transform.position;
-    state.forward = normalize(forward);
-    state.right = normalize(right);
-    state.up = normalize(cross(state.right, state.forward));
-    state.fov_degrees = std::clamp(source.fov_degrees, 1.0f, 179.0f);
-    return state;
-}
+        state.valid = true;
+        state.position = source.transform.position;
+        state.forward = normalize(forward);
+        state.right = normalize(right);
+        state.up = normalize(cross(state.right, state.forward));
+        state.fov_degrees = std::clamp(source.fov_degrees, 1.0f, 179.0f);
+        return state;
+    }
 
     std::uint64_t cameraSignature(const CameraState& camera) const
     {
@@ -638,17 +652,17 @@ CameraState cameraState(const Scene::CameraState& source) const
         return hash;
     }
 
-LightState lightState(const Scene::LightState& source) const
-{
-    LightState result;
-    if (!source.valid || source.light.type != LightType::Point) return result;
+    LightState lightState(const Scene::LightState& source) const
+    {
+        LightState result;
+        if (!source.valid || source.light.type != LightType::Point) return result;
 
-    result.valid = true;
-    result.position = source.transform.position;
-    result.color = source.light.color;
-    result.intensity = std::max(source.light.intensity, 0.0f);
-    return result;
-}
+        result.valid = true;
+        result.position = source.transform.position;
+        result.color = source.light.color;
+        result.intensity = std::max(source.light.intensity, 0.0f);
+        return result;
+    }
 
     std::uint64_t lightSignature(const LightState& light) const
     {
@@ -718,15 +732,15 @@ LightState lightState(const Scene::LightState& source) const
         gpu_triangles.reserve(262144u);
 
         for (const Scene::RenderItem& item : items) {
-    if (gpu_triangles.size() >= kMaximumTriangles) break;
+            if (gpu_triangles.size() >= kMaximumTriangles) break;
 
-    const Ecs::Entity entity = item.entity;
-    const MeshComponent *mesh_component = item.mesh_component;
-    const Transform *transform = item.transform;
-    const Models::MeshData *mesh = item.mesh;
-    if (!mesh || mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
+            const Ecs::Entity entity = item.entity;
+            const MeshComponent *mesh_component = item.mesh_component;
+            const Transform *transform = item.transform;
+            const Models::MeshData *mesh = item.mesh;
+            if (!mesh || mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
 
-    const Models::MaterialData *material = item.material;
+            const Models::MaterialData *material = item.material;
             if (material && material->opacity < 0.5f) continue;
 
             const std::uint32_t material_index = materialIndex(mesh_component->material);
@@ -734,7 +748,8 @@ LightState lightState(const Scene::LightState& source) const
             const Mat4 world_to_object = inverseModelMatrix(*transform);
 
             const Animation::Pose *pose = nullptr;
-            const Animation::SkinBindingComponent *binding = world.get<Animation::SkinBindingComponent>(entity);
+            const Animation::SkinBindingComponent *binding =
+                world.get<Animation::SkinBindingComponent>(entity);
             if (binding && binding->animator != Ecs::INVALID_ENTITY) {
                 const Animation::AnimatorComponent *animator =
                     world.get<Animation::AnimatorComponent>(binding->animator);
@@ -902,6 +917,7 @@ LightState lightState(const Scene::LightState& source) const
         bindTexturesForDispatch();
         bindBuffersIfDirty();
         GL42.glBindImageTexture(0u, accumulation, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);
+        GL42.glBindImageTexture(1u, primary_depth, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
 
         GL43.glDispatchCompute(
             static_cast<GLuint>((trace_width + 7) / 8),
@@ -917,7 +933,7 @@ LightState lightState(const Scene::LightState& source) const
         reset_pending = false;
     }
 
-    void present()
+    void compose()
     {
         glViewport(0, 0, width, height);
         glDisable(GL_DEPTH_TEST);
@@ -984,7 +1000,7 @@ bool PathTracer::init()
     }
 
     impl_->updateTraceResolution();
-    if (!impl_->createPrograms() || !impl_->createAccumulation()) {
+    if (!impl_->createPrograms() || !impl_->createTraceTargets()) {
         shutdown();
         return false;
     }
@@ -1023,18 +1039,27 @@ void PathTracer::resize(int width, int height)
         return;
     }
 
-    impl_->destroyAccumulation();
-    if (!impl_->createAccumulation()) {
-        std::fprintf(stderr, "[PathTracer]: failed to resize accumulation buffer\n");
+    impl_->destroyTraceTargets();
+    if (!impl_->createTraceTargets()) {
+        std::fprintf(stderr, "[PathTracer]: failed to resize trace targets\n");
         shutdown();
     }
 }
 
-void PathTracer::render(const Ecs::World& world)
+bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
+    if (!impl_->initialized) return false;
+
+    output.api = Internal::GraphicsApi::OpenGL;
+    output.depth = Internal::DepthSource::None;
+    output.width = impl_->width;
+    output.height = impl_->height;
+    output.command = nullptr;
+    output.depth_texture = nullptr;
+
     if (!impl_->active()) {
-        glClear(GL_COLOR_BUFFER_BIT);
-        return;
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        return true;
     }
 
     const int previous_trace_width = impl_->trace_width;
@@ -1044,19 +1069,19 @@ void PathTracer::render(const Ecs::World& world)
         impl_->trace_width != previous_trace_width ||
         impl_->trace_height != previous_trace_height)
     {
-        impl_->destroyAccumulation();
-        if (!impl_->createAccumulation()) {
-            std::fprintf(stderr, "[PathTracer]: failed to recreate accumulation buffer\n");
+        impl_->destroyTraceTargets();
+        if (!impl_->createTraceTargets()) {
+            std::fprintf(stderr, "[PathTracer]: failed to recreate trace targets\n");
             shutdown();
-            return;
+            return false;
         }
     }
 
     const Scene::CameraState scene_camera = Scene::cameraState(world);
     const Impl::CameraState camera = impl_->cameraState(scene_camera);
     if (!camera.valid) {
-        glClear(GL_COLOR_BUFFER_BIT);
-        return;
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        return true;
     }
 
     const Scene::LightState scene_light = Scene::lightState(world);
@@ -1072,7 +1097,7 @@ void PathTracer::render(const Ecs::World& world)
         if (next_scene_signature != impl_->scene_signature) {
             if (!impl_->syncScene(world, impl_->render_items)) {
                 std::fprintf(stderr, "[PathTracer]: failed to synchronize world cache\n");
-                return;
+                return false;
             }
             impl_->scene_signature = next_scene_signature;
             impl_->resetAccumulation();
@@ -1096,16 +1121,28 @@ void PathTracer::render(const Ecs::World& world)
     }
 
     impl_->dispatch(camera, light);
-    impl_->present();
+    impl_->compose();
+
+    output.depth = Internal::DepthSource::LinearTexture;
+    output.depth_texture = reinterpret_cast<void*>(
+        static_cast<std::uintptr_t>(impl_->primary_depth)
+    );
+    return true;
+}
+
+void PathTracer::present(Internal::FrameOutput& output)
+{
+    (void)output;
 }
 
 void PathTracer::shutdown()
 {
     if (!impl_) return;
 
+    Internal::shutdownFonts(Internal::GraphicsApi::OpenGL);
     if (GL20.glUseProgram) GL20.glUseProgram(0u);
     impl_->destroyPrograms();
-    impl_->destroyAccumulation();
+    impl_->destroyTraceTargets();
     impl_->destroyBuffers();
 
     for (const auto& [handle, texture] : impl_->texture_cache) {
