@@ -1,10 +1,12 @@
-name: Rasterizer API RED
+name: Rasterizer API Contract
 
 on:
   push:
     branches: [main]
     paths:
       - 'tests/rasterizer_architecture_contract.cpp'
+      - 'Sources/Renderer/Rasterizer/Rasterizer.hpp'
+      - 'Sources/Renderer/Render.hpp'
       - '.github/workflows/rasterizer-api-red.yml'
 
 jobs:
