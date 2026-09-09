@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'tests/renderer_common_contract.cpp'
+      - 'Sources/Renderer/Renderer.hpp'
+      - 'Sources/Renderer/PathTracer/PathTracer.hpp'
       - '.github/workflows/renderer-interface-red.yml'
 
 jobs:
