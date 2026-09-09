@@ -6,6 +6,8 @@
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
 #include "Renderer/FontPass.hpp"
+#include "Renderer/GlobalIllumination.hpp"
+#include "Renderer/GlobalIlluminationOpenGL.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scene.hpp"
 #include "Renderer/PathTracer/PathTracerShaders.hpp"
@@ -98,6 +100,15 @@ void hashTransform(std::uint64_t& hash, const Transform& transform)
     hashVec3(hash, transform.position);
     hashVec3(hash, transform.rotation);
     hashVec3(hash, transform.scale);
+}
+
+std::uint64_t globalIlluminationSignature(const GlobalIllumination::Field *field)
+{
+    if (!field || !field->valid()) return 0u;
+    std::uint64_t hash = 1469598103934665603ull;
+    hashValue(hash, field->revision);
+    hashFloat(hash, field->intensity);
+    return hash;
 }
 
 GLuint compileShader(GLenum stage, const char *source)
@@ -260,7 +271,6 @@ struct PathTracer::Impl {
         GLint frame_index = -1;
         GLint reset_accumulation = -1;
         GLint camera_moving = -1;
-        GLint max_bounces = -1;
         GLint has_light = -1;
         GLint light_position = -1;
         GLint light_color = -1;
@@ -290,6 +300,7 @@ struct PathTracer::Impl {
     std::uint64_t scene_signature = 0u;
     std::uint64_t camera_signature = 0u;
     std::uint64_t light_signature = 0u;
+    std::uint64_t gi_signature = 0u;
     std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
 
     GLuint trace_program = 0u;
@@ -405,7 +416,6 @@ struct PathTracer::Impl {
         trace_uniforms.frame_index = uniformLocation(trace_program, "uFrameIndex");
         trace_uniforms.reset_accumulation = uniformLocation(trace_program, "uResetAccumulation");
         trace_uniforms.camera_moving = uniformLocation(trace_program, "uCameraMoving");
-        trace_uniforms.max_bounces = uniformLocation(trace_program, "uMaxBounces");
         trace_uniforms.has_light = uniformLocation(trace_program, "uHasLight");
         trace_uniforms.light_position = uniformLocation(trace_program, "uLightPosition");
         trace_uniforms.light_color = uniformLocation(trace_program, "uLightColor");
@@ -908,7 +918,6 @@ struct PathTracer::Impl {
         setInt(trace_uniforms.frame_index, static_cast<int>(frame_index));
         setInt(trace_uniforms.reset_accumulation, reset_pending ? 1 : 0);
         setInt(trace_uniforms.camera_moving, camera_moving ? 1 : 0);
-        setInt(trace_uniforms.max_bounces, std::clamp(settings.max_bounces, 1, 4));
         setInt(trace_uniforms.has_light, light.valid ? 1 : 0);
         setVec3(trace_uniforms.light_position, light.position);
         setVec3(trace_uniforms.light_color, light.color);
@@ -1088,6 +1097,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     const Impl::LightState light = impl_->lightState(scene_light);
     const std::uint64_t next_camera_signature = impl_->cameraSignature(camera);
     const std::uint64_t next_light_signature = impl_->lightSignature(light);
+    const std::uint64_t next_gi_signature = globalIlluminationSignature(output.global_illumination);
     const std::uint64_t next_world_revision = world.changeRevision();
 
     if (next_world_revision != impl_->world_revision) {
@@ -1120,6 +1130,11 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         impl_->resetAccumulation();
     }
 
+    if (next_gi_signature != impl_->gi_signature) {
+        impl_->gi_signature = next_gi_signature;
+        impl_->resetAccumulation();
+    }
+
     impl_->dispatch(camera, light);
     impl_->compose();
 
@@ -1140,6 +1155,7 @@ void PathTracer::shutdown()
     if (!impl_) return;
 
     Internal::shutdownFonts(Internal::GraphicsApi::OpenGL);
+    Internal::shutdownGlobalIlluminationOpenGL();
     if (GL20.glUseProgram) GL20.glUseProgram(0u);
     impl_->destroyPrograms();
     impl_->destroyTraceTargets();
@@ -1160,6 +1176,7 @@ void PathTracer::shutdown()
     impl_->scene_signature = 0u;
     impl_->camera_signature = 0u;
     impl_->light_signature = 0u;
+    impl_->gi_signature = 0u;
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->texture_bindings_dirty = true;
     impl_->buffer_bindings_dirty = true;
