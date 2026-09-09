@@ -8,6 +8,7 @@
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
 #include "Renderer/FontPass.hpp"
+#include "Renderer/GlobalIlluminationMetal.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scene.hpp"
 #include "Renderer/PathTracer/PathTracerMetalShaders.hpp"
@@ -95,6 +96,15 @@ void hashTransform(std::uint64_t& hash, const Transform& transform)
     hashVec3(hash, transform.scale);
 }
 
+std::uint64_t globalIlluminationSignature(const GlobalIllumination::Field *field)
+{
+    if (!field || !field->valid()) return 0u;
+    std::uint64_t hash = 1469598103934665603ull;
+    hashValue(hash, field->revision);
+    hashFloat(hash, field->intensity);
+    return hash;
+}
+
 } // namespace
 
 struct PathTracer::Impl {
@@ -173,6 +183,7 @@ struct PathTracer::Impl {
     std::uint64_t scene_signature = 0u;
     std::uint64_t camera_signature = 0u;
     std::uint64_t light_signature = 0u;
+    std::uint64_t gi_signature = 0u;
     std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
 
     LWMGLLibrary shader_library = nullptr;
@@ -770,7 +781,7 @@ struct PathTracer::Impl {
             static_cast<std::int32_t>(gpu_nodes.size()),
             static_cast<std::int32_t>(gpu_triangles.size()),
             static_cast<std::int32_t>(gpu_materials.size()),
-            std::clamp(settings.max_bounces, 1, 4)
+            0
         };
         uniforms.frame = {
             frame_index,
@@ -798,6 +809,7 @@ struct PathTracer::Impl {
     bool dispatchAndCompose(
         const CameraState& camera,
         const LightState& light,
+        const GlobalIllumination::Field *global_illumination,
         LWMGLCommand& out_command)
     {
         out_command = nullptr;
@@ -826,6 +838,7 @@ struct PathTracer::Impl {
         if (ok) ok = Metal.setBuffer(command, triangle_buffer, 0u, 1u) == 0;
         if (ok) ok = Metal.setBuffer(command, material_buffer, 0u, 2u) == 0;
         if (ok) ok = Metal.setBuffer(command, trace_uniform_buffer, 0u, 3u) == 0;
+        if (ok) ok = Internal::bindGlobalIlluminationMetal(command, global_illumination, 4u);
         if (ok) ok = Metal.setTexture(command, accumulation, 0u) == 0;
         for (std::size_t slot = 0u; ok && slot < texture_slots.size(); ++slot) {
             ok = Metal.setTexture(
@@ -1007,6 +1020,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     const Impl::LightState light = impl_->lightState(scene_light);
     const std::uint64_t next_camera_signature = impl_->cameraSignature(camera);
     const std::uint64_t next_light_signature = impl_->lightSignature(light);
+    const std::uint64_t next_gi_signature = globalIlluminationSignature(output.global_illumination);
     const std::uint64_t next_world_revision = world.changeRevision();
 
     if (next_world_revision != impl_->world_revision) {
@@ -1039,8 +1053,13 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         impl_->resetAccumulation();
     }
 
+    if (next_gi_signature != impl_->gi_signature) {
+        impl_->gi_signature = next_gi_signature;
+        impl_->resetAccumulation();
+    }
+
     LWMGLCommand command = nullptr;
-    if (!impl_->dispatchAndCompose(camera, light, command)) return false;
+    if (!impl_->dispatchAndCompose(camera, light, output.global_illumination, command)) return false;
 
     output.command = command;
     output.depth = Internal::DepthSource::LinearTexture;
@@ -1071,6 +1090,7 @@ void PathTracer::shutdown()
 
     if (Metal.isCreated()) Metal.waitIdle();
     Internal::shutdownFonts(Internal::GraphicsApi::Metal);
+    Internal::shutdownGlobalIlluminationMetal();
 
     for (const auto& [handle, texture] : impl_->texture_cache) {
         (void)handle;
@@ -1096,6 +1116,7 @@ void PathTracer::shutdown()
     impl_->scene_signature = 0u;
     impl_->camera_signature = 0u;
     impl_->light_signature = 0u;
+    impl_->gi_signature = 0u;
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->initialized = false;
     impl_->resetFrameHistory();
