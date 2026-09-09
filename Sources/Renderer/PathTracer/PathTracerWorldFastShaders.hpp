@@ -34,6 +34,7 @@ layout(std430, binding = 1) readonly buffer Triangles { Triangle triangles[]; };
 layout(std430, binding = 4) readonly buffer Materials { Material materials[]; };
 
 layout(rgba32f, binding = 0) uniform image2D uAccumulation;
+layout(rgba32f, binding = 1) uniform image2D uPrimaryDepth;
 
 uniform sampler2D uTexture0;
 uniform sampler2D uTexture1;
@@ -306,15 +307,23 @@ vec3 cosineHemisphere(vec3 normal, inout uint state)
     return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
 }
 
-vec3 tracePath(vec3 origin, vec3 direction, inout uint state)
+vec3 tracePath(vec3 origin, vec3 direction, inout uint state, out float primary_depth)
 {
     vec3 radiance = vec3(0.0);
     vec3 throughput = vec3(1.0);
+    primary_depth = INF;
     int bounce_count = clamp(uMaxBounces, 1, 4);
 
     for (int bounce = 0; bounce < bounce_count; ++bounce) {
         Hit hit = traceClosest(origin, direction, INF);
         if (!hit.found) break;
+
+        if (bounce == 0) {
+            primary_depth = max(
+                dot(hit.position - uCameraPosition, normalize(uCameraForward)),
+                RAY_EPSILON
+            );
+        }
 
         vec3 albedo = materialAlbedo(hit.material, hit.uv);
 
@@ -385,7 +394,10 @@ void main()
         uCameraUp * (ndc.y * uTanHalfFov)
     );
 
-    vec3 sample_radiance = tracePath(uCameraPosition, direction, state);
+    float primary_depth = INF;
+    vec3 sample_radiance = tracePath(uCameraPosition, direction, state, primary_depth);
+    imageStore(uPrimaryDepth, pixel, vec4(primary_depth, 0.0, 0.0, 0.0));
+
     vec4 previous = uResetAccumulation != 0 ? vec4(0.0) : imageLoad(uAccumulation, pixel);
     imageStore(uAccumulation, pixel, vec4(previous.rgb + sample_radiance, previous.a + 1.0));
 }
