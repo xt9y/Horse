@@ -3,7 +3,33 @@
 
 #include "Ecs/Ecs.hpp"
 
+#include <cstdint>
+
 namespace Renderer {
+
+namespace Internal {
+
+enum class GraphicsApi : std::uint8_t {
+    OpenGL,
+    Metal,
+};
+
+enum class DepthSource : std::uint8_t {
+    None,
+    Native,
+    LinearTexture,
+};
+
+struct FrameOutput {
+    GraphicsApi api = GraphicsApi::OpenGL;
+    DepthSource depth = DepthSource::None;
+    int width = 1;
+    int height = 1;
+    void *command = nullptr;
+    void *depth_texture = nullptr;
+};
+
+} // namespace Internal
 
 class IRenderer {
 public:
@@ -11,12 +37,16 @@ public:
 
     virtual bool init() = 0;
     virtual void resize(int width, int height) = 0;
-    virtual void render(const Ecs::World& world) = 0;
+    void render(const Ecs::World& world);
     virtual void shutdown() = 0;
 
     virtual bool initialized() const = 0;
     virtual bool enabled() const = 0;
     virtual void setEnabled(bool enabled) = 0;
+
+protected:
+    virtual bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) = 0;
+    virtual void present(Internal::FrameOutput& output) = 0;
 };
 
 } // namespace Renderer
