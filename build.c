@@ -54,7 +54,7 @@ void build(C_Build *b)
     c_sources(library, "Sources/Models/*/*.cpp");
     c_sources(library, "Sources/Renderer/Rasterizer/Rasterizer.cpp");
 #ifdef __APPLE__
-    c_sources(library, "Sources/Renderer/PathTracer/PathTracerMetal.cpp");
+    c_sources(library, "Sources/Renderer/PathTracer/PathTracerMetalFrame.cpp");
 #else
     c_sources(library, "Sources/Renderer/PathTracer/PathTracer.cpp");
 #endif
