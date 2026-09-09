@@ -7,6 +7,7 @@
 #include "Models/Core/Texture.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/FontPass.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scene.hpp"
 #include "Renderer/PathTracer/PathTracerMetalShaders.hpp"
@@ -181,6 +182,7 @@ struct PathTracer::Impl {
     LWMGLComputePipeline trace_pipeline = nullptr;
     LWMGLRenderPipeline present_pipeline = nullptr;
     LWMGLTexture accumulation = nullptr;
+    LWMGLTexture primary_depth = nullptr;
     LWMGLTexture white_texture = nullptr;
     LWMGLSampler material_sampler = nullptr;
     LWMGLSampler present_sampler = nullptr;
@@ -334,24 +336,41 @@ struct PathTracer::Impl {
         texture_slots.fill(nullptr);
     }
 
-    bool createAccumulation()
+    bool createTraceTargets()
     {
-        const LWMGLTextureDesc desc = {
+        const LWMGLTextureDesc accumulation_desc = {
             static_cast<std::uint32_t>(trace_width),
             static_cast<std::uint32_t>(trace_height),
             LWMGL_RGBA32_FLOAT,
             LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_READ | LWMGL_TEXTURE_WRITE,
             LWMGL_STORAGE_PRIVATE
         };
-        accumulation = Metal.createTexture(&desc);
+        accumulation = Metal.createTexture(&accumulation_desc);
         if (!accumulation) return false;
+
+        const LWMGLTextureDesc depth_desc = {
+            static_cast<std::uint32_t>(trace_width),
+            static_cast<std::uint32_t>(trace_height),
+            LWMGL_RGBA32_FLOAT,
+            LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE,
+            LWMGL_STORAGE_PRIVATE
+        };
+        primary_depth = Metal.createTexture(&depth_desc);
+        if (!primary_depth) {
+            Metal.destroyTexture(accumulation);
+            accumulation = nullptr;
+            return false;
+        }
+
         resetFrameHistory();
         return true;
     }
 
-    void destroyAccumulation()
+    void destroyTraceTargets()
     {
+        if (primary_depth) Metal.destroyTexture(primary_depth);
         if (accumulation) Metal.destroyTexture(accumulation);
+        primary_depth = nullptr;
         accumulation = nullptr;
         resetFrameHistory();
     }
@@ -477,51 +496,51 @@ struct PathTracer::Impl {
         return node_index;
     }
 
-std::uint64_t sceneSignature(
-    const Ecs::World& world,
-    const std::vector<Scene::RenderItem>& items
-) const
-{
-    std::uint64_t hash = 1469598103934665603ull;
-    for (const Scene::RenderItem& item : items) {
-        hashValue(hash, item.entity);
-        hashValue(hash, item.mesh_component->mesh);
-        hashValue(hash, item.mesh_component->material);
-        hashTransform(hash, *item.transform);
+    std::uint64_t sceneSignature(
+        const Ecs::World& world,
+        const std::vector<Scene::RenderItem>& items
+    ) const
+    {
+        std::uint64_t hash = 1469598103934665603ull;
+        for (const Scene::RenderItem& item : items) {
+            hashValue(hash, item.entity);
+            hashValue(hash, item.mesh_component->mesh);
+            hashValue(hash, item.mesh_component->material);
+            hashTransform(hash, *item.transform);
 
-        const Animation::SkinBindingComponent *binding =
-  world.get<Animation::SkinBindingComponent>(item.entity);
-        if (binding && binding->animator != Ecs::INVALID_ENTITY) {
-  const Animation::AnimatorComponent *animator =
-      world.get<Animation::AnimatorComponent>(binding->animator);
-  if (animator) {
-      hashValue(hash, binding->animator);
-      hashValue(hash, animator->pose.revision);
-  }
+            const Animation::SkinBindingComponent *binding =
+                world.get<Animation::SkinBindingComponent>(item.entity);
+            if (binding && binding->animator != Ecs::INVALID_ENTITY) {
+                const Animation::AnimatorComponent *animator =
+                    world.get<Animation::AnimatorComponent>(binding->animator);
+                if (animator) {
+                    hashValue(hash, binding->animator);
+                    hashValue(hash, animator->pose.revision);
+                }
+            }
         }
+        return hash;
     }
-    return hash;
-}
 
-CameraState cameraState(const Scene::CameraState& source) const
-{
-    CameraState state;
-    if (!source.valid) return state;
+    CameraState cameraState(const Scene::CameraState& source) const
+    {
+        CameraState state;
+        if (!source.valid) return state;
 
-    const Vec3 forward = Camera::flightDirection(
-        source.transform.rotation.y,
-        source.transform.rotation.x
-    );
-    const Vec3 right = Camera::strafeDirection(source.transform.rotation.y);
+        const Vec3 forward = Camera::flightDirection(
+            source.transform.rotation.y,
+            source.transform.rotation.x
+        );
+        const Vec3 right = Camera::strafeDirection(source.transform.rotation.y);
 
-    state.valid = true;
-    state.position = source.transform.position;
-    state.forward = normalize(forward);
-    state.right = normalize(right);
-    state.up = normalize(cross(state.right, state.forward));
-    state.fov_degrees = std::clamp(source.fov_degrees, 1.0f, 179.0f);
-    return state;
-}
+        state.valid = true;
+        state.position = source.transform.position;
+        state.forward = normalize(forward);
+        state.right = normalize(right);
+        state.up = normalize(cross(state.right, state.forward));
+        state.fov_degrees = std::clamp(source.fov_degrees, 1.0f, 179.0f);
+        return state;
+    }
 
     std::uint64_t cameraSignature(const CameraState& camera) const
     {
@@ -537,17 +556,17 @@ CameraState cameraState(const Scene::CameraState& source) const
         return hash;
     }
 
-LightState lightState(const Scene::LightState& source) const
-{
-    LightState result;
-    if (!source.valid || source.light.type != LightType::Point) return result;
+    LightState lightState(const Scene::LightState& source) const
+    {
+        LightState result;
+        if (!source.valid || source.light.type != LightType::Point) return result;
 
-    result.valid = true;
-    result.position = source.transform.position;
-    result.color = source.light.color;
-    result.intensity = std::max(source.light.intensity, 0.0f);
-    return result;
-}
+        result.valid = true;
+        result.position = source.transform.position;
+        result.color = source.light.color;
+        result.intensity = std::max(source.light.intensity, 0.0f);
+        return result;
+    }
 
     std::uint64_t lightSignature(const LightState& light) const
     {
@@ -617,15 +636,15 @@ LightState lightState(const Scene::LightState& source) const
         gpu_triangles.reserve(262144u);
 
         for (const Scene::RenderItem& item : items) {
-    if (gpu_triangles.size() >= kMaximumTriangles) break;
+            if (gpu_triangles.size() >= kMaximumTriangles) break;
 
-    const Ecs::Entity entity = item.entity;
-    const MeshComponent *mesh_component = item.mesh_component;
-    const Transform *transform = item.transform;
-    const Models::MeshData *mesh = item.mesh;
-    if (!mesh || mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
+            const Ecs::Entity entity = item.entity;
+            const MeshComponent *mesh_component = item.mesh_component;
+            const Transform *transform = item.transform;
+            const Models::MeshData *mesh = item.mesh;
+            if (!mesh || mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
 
-    const Models::MaterialData *material = item.material;
+            const Models::MaterialData *material = item.material;
             if (material && material->opacity < 0.5f) continue;
 
             const std::uint32_t material_index = materialIndex(mesh_component->material);
@@ -762,23 +781,29 @@ LightState lightState(const Scene::LightState& source) const
         return uniforms;
     }
 
-    bool clearDrawable()
+    bool beginClearDrawable(LWMGLCommand& out_command)
     {
+        out_command = nullptr;
         LWMGLCommand command = Metal.begin();
         if (!command) return false;
         const LWMGLClearColor clear = {0.0, 0.0, 0.0, 1.0};
-        bool ok = Metal.beginRenderToDrawable(command, clear, 1) == 0;
-        if (ok) ok = Metal.endEncoding(command) == 0;
-        if (ok) ok = Metal.present(command) == 0;
-        if (ok) ok = Metal.commit(command) == 0;
-        if (ok) ok = Metal.wait(command) == 0;
-        Metal.destroyCommand(command);
-        return ok;
+        if (Metal.beginRenderToDrawable(command, clear, 1) != 0) {
+            Metal.destroyCommand(command);
+            return false;
+        }
+        out_command = command;
+        return true;
     }
 
-    bool dispatchAndPresent(const CameraState& camera, const LightState& light)
+    bool dispatchAndCompose(
+        const CameraState& camera,
+        const LightState& light,
+        LWMGLCommand& out_command)
     {
-        if (!node_buffer || !triangle_buffer || !material_buffer || !accumulation) return false;
+        out_command = nullptr;
+        if (!node_buffer || !triangle_buffer || !material_buffer || !accumulation || !primary_depth) {
+            return false;
+        }
 
         const int samples = std::clamp(settings.samples_per_frame, 1, 4);
         if (sample_count > 1000000000u - static_cast<std::uint32_t>(samples)) resetAccumulation();
@@ -794,6 +819,7 @@ LightState lightState(const Scene::LightState& source) const
 
         LWMGLCommand command = Metal.begin();
         if (!command) return false;
+
         bool ok = Metal.beginCompute(command) == 0;
         if (ok) ok = Metal.setComputePipeline(command, trace_pipeline) == 0;
         if (ok) ok = Metal.setBuffer(command, node_buffer, 0u, 0u) == 0;
@@ -802,8 +828,13 @@ LightState lightState(const Scene::LightState& source) const
         if (ok) ok = Metal.setBuffer(command, trace_uniform_buffer, 0u, 3u) == 0;
         if (ok) ok = Metal.setTexture(command, accumulation, 0u) == 0;
         for (std::size_t slot = 0u; ok && slot < texture_slots.size(); ++slot) {
-            ok = Metal.setTexture(command, texture_slots[slot] ? texture_slots[slot] : white_texture, static_cast<std::uint32_t>(slot + 1u)) == 0;
+            ok = Metal.setTexture(
+                command,
+                texture_slots[slot] ? texture_slots[slot] : white_texture,
+                static_cast<std::uint32_t>(slot + 1u)
+            ) == 0;
         }
+        if (ok) ok = Metal.setTexture(command, primary_depth, 17u) == 0;
         if (ok) ok = Metal.setSampler(command, material_sampler, 0u) == 0;
         if (ok) ok = Metal.dispatch(
             command,
@@ -820,13 +851,10 @@ LightState lightState(const Scene::LightState& source) const
         if (ok) ok = Metal.setFragmentTexture(command, accumulation, 0u) == 0;
         if (ok) ok = Metal.setFragmentSampler(command, present_sampler, 0u) == 0;
         if (ok) ok = Metal.draw(command, 0u, 3u) == 0;
-        if (ok) ok = Metal.present(command) == 0;
-        if (ok) ok = Metal.commit(command) == 0;
-        if (ok) ok = Metal.wait(command) == 0;
-        Metal.destroyCommand(command);
 
         if (!ok) {
-            std::fprintf(stderr, "[PathTracer]: Metal frame failed: %s\n", lwmglGetLastError());
+            std::fprintf(stderr, "[PathTracer]: Metal frame composition failed: %s\n", lwmglGetLastError());
+            Metal.destroyCommand(command);
             return false;
         }
 
@@ -834,6 +862,7 @@ LightState lightState(const Scene::LightState& source) const
         ++frame_index;
         phase_count = std::min<std::uint32_t>(phase_count + 1u, 4u);
         reset_pending = false;
+        out_command = command;
         return true;
     }
 };
@@ -876,7 +905,7 @@ bool PathTracer::init()
         !impl_->createSamplers() ||
         !impl_->createUniformBuffers() ||
         !impl_->createWhiteTexture() ||
-        !impl_->createAccumulation())
+        !impl_->createTraceTargets())
     {
         std::fprintf(stderr, "[PathTracer]: Metal resource initialization failed: %s\n", lwmglGetLastError());
         shutdown();
@@ -928,37 +957,50 @@ void PathTracer::resize(int width, int height)
         return;
     }
 
-    impl_->destroyAccumulation();
-    if (!impl_->createAccumulation()) {
-        std::fprintf(stderr, "[PathTracer]: failed to resize Metal accumulation texture: %s\n", lwmglGetLastError());
+    impl_->destroyTraceTargets();
+    if (!impl_->createTraceTargets()) {
+        std::fprintf(stderr, "[PathTracer]: failed to resize Metal trace targets: %s\n", lwmglGetLastError());
         shutdown();
     }
 }
 
-void PathTracer::render(const Ecs::World& world)
+bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
+    if (!impl_->initialized) return false;
+
+    output.api = Internal::GraphicsApi::Metal;
+    output.depth = Internal::DepthSource::None;
+    output.width = impl_->width;
+    output.height = impl_->height;
+    output.command = nullptr;
+    output.depth_texture = nullptr;
+
     if (!impl_->active()) {
-        if (impl_->initialized) impl_->clearDrawable();
-        return;
+        LWMGLCommand command = nullptr;
+        if (!impl_->beginClearDrawable(command)) return false;
+        output.command = command;
+        return true;
     }
 
     const int previous_trace_width = impl_->trace_width;
     const int previous_trace_height = impl_->trace_height;
     impl_->updateTraceResolution();
     if (impl_->trace_width != previous_trace_width || impl_->trace_height != previous_trace_height) {
-        impl_->destroyAccumulation();
-        if (!impl_->createAccumulation()) {
-            std::fprintf(stderr, "[PathTracer]: failed to recreate Metal accumulation texture: %s\n", lwmglGetLastError());
+        impl_->destroyTraceTargets();
+        if (!impl_->createTraceTargets()) {
+            std::fprintf(stderr, "[PathTracer]: failed to recreate Metal trace targets: %s\n", lwmglGetLastError());
             shutdown();
-            return;
+            return false;
         }
     }
 
     const Scene::CameraState scene_camera = Scene::cameraState(world);
     const Impl::CameraState camera = impl_->cameraState(scene_camera);
     if (!camera.valid) {
-        impl_->clearDrawable();
-        return;
+        LWMGLCommand command = nullptr;
+        if (!impl_->beginClearDrawable(command)) return false;
+        output.command = command;
+        return true;
     }
 
     const Scene::LightState scene_light = Scene::lightState(world);
@@ -974,7 +1016,7 @@ void PathTracer::render(const Ecs::World& world)
         if (next_scene_signature != impl_->scene_signature) {
             if (!impl_->syncScene(world, impl_->render_items)) {
                 std::fprintf(stderr, "[PathTracer]: failed to synchronize Metal world cache: %s\n", lwmglGetLastError());
-                return;
+                return false;
             }
             impl_->scene_signature = next_scene_signature;
             impl_->resetAccumulation();
@@ -997,7 +1039,30 @@ void PathTracer::render(const Ecs::World& world)
         impl_->resetAccumulation();
     }
 
-    if (!impl_->dispatchAndPresent(camera, light)) return;
+    LWMGLCommand command = nullptr;
+    if (!impl_->dispatchAndCompose(camera, light, command)) return false;
+
+    output.command = command;
+    output.depth = Internal::DepthSource::LinearTexture;
+    output.depth_texture = impl_->primary_depth;
+    return true;
+}
+
+void PathTracer::present(Internal::FrameOutput& output)
+{
+    LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
+    if (!command) return;
+
+    bool ok = Metal.present(command) == 0;
+    if (ok) ok = Metal.commit(command) == 0;
+    if (ok) ok = Metal.wait(command) == 0;
+
+    if (!ok) {
+        std::fprintf(stderr, "[PathTracer]: Metal presentation failed: %s\n", lwmglGetLastError());
+    }
+
+    Metal.destroyCommand(command);
+    output.command = nullptr;
 }
 
 void PathTracer::shutdown()
@@ -1005,6 +1070,7 @@ void PathTracer::shutdown()
     if (!impl_) return;
 
     if (Metal.isCreated()) Metal.waitIdle();
+    Internal::shutdownFonts(Internal::GraphicsApi::Metal);
 
     for (const auto& [handle, texture] : impl_->texture_cache) {
         (void)handle;
@@ -1012,7 +1078,7 @@ void PathTracer::shutdown()
     }
     impl_->texture_cache.clear();
 
-    impl_->destroyAccumulation();
+    impl_->destroyTraceTargets();
     impl_->destroySceneBuffers();
     impl_->destroyWhiteTexture();
     impl_->destroyUniformBuffers();
