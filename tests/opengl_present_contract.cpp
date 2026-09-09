@@ -14,9 +14,13 @@ static std::string read(const char *path)
 
 int main()
 {
-    const std::string rasterizer = read("Sources/Renderer/Rasterizer/Rasterizer.cpp");
-    const std::string pathtracer = read("Sources/Renderer/PathTracer/PathTracer.cpp");
-    assert(rasterizer.find("Display.updateNoMessages();") != std::string::npos);
-    assert(pathtracer.find("Display.updateNoMessages();") != std::string::npos);
+    const std::string renderer = read("Sources/Renderer/Renderer.cpp");
+    const std::size_t present = renderer.find("present(output);");
+    const std::size_t swap = renderer.find("Display.updateNoMessages();");
+
+    assert(present != std::string::npos);
+    assert(swap != std::string::npos);
+    assert(present < swap);
+    assert(renderer.find("output.api == Internal::GraphicsApi::OpenGL") != std::string::npos);
     return 0;
 }
