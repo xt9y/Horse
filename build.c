@@ -104,5 +104,17 @@ void build(C_Build *b)
     c_sources(global_illumination_contract, "tests/global_illumination_contract.cpp");
     configureContract(global_illumination_contract);
 
+    C_Target *pathtracer_alpha_cutout_contract = c_test(b, "pathtracer-alpha-cutout-contract");
+    c_sources(pathtracer_alpha_cutout_contract, "tests/pathtracer_alpha_cutout_contract.cpp");
+    configureContract(pathtracer_alpha_cutout_contract);
+
+    C_Target *rasterizer_lighting_contract = c_test(b, "rasterizer-lighting-contract");
+    c_sources(rasterizer_lighting_contract, "tests/rasterizer_lighting_contract.cpp");
+    configureContract(rasterizer_lighting_contract);
+
+    C_Target *global_illumination_budget_contract = c_test(b, "global-illumination-budget-contract");
+    c_sources(global_illumination_budget_contract, "tests/global_illumination_budget_contract.cpp");
+    configureContract(global_illumination_budget_contract);
+
     c_default_target(b, library);
 }
