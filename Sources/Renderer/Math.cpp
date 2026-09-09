@@ -154,6 +154,27 @@ Mat4 inverseModelMatrix(const Transform& transform)
     );
 }
 
+Mat4 viewMatrix(
+    const Vec3& position,
+    const Vec3& forward,
+    const Vec3& right,
+    const Vec3& up)
+{
+    const Vec3 f = normalize(forward);
+    const Vec3 r = normalize(right);
+    const Vec3 u = normalize(up);
+
+    return {
+         r.x,  u.x, -f.x, 0.0f,
+         r.y,  u.y, -f.y, 0.0f,
+         r.z,  u.z, -f.z, 0.0f,
+        -dot(r, position),
+        -dot(u, position),
+         dot(f, position),
+         1.0f,
+    };
+}
+
 Vec3 transformPoint(const Mat4& matrix, const Vec3& point)
 {
     return {
