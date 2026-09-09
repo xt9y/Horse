@@ -20,6 +20,7 @@ struct TextComponent {
     Renderer::Vec2 position {0.0f, 0.0f};
     float scale = 1.0f;
     Renderer::Vec4 color {1.0f, 1.0f, 1.0f, 1.0f};
+    bool depth_test = true;
 };
 
 Ecs::Entity screen(
@@ -35,7 +36,8 @@ Ecs::Entity world(
     std::string text,
     const Renderer::Transform& transform,
     float scale = 1.0f,
-    Renderer::Vec4 color = {1.0f, 1.0f, 1.0f, 1.0f}
+    Renderer::Vec4 color = {1.0f, 1.0f, 1.0f, 1.0f},
+    bool depth_test = true
 );
 
 } // namespace Font
