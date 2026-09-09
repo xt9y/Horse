@@ -7,6 +7,10 @@
 
 namespace Renderer {
 
+namespace GlobalIllumination {
+struct Field;
+}
+
 namespace Internal {
 
 enum class GraphicsApi : std::uint8_t {
@@ -27,6 +31,7 @@ struct FrameOutput {
     int height = 1;
     void *command = nullptr;
     void *depth_texture = nullptr;
+    const GlobalIllumination::Field *global_illumination = nullptr;
 };
 
 } // namespace Internal
