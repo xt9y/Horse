@@ -8,7 +8,7 @@ namespace Renderer {
 
 struct RayTracerSettings {
     bool enabled = true;
-    int resolution_divisor = 1;
+    int resolution_divisor = 4;
     float exposure = 1.0f;
 };
 
