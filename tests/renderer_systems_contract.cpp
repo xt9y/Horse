@@ -91,11 +91,15 @@ int main()
     assert(raytracer_metal.find("Renderer/PathTracer/PathTracerMetalShaders.hpp") == std::string::npos);
     assert(raytracer_metal.find("Metal.createTriangleAccelerationStructure") != std::string::npos);
     assert(raytracer_metal.find("Metal.setAccelerationStructure") != std::string::npos);
+    assert(raytracer_metal.find("meaningful_alpha") != std::string::npos);
+    assert(raytracer_metal.find("trace.counts[3]") != std::string::npos);
     assert(raytracer_metal_shaders.find("#include <metal_raytracing>") != std::string::npos);
     assert(raytracer_metal_shaders.find("primitive_acceleration_structure") != std::string::npos);
     assert(raytracer_metal_shaders.find("intersector<triangle_data>") != std::string::npos);
     assert(raytracer_metal_shaders.find("assume_geometry_type(geometry_type::triangle)") != std::string::npos);
     assert(raytracer_metal_shaders.find("assume_identity_transforms(true)") != std::string::npos);
+    assert(raytracer_metal_shaders.find("accept_any_intersection(true)") != std::string::npos);
+    assert(raytracer_metal_shaders.find("uniforms.counts.w") != std::string::npos);
     assert(raytracer_metal_shaders.find("deterministicDepthAlpha") == std::string::npos);
     assert(render.find("Renderer/RayTracer/RayTracer.hpp") != std::string::npos);
 
