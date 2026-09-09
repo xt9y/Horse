@@ -1,11 +1,8 @@
 #include "Renderer/Rasterizer/Rasterizer.hpp"
 
-#include "Font.hpp"
 #include "Models/Core/Texture.hpp"
-#include "Models/Images/Image.hpp"
 #include "Models/Models.hpp"
-#include "Renderer/FontAtlas.hpp"
-#include "Renderer/FontLayout.hpp"
+#include "Renderer/FontPass.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scene.hpp"
 
@@ -15,13 +12,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
-#include <string>
 #include <unordered_map>
 #include <vector>
-
-#ifndef GL_CLAMP_TO_EDGE
-#define GL_CLAMP_TO_EDGE 0x812F
-#endif
 
 namespace Renderer {
 namespace {
@@ -52,8 +44,6 @@ struct Rasterizer::Impl {
     int height = 1;
     std::unordered_map<std::uint32_t, unsigned int> textures;
     std::vector<Scene::RenderItem> render_items;
-    std::vector<FontLayout::GlyphQuad> glyphs;
-    unsigned int font_texture = 0u;
 
     unsigned int textureFor(std::uint32_t handle)
     {
@@ -93,50 +83,6 @@ struct Rasterizer::Impl {
         return texture_id;
     }
 
-    unsigned int fontTexture()
-    {
-        if (font_texture != 0u) return font_texture;
-
-        Models::Images::Image image;
-        std::string error;
-        const bool loaded = Models::Images::load(FontAtlas::ASSET_PATH, &image, &error)
-            && image.width == FontAtlas::WIDTH
-            && image.height == FontAtlas::HEIGHT
-            && image.rgba.size() == static_cast<std::size_t>(FontAtlas::WIDTH * FontAtlas::HEIGHT * 4);
-
-        if (!loaded) {
-            image.width = FontAtlas::WIDTH;
-            image.height = FontAtlas::HEIGHT;
-            image.rgba = FontAtlas::rgba();
-            image.meaningful_alpha = true;
-        }
-
-        GLuint texture_id = 0u;
-        glGenTextures(1, &texture_id);
-        if (texture_id == 0u) return 0u;
-
-        glBindTexture(GL_TEXTURE_2D, texture_id);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(
-            GL_TEXTURE_2D,
-            0,
-            GL_RGBA,
-            image.width,
-            image.height,
-            0,
-            GL_RGBA,
-            GL_UNSIGNED_BYTE,
-            image.rgba.data()
-        );
-
-        font_texture = texture_id;
-        return font_texture;
-    }
-
     void clearTextures()
     {
         for (const auto& [handle, texture_id] : textures) {
@@ -145,12 +91,6 @@ struct Rasterizer::Impl {
             if (id != 0u) glDeleteTextures(1, &id);
         }
         textures.clear();
-
-        if (font_texture != 0u) {
-            const GLuint id = static_cast<GLuint>(font_texture);
-            glDeleteTextures(1, &id);
-            font_texture = 0u;
-        }
     }
 
     void applyLight(const Scene::LightState& state)
@@ -178,129 +118,6 @@ struct Rasterizer::Impl {
         const GLfloat diffuse[4] = {1.0f, 1.0f, 1.0f, 1.0f};
         glLightfv(GL_LIGHT0, GL_POSITION, position);
         glLightfv(GL_LIGHT0, GL_DIFFUSE, diffuse);
-    }
-
-    void drawGlyphs()
-    {
-        constexpr float cell = 1.0f / 16.0f;
-
-        glBegin(GL_QUADS);
-        for (const FontLayout::GlyphQuad& glyph : glyphs) {
-            const unsigned int codepoint = glyph.codepoint;
-            const float u0 = static_cast<float>(codepoint & 15u) * cell;
-            const float u1 = u0 + cell;
-            const float v_top = static_cast<float>(codepoint >> 4u) * cell;
-            const float v_bottom = v_top + cell;
-
-            glTexCoord2f(u0, 1.0f - v_top);
-            glVertex3f(glyph.x0, glyph.y0, 0.0f);
-            glTexCoord2f(u1, 1.0f - v_top);
-            glVertex3f(glyph.x1, glyph.y0, 0.0f);
-            glTexCoord2f(u1, 1.0f - v_bottom);
-            glVertex3f(glyph.x1, glyph.y1, 0.0f);
-            glTexCoord2f(u0, 1.0f - v_bottom);
-            glVertex3f(glyph.x0, glyph.y1, 0.0f);
-        }
-        glEnd();
-    }
-
-    void drawWorldText(const Ecs::World& world)
-    {
-        bool active = false;
-
-        for (const Ecs::Entity entity : world.entities()) {
-            const Font::TextComponent* text = world.get<Font::TextComponent>(entity);
-            if (!text || text->space != Font::Space::World || text->text.empty()) continue;
-
-            const Transform* transform = world.get<Transform>(entity);
-            if (!transform) continue;
-
-            FontLayout::world(text->text, text->scale, glyphs);
-            if (glyphs.empty()) continue;
-
-            if (!active) {
-                const unsigned int texture_id = fontTexture();
-                if (texture_id == 0u) return;
-
-                glDisable(GL_LIGHTING);
-                glDisable(GL_CULL_FACE);
-                glEnable(GL_DEPTH_TEST);
-                glDepthMask(GL_FALSE);
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glEnable(GL_TEXTURE_2D);
-                glBindTexture(GL_TEXTURE_2D, texture_id);
-                glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-                active = true;
-            }
-
-            glColor4f(text->color.x, text->color.y, text->color.z, text->color.w);
-            const Math::Mat4 model = Math::modelMatrix(*transform);
-            glPushMatrix();
-            glMultMatrixf(model.data());
-            drawGlyphs();
-            glPopMatrix();
-        }
-
-        if (!active) return;
-        glDepthMask(GL_TRUE);
-        glDisable(GL_TEXTURE_2D);
-        glDisable(GL_BLEND);
-        glEnable(GL_CULL_FACE);
-        glEnable(GL_LIGHTING);
-    }
-
-    void drawScreenText(const Ecs::World& world)
-    {
-        bool active = false;
-
-        for (const Ecs::Entity entity : world.entities()) {
-            const Font::TextComponent* text = world.get<Font::TextComponent>(entity);
-            if (!text || text->space != Font::Space::Screen || text->text.empty()) continue;
-
-            FontLayout::screen(text->text, text->position, text->scale, glyphs);
-            if (glyphs.empty()) continue;
-
-            if (!active) {
-                const unsigned int texture_id = fontTexture();
-                if (texture_id == 0u) return;
-
-                glMatrixMode(GL_PROJECTION);
-                glPushMatrix();
-                glLoadIdentity();
-                glOrtho(0.0, static_cast<double>(width), static_cast<double>(height), 0.0, -1.0, 1.0);
-                glMatrixMode(GL_MODELVIEW);
-                glPushMatrix();
-                glLoadIdentity();
-
-                glDisable(GL_LIGHTING);
-                glDisable(GL_CULL_FACE);
-                glDisable(GL_DEPTH_TEST);
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glEnable(GL_TEXTURE_2D);
-                glBindTexture(GL_TEXTURE_2D, texture_id);
-                glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-                active = true;
-            }
-
-            glColor4f(text->color.x, text->color.y, text->color.z, text->color.w);
-            drawGlyphs();
-        }
-
-        if (!active) return;
-
-        glDisable(GL_TEXTURE_2D);
-        glDisable(GL_BLEND);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
-        glEnable(GL_LIGHTING);
-
-        glMatrixMode(GL_MODELVIEW);
-        glPopMatrix();
-        glMatrixMode(GL_PROJECTION);
-        glPopMatrix();
-        glMatrixMode(GL_MODELVIEW);
     }
 
     void draw(const Ecs::World& world)
@@ -376,9 +193,6 @@ struct Rasterizer::Impl {
             glPopMatrix();
         }
 
-        drawWorldText(world);
-        drawScreenText(world);
-
         glDisable(GL_TEXTURE_2D);
         glDisable(GL_BLEND);
     }
@@ -437,22 +251,34 @@ void Rasterizer::resize(int width, int height)
     if (impl_->initialized) glViewport(0, 0, impl_->width, impl_->height);
 }
 
-void Rasterizer::render(const Ecs::World& world)
+bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
-    if (!impl_->initialized) return;
+    if (!impl_->initialized) return false;
+
     if (!impl_->enabled) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        return;
+    } else {
+        impl_->draw(world);
     }
-    impl_->draw(world);
+
+    output.api = Internal::GraphicsApi::OpenGL;
+    output.depth = Internal::DepthSource::Native;
+    output.width = impl_->width;
+    output.height = impl_->height;
+    return true;
+}
+
+void Rasterizer::present(Internal::FrameOutput& output)
+{
+    (void)output;
 }
 
 void Rasterizer::shutdown()
 {
     if (!impl_ || !impl_->initialized) return;
+    Internal::shutdownFonts(Internal::GraphicsApi::OpenGL);
     impl_->clearTextures();
     impl_->render_items.clear();
-    impl_->glyphs.clear();
     impl_->initialized = false;
 }
 
