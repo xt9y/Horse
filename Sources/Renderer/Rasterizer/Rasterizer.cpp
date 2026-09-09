@@ -496,8 +496,10 @@ struct Rasterizer::Impl {
         for (const Scene::RenderItem& item : render_items) {
             if (!item.mesh || !item.transform) continue;
             const Math::Mat4 model = Math::modelMatrix(*item.transform);
-            const Vec3 minimum = item.mesh->bounds.minimum;
-            const Vec3 maximum = item.mesh->bounds.maximum;
+            const Models::Vec3 model_minimum = item.mesh->bounds.minimum;
+            const Models::Vec3 model_maximum = item.mesh->bounds.maximum;
+            const Vec3 minimum {model_minimum.x, model_minimum.y, model_minimum.z};
+            const Vec3 maximum {model_maximum.x, model_maximum.y, model_maximum.z};
             for (int x = 0; x < 2; ++x) {
                 for (int y = 0; y < 2; ++y) {
                     for (int z = 0; z < 2; ++z) {
