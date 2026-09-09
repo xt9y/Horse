@@ -70,6 +70,7 @@ bool loadMaterialLibrary(
     const std::filesystem::path material_path(path);
     MaterialData *current = nullptr;
     std::string line;
+    std::string diffuse_error;
 
     while (std::getline(input, line)) {
         std::istringstream stream(line);
@@ -108,6 +109,10 @@ bool loadMaterialLibrary(
 
             std::string texture_error;
             current->diffuse_texture = loadTexture(current->texture_path, &texture_error);
+            if (current->diffuse_texture == INVALID_TEXTURE && diffuse_error.empty()) {
+                diffuse_error = "failed to load diffuse texture '" + current->texture_path + "'";
+                if (!texture_error.empty()) diffuse_error += ": " + texture_error;
+            }
         } else if (key == "map_d") {
             std::string value;
             std::getline(stream >> std::ws, value);
@@ -139,6 +144,11 @@ bool loadMaterialLibrary(
             &texture_error
         );
         if (masked != INVALID_TEXTURE) material.diffuse_texture = masked;
+    }
+
+    if (!diffuse_error.empty()) {
+        if (error) *error = diffuse_error;
+        return false;
     }
 
     return true;
