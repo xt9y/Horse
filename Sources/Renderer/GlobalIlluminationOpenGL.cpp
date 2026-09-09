@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <vector>
 
 namespace Renderer::Internal {
@@ -14,6 +16,8 @@ constexpr GLuint kGiBinding = 5u;
 constexpr std::size_t kHeaderVec4Count = 4u;
 
 GLuint buffer = 0u;
+std::uint64_t uploaded_revision = std::numeric_limits<std::uint64_t>::max();
+bool uploaded_valid = false;
 
 bool available()
 {
@@ -29,6 +33,9 @@ bool upload(const GlobalIllumination::Field *field)
     }
 
     const bool valid = field && field->valid();
+    const std::uint64_t revision = valid ? field->revision : 0u;
+    if (revision == uploaded_revision && valid == uploaded_valid) return true;
+
     const std::size_t probe_count = valid ? field->probes.size() : 0u;
     std::vector<float> data((kHeaderVec4Count + probe_count * 4u) * 4u, 0.0f);
 
@@ -68,6 +75,9 @@ bool upload(const GlobalIllumination::Field *field)
         GL_DYNAMIC_DRAW
     );
     GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0u);
+
+    uploaded_revision = revision;
+    uploaded_valid = valid;
     return true;
 }
 
@@ -83,6 +93,8 @@ void shutdownGlobalIlluminationOpenGL()
 {
     if (buffer != 0u && GL15.glDeleteBuffers) GL15.glDeleteBuffers(1, &buffer);
     buffer = 0u;
+    uploaded_revision = std::numeric_limits<std::uint64_t>::max();
+    uploaded_valid = false;
 }
 
 } // namespace Renderer::Internal
