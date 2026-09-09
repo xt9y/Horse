@@ -20,6 +20,7 @@ static bool exists(const char *path)
 
 int main()
 {
+    const std::string camera = read("Sources/Camera.cpp");
     const std::string scene = read("Sources/Renderer/Systems/Scene.hpp");
     const std::string scene_compat = read("Sources/Renderer/Scene.hpp");
     const std::string cache = read("Sources/Renderer/Systems/SceneCache.hpp");
@@ -38,6 +39,8 @@ int main()
     const std::string raytracer_header = read("Sources/Renderer/RayTracer/RayTracer.hpp");
     const std::string render = read("Sources/Renderer/Render.hpp");
     const std::string build = read("build.c");
+
+    assert(camera.find("world.markChanged()") == std::string::npos);
 
     assert(scene.find("namespace Renderer::Systems::Scene") != std::string::npos);
     assert(scene_compat.find("namespace Scene = Systems::Scene") != std::string::npos);
