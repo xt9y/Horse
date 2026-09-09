@@ -12,6 +12,9 @@
 #include <lwcgl/glmodern.h>
 #include <lwcgl/lwcgl.h>
 
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -33,12 +36,31 @@
 #ifndef GL_CLAMP_TO_EDGE
 #define GL_CLAMP_TO_EDGE 0x812F
 #endif
+#ifndef GL_FRAMEBUFFER_EXT
+#define GL_FRAMEBUFFER_EXT 0x8D40
+#endif
+#ifndef GL_RENDERBUFFER_EXT
+#define GL_RENDERBUFFER_EXT 0x8D41
+#endif
+#ifndef GL_COLOR_ATTACHMENT0_EXT
+#define GL_COLOR_ATTACHMENT0_EXT 0x8CE0
+#endif
+#ifndef GL_DEPTH_ATTACHMENT_EXT
+#define GL_DEPTH_ATTACHMENT_EXT 0x8D00
+#endif
+#ifndef GL_FRAMEBUFFER_COMPLETE_EXT
+#define GL_FRAMEBUFFER_COMPLETE_EXT 0x8CD5
+#endif
+#ifndef GL_DEPTH_COMPONENT24
+#define GL_DEPTH_COMPONENT24 0x81A6
+#endif
 
 namespace Renderer {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
-constexpr int kShadowResolution = 512;
+constexpr int kShadowResolution = 2048;
+constexpr int kLegacyShadowResolution = 512;
 constexpr int kGiTextureUnit = 1;
 constexpr int kShadowTextureUnit = 5;
 
@@ -228,6 +250,17 @@ void setMatrix(GLint location, const Math::Mat4& matrix)
 } // namespace
 
 struct Rasterizer::Impl {
+    using GenFramebuffersProc = void (*)(GLsizei, GLuint *);
+    using DeleteFramebuffersProc = void (*)(GLsizei, const GLuint *);
+    using BindFramebufferProc = void (*)(GLenum, GLuint);
+    using FramebufferTexture2DProc = void (*)(GLenum, GLenum, GLenum, GLuint, GLint);
+    using CheckFramebufferStatusProc = GLenum (*)(GLenum);
+    using GenRenderbuffersProc = void (*)(GLsizei, GLuint *);
+    using DeleteRenderbuffersProc = void (*)(GLsizei, const GLuint *);
+    using BindRenderbufferProc = void (*)(GLenum, GLuint);
+    using RenderbufferStorageProc = void (*)(GLenum, GLenum, GLsizei, GLsizei);
+    using FramebufferRenderbufferProc = void (*)(GLenum, GLenum, GLenum, GLuint);
+
     struct MainUniforms {
         GLint diffuse = -1;
         GLint gi[4] {-1, -1, -1, -1};
@@ -281,6 +314,68 @@ struct Rasterizer::Impl {
     float shadow_far = 1.0f;
     int shadow_size = 0;
     bool shadow_valid = false;
+
+    GenFramebuffersProc glGenFramebuffers = nullptr;
+    DeleteFramebuffersProc glDeleteFramebuffers = nullptr;
+    BindFramebufferProc glBindFramebuffer = nullptr;
+    FramebufferTexture2DProc glFramebufferTexture2D = nullptr;
+    CheckFramebufferStatusProc glCheckFramebufferStatus = nullptr;
+    GenRenderbuffersProc glGenRenderbuffers = nullptr;
+    DeleteRenderbuffersProc glDeleteRenderbuffers = nullptr;
+    BindRenderbufferProc glBindRenderbuffer = nullptr;
+    RenderbufferStorageProc glRenderbufferStorage = nullptr;
+    FramebufferRenderbufferProc glFramebufferRenderbuffer = nullptr;
+    GLuint shadow_framebuffer = 0u;
+    GLuint shadow_depth_renderbuffer = 0u;
+    bool shadow_framebuffer_available = false;
+
+    static GLFWglproc resolveFramebufferProc(const char *core, const char *extension)
+    {
+        GLFWglproc result = glfwGetProcAddress(core);
+        if (!result) result = glfwGetProcAddress(extension);
+        return result;
+    }
+
+    bool loadShadowFramebufferApi()
+    {
+        glGenFramebuffers = reinterpret_cast<GenFramebuffersProc>(
+            resolveFramebufferProc("glGenFramebuffers", "glGenFramebuffersEXT")
+        );
+        glDeleteFramebuffers = reinterpret_cast<DeleteFramebuffersProc>(
+            resolveFramebufferProc("glDeleteFramebuffers", "glDeleteFramebuffersEXT")
+        );
+        glBindFramebuffer = reinterpret_cast<BindFramebufferProc>(
+            resolveFramebufferProc("glBindFramebuffer", "glBindFramebufferEXT")
+        );
+        glFramebufferTexture2D = reinterpret_cast<FramebufferTexture2DProc>(
+            resolveFramebufferProc("glFramebufferTexture2D", "glFramebufferTexture2DEXT")
+        );
+        glCheckFramebufferStatus = reinterpret_cast<CheckFramebufferStatusProc>(
+            resolveFramebufferProc("glCheckFramebufferStatus", "glCheckFramebufferStatusEXT")
+        );
+        glGenRenderbuffers = reinterpret_cast<GenRenderbuffersProc>(
+            resolveFramebufferProc("glGenRenderbuffers", "glGenRenderbuffersEXT")
+        );
+        glDeleteRenderbuffers = reinterpret_cast<DeleteRenderbuffersProc>(
+            resolveFramebufferProc("glDeleteRenderbuffers", "glDeleteRenderbuffersEXT")
+        );
+        glBindRenderbuffer = reinterpret_cast<BindRenderbufferProc>(
+            resolveFramebufferProc("glBindRenderbuffer", "glBindRenderbufferEXT")
+        );
+        glRenderbufferStorage = reinterpret_cast<RenderbufferStorageProc>(
+            resolveFramebufferProc("glRenderbufferStorage", "glRenderbufferStorageEXT")
+        );
+        glFramebufferRenderbuffer = reinterpret_cast<FramebufferRenderbufferProc>(
+            resolveFramebufferProc("glFramebufferRenderbuffer", "glFramebufferRenderbufferEXT")
+        );
+
+        shadow_framebuffer_available =
+            glGenFramebuffers && glDeleteFramebuffers && glBindFramebuffer &&
+            glFramebufferTexture2D && glCheckFramebufferStatus &&
+            glGenRenderbuffers && glDeleteRenderbuffers && glBindRenderbuffer &&
+            glRenderbufferStorage && glFramebufferRenderbuffer;
+        return shadow_framebuffer_available;
+    }
 
     unsigned int fallbackTexture()
     {
@@ -553,8 +648,21 @@ struct Rasterizer::Impl {
         return std::max(std::sqrt(far_distance_squared) * 1.05f, 1.0f);
     }
 
+    void clearShadowFramebuffer()
+    {
+        if (shadow_depth_renderbuffer != 0u && glDeleteRenderbuffers) {
+            glDeleteRenderbuffers(1, &shadow_depth_renderbuffer);
+        }
+        if (shadow_framebuffer != 0u && glDeleteFramebuffers) {
+            glDeleteFramebuffers(1, &shadow_framebuffer);
+        }
+        shadow_depth_renderbuffer = 0u;
+        shadow_framebuffer = 0u;
+    }
+
     void clearShadowTextures()
     {
+        clearShadowFramebuffer();
         for (GLuint texture : shadow_textures) {
             if (texture != 0u) glDeleteTextures(1, &texture);
         }
@@ -566,10 +674,65 @@ struct Rasterizer::Impl {
         shadow_valid = false;
     }
 
+    bool createShadowFramebuffer()
+    {
+        if (!shadow_framebuffer_available) return false;
+
+        glGenFramebuffers(1, &shadow_framebuffer);
+        glGenRenderbuffers(1, &shadow_depth_renderbuffer);
+        if (shadow_framebuffer == 0u || shadow_depth_renderbuffer == 0u) {
+            clearShadowFramebuffer();
+            return false;
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER_EXT, shadow_framebuffer);
+        glBindRenderbuffer(GL_RENDERBUFFER_EXT, shadow_depth_renderbuffer);
+        glRenderbufferStorage(
+            GL_RENDERBUFFER_EXT,
+            GL_DEPTH_COMPONENT24,
+            shadow_size,
+            shadow_size
+        );
+        glFramebufferRenderbuffer(
+            GL_FRAMEBUFFER_EXT,
+            GL_DEPTH_ATTACHMENT_EXT,
+            GL_RENDERBUFFER_EXT,
+            shadow_depth_renderbuffer
+        );
+        glFramebufferTexture2D(
+            GL_FRAMEBUFFER_EXT,
+            GL_COLOR_ATTACHMENT0_EXT,
+            GL_TEXTURE_2D,
+            shadow_textures[0],
+            0
+        );
+        glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT);
+        glBindRenderbuffer(GL_RENDERBUFFER_EXT, 0u);
+        glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0u);
+        glDrawBuffer(GL_BACK);
+
+        if (status != GL_FRAMEBUFFER_COMPLETE_EXT) {
+            std::fprintf(
+                stderr,
+                "[Rasterizer]: shadow framebuffer incomplete (0x%x); using window-sized fallback\n",
+                static_cast<unsigned int>(status)
+            );
+            clearShadowFramebuffer();
+            shadow_framebuffer_available = false;
+            return false;
+        }
+        return true;
+    }
+
     bool ensureShadowTextures(int requested_size)
     {
-        const int size = std::max(requested_size, 1);
+        GLint max_texture_size = requested_size;
+        glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_texture_size);
+        const int size = std::max(1, std::min(requested_size, static_cast<int>(max_texture_size)));
         if (shadow_textures[0] != 0u && shadow_size == size) return true;
+
         clearShadowTextures();
         shadow_size = size;
         glGenTextures(static_cast<GLsizei>(shadow_textures.size()), shadow_textures.data());
@@ -593,6 +756,11 @@ struct Rasterizer::Impl {
                 nullptr
             );
         }
+
+        if (shadow_framebuffer_available && !createShadowFramebuffer()) {
+            return false;
+        }
+
         shadow_valid = false;
         return true;
     }
@@ -615,7 +783,10 @@ struct Rasterizer::Impl {
             {-1.0f,  0.0f,  0.0f},
             { 1.0f,  0.0f,  0.0f},
         }};
-        const Vec3 up = Math::normalize(Math::cross(right[static_cast<std::size_t>(face)], forward[static_cast<std::size_t>(face)]));
+        const Vec3 up = Math::normalize(Math::cross(
+            right[static_cast<std::size_t>(face)],
+            forward[static_cast<std::size_t>(face)]
+        ));
         return Math::viewMatrix(
             position,
             forward[static_cast<std::size_t>(face)],
@@ -687,14 +858,41 @@ struct Rasterizer::Impl {
             return false;
         }
 
-        const int requested_size = std::max(64, std::min({kShadowResolution, width, height}));
-        if (!ensureShadowTextures(requested_size)) return false;
+        const int requested_size = kShadowResolution;
+        const int fallback_size = std::max(
+            64,
+            std::min({kLegacyShadowResolution, width, height})
+        );
+        const int target_size = shadow_framebuffer_available ? requested_size : fallback_size;
+        if (!ensureShadowTextures(target_size)) {
+            if (shadow_framebuffer_available) {
+                shadow_framebuffer_available = false;
+                if (!ensureShadowTextures(fallback_size)) return false;
+            } else {
+                return false;
+            }
+        }
 
         const std::uint64_t signature = currentShadowSignature(light);
         if (shadow_valid && shadow_signature == signature) return true;
 
         shadow_far = calculateShadowFar(light.transform.position);
         const Math::Mat4 projection = perspectiveMatrix(90.0f, 1.0f, 0.05f, shadow_far);
+
+        for (int i = 0; i < 6; ++i) {
+            GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kShadowTextureUnit + i));
+            glBindTexture(GL_TEXTURE_2D, 0u);
+        }
+        GLModern.glActiveTexture(GL_TEXTURE0);
+
+        const bool offscreen =
+            shadow_framebuffer_available && shadow_framebuffer != 0u &&
+            shadow_depth_renderbuffer != 0u;
+
+        if (offscreen) {
+            glBindFramebuffer(GL_FRAMEBUFFER_EXT, shadow_framebuffer);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
+        }
 
         glDisable(GL_BLEND);
         glDisable(GL_LIGHTING);
@@ -712,6 +910,16 @@ struct Rasterizer::Impl {
             const Math::Mat4 view = shadowView(light.transform.position, face);
             shadow_matrices[static_cast<std::size_t>(face)] = Math::multiply(projection, view);
 
+            if (offscreen) {
+                glFramebufferTexture2D(
+                    GL_FRAMEBUFFER_EXT,
+                    GL_COLOR_ATTACHMENT0_EXT,
+                    GL_TEXTURE_2D,
+                    shadow_textures[static_cast<std::size_t>(face)],
+                    0
+                );
+            }
+
             glMatrixMode(GL_PROJECTION);
             glLoadMatrixf(projection.data());
             glMatrixMode(GL_MODELVIEW);
@@ -720,21 +928,28 @@ struct Rasterizer::Impl {
 
             drawGeometry(true);
 
-            GLModern.glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, shadow_textures[static_cast<std::size_t>(face)]);
-            glCopyTexSubImage2D(
-                GL_TEXTURE_2D,
-                0,
-                0,
-                0,
-                0,
-                0,
-                shadow_size,
-                shadow_size
-            );
+            if (!offscreen) {
+                GLModern.glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, shadow_textures[static_cast<std::size_t>(face)]);
+                glCopyTexSubImage2D(
+                    GL_TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    shadow_size,
+                    shadow_size
+                );
+            }
         }
 
         GL20.glUseProgram(0u);
+        if (offscreen) {
+            glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0u);
+            glDrawBuffer(GL_BACK);
+        }
+
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, width, height);
@@ -861,6 +1076,13 @@ bool Rasterizer::init()
         std::fprintf(stderr, "[Rasterizer]: failed to create complete diffuse fallback texture\n");
         impl_->destroyPrograms();
         return false;
+    }
+
+    if (!impl_->loadShadowFramebufferApi()) {
+        std::fprintf(
+            stderr,
+            "[Rasterizer]: offscreen shadow framebuffer unavailable; using window-sized shadow fallback\n"
+        );
     }
 
     glEnable(GL_DEPTH_TEST);
