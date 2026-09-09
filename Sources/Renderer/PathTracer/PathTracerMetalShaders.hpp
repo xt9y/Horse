@@ -319,15 +319,27 @@ float3 tracePath(
     device const Material *materials,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 16> textures,
-    sampler material_sampler)
+    sampler material_sampler,
+    thread float& primary_depth)
 {
     float3 radiance = float3(0.0f);
     float3 throughput = float3(1.0f);
+    primary_depth = INF;
     int bounce_count = clamp(uniforms.counts.w, 1, 4);
 
     for (int bounce = 0; bounce < bounce_count; ++bounce) {
         Hit hit = traceClosest(origin, direction, INF, nodes, triangles, uniforms);
         if (!hit.found) break;
+
+        if (bounce == 0) {
+            primary_depth = max(
+                dot(
+                    hit.position - uniforms.camera_position.xyz,
+                    normalize(uniforms.camera_forward.xyz)
+                ),
+                RAY_EPSILON
+            );
+        }
 
         float3 albedo = materialAlbedo(hit.material, hit.uv, materials, uniforms, textures, material_sampler);
 
@@ -369,6 +381,7 @@ kernel void trace_kernel(
     constant TraceUniforms& uniforms [[buffer(3)]],
     texture2d<float, access::read_write> accumulation [[texture(0)]],
     array<texture2d<float>, 16> textures [[texture(1)]],
+    texture2d<float, access::write> primary_depth [[texture(17)]],
     sampler material_sampler [[sampler(0)]],
     uint2 pixel [[thread_position_in_grid]])
 {
@@ -406,6 +419,7 @@ kernel void trace_kernel(
         uniforms.camera_up.xyz * (ndc.y * uniforms.light_color_tan_half_fov.w)
     );
 
+    float primary_depth_value = INF;
     float3 sample_radiance = tracePath(
         uniforms.camera_position.xyz,
         direction,
@@ -415,8 +429,11 @@ kernel void trace_kernel(
         materials,
         uniforms,
         textures,
-        material_sampler
+        material_sampler,
+        primary_depth_value
     );
+    primary_depth.write(float4(primary_depth_value, 0.0f, 0.0f, 0.0f), pixel);
+
     float4 previous = reset ? float4(0.0f) : accumulation.read(pixel);
     accumulation.write(float4(previous.rgb + sample_radiance, previous.a + 1.0f), pixel);
 }
