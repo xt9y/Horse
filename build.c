@@ -112,5 +112,9 @@ void build(C_Build *b)
     c_sources(rasterizer_lighting_contract, "tests/rasterizer_lighting_contract.cpp");
     configureContract(rasterizer_lighting_contract);
 
+    C_Target *material_opacity_mask_contract = c_test(b, "material-opacity-mask-contract");
+    c_sources(material_opacity_mask_contract, "tests/material_opacity_mask_contract.cpp");
+    configureContract(material_opacity_mask_contract);
+
     c_default_target(b, library);
 }
