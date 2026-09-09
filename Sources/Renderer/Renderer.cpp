@@ -2,6 +2,7 @@
 
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
+#include "Renderer/GlobalIlluminationOpenGL.hpp"
 
 #include <lwcgl/lwcgl.h>
 
@@ -11,6 +12,7 @@ void IRenderer::render(const Ecs::World& world)
 {
     Internal::FrameOutput output;
     output.global_illumination = GlobalIllumination::update(world);
+    Internal::bindGlobalIlluminationOpenGL(output.global_illumination);
     if (!renderScene(world, output)) return;
     Internal::renderFonts(world, output);
     present(output);
