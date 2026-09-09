@@ -43,7 +43,7 @@ constexpr float kPi = 3.14159265358979323846f;
 constexpr std::uint32_t kLeafBit = 0x80000000u;
 constexpr std::uint32_t kLeafSize = 8u;
 constexpr std::size_t kMaximumTriangles = 1000000u;
-constexpr std::size_t kMaximumTextureSlots = 16u;
+constexpr std::size_t kMaximumTextureSlots = 32u;
 
 Vec3f subtract(const Vec3f& a, const Vec3f& b)
 {
@@ -606,6 +606,7 @@ struct PathTracer::Impl {
 
         std::unordered_map<std::uint32_t, std::uint32_t> material_indices;
         std::unordered_map<std::uint32_t, int> texture_indices;
+        bool texture_resources_ok = true;
 
         auto materialIndex = [&](std::uint32_t handle) -> std::uint32_t {
             const auto found = material_indices.find(handle);
@@ -632,7 +633,23 @@ struct PathTracer::Impl {
                             slot = static_cast<int>(texture_slot_count);
                             texture_slots[texture_slot_count++] = texture;
                             texture_indices.emplace(material->diffuse_texture, slot);
+                        } else {
+                            std::fprintf(
+                                stderr,
+                                "[PathTracer]: failed to create Metal diffuse texture %u: %s\n",
+                                material->diffuse_texture,
+                                lwmglGetLastError()
+                            );
+                            texture_resources_ok = false;
                         }
+                    } else {
+                        std::fprintf(
+                            stderr,
+                            "[PathTracer]: Metal texture capacity exceeded (%zu unique diffuse textures; maximum %zu)\n",
+                            texture_indices.size() + 1u,
+                            texture_slots.size()
+                        );
+                        texture_resources_ok = false;
                     }
                     gpu_material.data[0] = slot;
                 }
@@ -728,6 +745,8 @@ struct PathTracer::Impl {
                 gpu_triangles.push_back(triangle);
             }
         }
+
+        if (!texture_resources_ok) return false;
 
         if (gpu_materials.empty()) gpu_materials.push_back(GpuMaterial{});
         if (!gpu_triangles.empty()) {
@@ -847,7 +866,7 @@ struct PathTracer::Impl {
                 static_cast<std::uint32_t>(slot + 1u)
             ) == 0;
         }
-        if (ok) ok = Metal.setTexture(command, primary_depth, 17u) == 0;
+        if (ok) ok = Metal.setTexture(command, primary_depth, 33u) == 0;
         if (ok) ok = Metal.setSampler(command, material_sampler, 0u) == 0;
         if (ok) ok = Metal.dispatch(
             command,
