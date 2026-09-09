@@ -17,12 +17,15 @@ public:
 
     bool init() override;
     void resize(int width, int height) override;
-    void render(const Ecs::World& world) override;
     void shutdown() override;
 
     bool initialized() const override;
     bool enabled() const override;
     void setEnabled(bool enabled) override;
+
+protected:
+    bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) override;
+    void present(Internal::FrameOutput& output) override;
 
 private:
     Impl* impl_;
