@@ -1,7 +1,7 @@
 #ifndef RW_ENGINE_RENDERER_PATHTRACER_HPP
 #define RW_ENGINE_RENDERER_PATHTRACER_HPP
 
-#include "Ecs/Ecs.hpp"
+#include "Renderer/Renderer.hpp"
 
 namespace Renderer {
 
@@ -13,24 +13,24 @@ struct PathTracerSettings {
     float exposure = 1.0f;
 };
 
-class PathTracer {
+class PathTracer final : public IRenderer {
 public:
     struct Impl;
 
     PathTracer();
-    ~PathTracer();
+    ~PathTracer() override;
 
     PathTracer(const PathTracer&) = delete;
     PathTracer& operator=(const PathTracer&) = delete;
 
-    bool init();
-    void resize(int width, int height);
-    void render(const Ecs::World& world);
-    void shutdown();
+    bool init() override;
+    void resize(int width, int height) override;
+    void render(const Ecs::World& world) override;
+    void shutdown() override;
 
-    bool initialized() const;
-    bool enabled() const;
-    void setEnabled(bool enabled);
+    bool initialized() const override;
+    bool enabled() const override;
+    void setEnabled(bool enabled) override;
 
     PathTracerSettings& settings();
     const PathTracerSettings& settings() const;
