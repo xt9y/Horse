@@ -175,10 +175,14 @@ void main()
     vec3 indirect = sampleGi(vWorldPosition, normal);
     vec3 linear_texture = pow(max(texel.rgb, vec3(0.0)), vec3(2.2));
     vec3 albedo = max(uBaseColor.rgb * linear_texture, vec3(0.0));
-    vec3 linear_color = albedo * (direct + indirect) * (1.0 / PI);
-    linear_color += albedo * 0.025;
-    vec3 mapped = linear_color / (vec3(1.0) + linear_color);
-    mapped = pow(mapped, vec3(1.0 / 2.2));
+
+    // Bound illumination before applying the material. This keeps arbitrarily
+    // strong lights from erasing diffuse texture/albedo detail by driving the
+    // material result itself into the tone-map ceiling.
+    vec3 irradiance = max((direct + indirect) * (1.0 / PI), vec3(0.0));
+    vec3 bounded_irradiance = vec3(1.0) - exp(-irradiance);
+    vec3 linear_color = albedo * clamp(bounded_irradiance + vec3(0.025), vec3(0.0), vec3(1.0));
+    vec3 mapped = pow(clamp(linear_color, vec3(0.0), vec3(1.0)), vec3(1.0 / 2.2));
     gl_FragColor = vec4(mapped, alpha);
 }
 )GLSL";
