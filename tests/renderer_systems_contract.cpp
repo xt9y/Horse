@@ -34,6 +34,7 @@ int main()
     const std::string pathtracer_metal = read("Sources/Renderer/PathTracer/PathTracerMetal.cpp");
     const std::string raytracer = read("Sources/Renderer/RayTracer/RayTracer.cpp");
     const std::string raytracer_metal = read("Sources/Renderer/RayTracer/RayTracerMetal.cpp");
+    const std::string raytracer_metal_shaders = read("Sources/Renderer/RayTracer/RayTracerMetalShaders.hpp");
     const std::string raytracer_header = read("Sources/Renderer/RayTracer/RayTracer.hpp");
     const std::string render = read("Sources/Renderer/Render.hpp");
     const std::string build = read("build.c");
@@ -75,8 +76,16 @@ int main()
     assert(raytracer_header.find("class RayTracer final : public IRenderer") != std::string::npos);
     assert(raytracer_header.find("struct RayTracerSettings") != std::string::npos);
     assert(raytracer_header.find("int resolution_divisor = 4;") != std::string::npos);
-    assert(raytracer.find("std::clamp(settings.resolution_divisor, 4, 8)") != std::string::npos);
-    assert(raytracer_metal.find("std::clamp(settings.resolution_divisor, 4, 8)") != std::string::npos);
+    assert(raytracer.find("std::clamp(settings.resolution_divisor, 1, 8)") != std::string::npos);
+    assert(raytracer_metal.find("std::clamp(settings.resolution_divisor, 1, 8)") != std::string::npos);
+    assert(raytracer_metal.find("Renderer/RayTracer/RayTracerMetalShaders.hpp") != std::string::npos);
+    assert(raytracer_metal.find("Renderer/PathTracer/PathTracerMetalShaders.hpp") == std::string::npos);
+    assert(raytracer_metal.find("Metal.createTriangleAccelerationStructure") != std::string::npos);
+    assert(raytracer_metal.find("Metal.setAccelerationStructure") != std::string::npos);
+    assert(raytracer_metal_shaders.find("#include <metal_raytracing>") != std::string::npos);
+    assert(raytracer_metal_shaders.find("primitive_acceleration_structure") != std::string::npos);
+    assert(raytracer_metal_shaders.find("intersector<triangle_data>") != std::string::npos);
+    assert(raytracer_metal_shaders.find("deterministicDepthAlpha") == std::string::npos);
     assert(render.find("Renderer/RayTracer/RayTracer.hpp") != std::string::npos);
 
     assert(build.find("Sources/Renderer/Systems/Scene.cpp") != std::string::npos);
