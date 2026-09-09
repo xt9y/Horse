@@ -24,8 +24,8 @@ int main()
     assert(source.find("glRenderbufferStorage") != std::string::npos);
     assert(source.find("const int requested_size = kShadowResolution;") != std::string::npos);
 
-    assert(shaders.find("for (int y = -2; y <= 2; ++y)") != std::string::npos);
-    assert(shaders.find("for (int x = -2; x <= 2; ++x)") != std::string::npos);
-    assert(shaders.find("visibility / 25.0") != std::string::npos);
+    assert(shaders.find("for (int y = -1; y <= 1; ++y)") != std::string::npos);
+    assert(shaders.find("for (int x = -1; x <= 1; ++x)") != std::string::npos);
+    assert(shaders.find("visibility / 9.0") != std::string::npos);
     return 0;
 }
