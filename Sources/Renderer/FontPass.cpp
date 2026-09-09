@@ -1,5 +1,6 @@
 #include "Renderer/FontPass.hpp"
 
+#include "Camera.hpp"
 #include "Font.hpp"
 #include "Renderer/FontLayout.hpp"
 #include "Renderer/Math.hpp"
@@ -125,7 +126,20 @@ void appendWorldText(
         static_cast<float>(std::max(output.height, 1));
     const float focal = 1.0f / std::tan(fov * (kPi / 360.0f));
     const Math::Mat4 model = Math::modelMatrix(transform);
-    const Math::Mat4 view = Math::inverseModelMatrix(camera.transform);
+
+    const Vec3 forward = Math::normalize(Camera::flightDirection(
+        camera.transform.rotation.y,
+        camera.transform.rotation.x
+    ));
+    const Vec3 right = Math::normalize(Camera::strafeDirection(camera.transform.rotation.y));
+    const Vec3 up = Math::normalize(Math::cross(right, forward));
+    const Math::Mat4 view = Math::viewMatrix(
+        camera.transform.position,
+        forward,
+        right,
+        up
+    );
+
     std::vector<FontVertex>& out = text.depth_test ? batches.depth : batches.overlay;
 
     for (const FontLayout::GlyphQuad& glyph : glyphs) {

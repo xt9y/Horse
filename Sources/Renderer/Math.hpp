@@ -18,6 +18,12 @@ Mat4 rotationY(float degrees);
 Mat4 rotationZ(float degrees);
 Mat4 modelMatrix(const Transform& transform);
 Mat4 inverseModelMatrix(const Transform& transform);
+Mat4 viewMatrix(
+    const Vec3& position,
+    const Vec3& forward,
+    const Vec3& right,
+    const Vec3& up
+);
 
 Vec3 transformPoint(const Mat4& matrix, const Vec3& point);
 Vec3 transformNormal(const Mat4& world_to_object, const Vec3& normal);

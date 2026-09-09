@@ -83,5 +83,10 @@ void build(C_Build *b)
     c_sources(metal_frame_contract, "tests/metal_frame_contract.cpp");
     configureContract(metal_frame_contract);
 
+    C_Target *camera_view_contract = c_test(b, "camera-view-contract");
+    c_sources(camera_view_contract, "tests/camera_view_contract.cpp");
+    c_sources(camera_view_contract, "Sources/Renderer/Math.cpp");
+    configureContract(camera_view_contract);
+
     c_default_target(b, library);
 }
