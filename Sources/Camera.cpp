@@ -54,8 +54,6 @@ void Controller::update(Ecs::World& world, float delta_seconds)
         mouse_initialized_ = true;
     }
 
-    const Renderer::Transform previous = *transform;
-
     const bool mouse_grabbed = Mouse.isGrabbed() != LWCGL_FALSE;
     const int mouse_dx = Mouse.getDX();
     const int mouse_dy = Mouse.getDY();
@@ -86,19 +84,6 @@ void Controller::update(Ecs::World& world, float delta_seconds)
     if (Keyboard.isKeyDown(Keyboard.KEY_S)) move(forward, -speed);
     if (Keyboard.isKeyDown(Keyboard.KEY_D)) move(right, speed);
     if (Keyboard.isKeyDown(Keyboard.KEY_A)) move(right, -speed);
-
-    const bool changed =
-        transform->position.x != previous.position.x ||
-        transform->position.y != previous.position.y ||
-        transform->position.z != previous.position.z ||
-        transform->rotation.x != previous.rotation.x ||
-        transform->rotation.y != previous.rotation.y ||
-        transform->rotation.z != previous.rotation.z ||
-        transform->scale.x != previous.scale.x ||
-        transform->scale.y != previous.scale.y ||
-        transform->scale.z != previous.scale.z;
-
-    if (changed) world.markChanged();
 }
 
 } // namespace Camera
