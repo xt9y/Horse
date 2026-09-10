@@ -1,11 +1,7 @@
 #include "Models/Images/Image.hpp"
 
-#include "Models/Images/Jpeg.hpp"
-#include "Models/Images/Png.hpp"
-#include "Models/Images/Tga.hpp"
+#include "Models/Images/Registry.hpp"
 
-#include <algorithm>
-#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -21,16 +17,6 @@ bool fail(std::string *error, const std::string& message)
     return false;
 }
 
-std::string lowerExtension(const std::string& path)
-{
-    std::string extension = std::filesystem::path(path).extension().string();
-    std::transform(
-        extension.begin(), extension.end(), extension.begin(),
-        [](unsigned char c) { return static_cast<char>(std::tolower(c)); }
-    );
-    return extension;
-}
-
 bool decodeMemory(
     const std::uint8_t *data,
     std::size_t size,
@@ -39,12 +25,18 @@ bool decodeMemory(
     std::string *error)
 {
     if (!data || size == 0u) return fail(error, "empty image data");
-    if (Png::matches(data, size)) return Png::decode(data, size, image, error);
-    if (Jpeg::matches(data, size)) return Jpeg::decode(data, size, image, error);
-    if (Models::Tga::matches(data, size) || lowerExtension(hint) == ".tga") {
-        return Models::Tga::decode(data, size, image, error);
+
+    const Decoder *decoder = decoderFor(data, size);
+    if (!decoder && !hint.empty())
+        decoder = decoderFor(std::filesystem::path(hint).extension().string());
+    if (!decoder || !decoder->decode) {
+        return fail(
+            error,
+            "unsupported or invalid image data" +
+                (hint.empty() ? std::string{} : ": " + hint)
+        );
     }
-    return fail(error, "unsupported or invalid image data" + (hint.empty() ? std::string{} : ": " + hint));
+    return decoder->decode(data, size, image, error);
 }
 
 } // namespace
@@ -65,7 +57,8 @@ bool load(const std::string& path, Image *image, std::string *error)
     }
     input.seekg(0, std::ios::beg);
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(length));
-    if (!bytes.empty()) input.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!bytes.empty())
+        input.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
     if (!input && !bytes.empty()) return fail(error, "failed to read image: " + path);
     return decodeMemory(bytes.data(), bytes.size(), path, image, error);
 }
