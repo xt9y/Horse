@@ -5,7 +5,6 @@ static void configurePlatform(C_Target *target)
 #ifdef __APPLE__
     c_define(target, "GL_SILENCE_DEPRECATION");
     c_include(target, "/opt/homebrew/include");
-    c_include(target, "/usr/local/include/lwmgl-1.0.0");
     c_link_flag(target, "-L/opt/homebrew/lib");
     c_framework(target, "OpenGL");
     c_framework(target, "Cocoa");
@@ -13,6 +12,7 @@ static void configurePlatform(C_Target *target)
     c_framework(target, "CoreVideo");
     c_framework(target, "Metal");
     c_framework(target, "QuartzCore");
+    c_framework(target, "Foundation");
     c_link_system(target, "c++");
 #else
     c_link_system(target, "GL");
@@ -36,9 +36,6 @@ static void configureLibrary(C_Target *target)
 
     c_link_flag(target, "-L/usr/local/lib");
     c_link_flag(target, "-llwcgl");
-#ifdef __APPLE__
-    c_link_flag(target, "-llwmgl");
-#endif
     c_link_flag(target, "-Wl,-rpath,/usr/local/lib");
 #ifdef __APPLE__
     c_link_flag(target, "-Wl,-install_name,@rpath/libHorse.dylib");
@@ -49,6 +46,21 @@ static void configureLibrary(C_Target *target)
 
 void build(C_Build *b)
 {
+#ifdef __APPLE__
+    C_Dependency *lwmgl = c_git(
+        b,
+        "lwmgl",
+        "https://github.com/xt9y-org/lwmgl.git",
+        "494496492e683ed271ab97f8d8d3cad02ca6fcf6"
+    );
+    c_dep_source(lwmgl);
+    c_dep_include(lwmgl, "include");
+    c_dep_sources(lwmgl, "src/*.c");
+    c_dep_sources(lwmgl, "src/*.m");
+    c_dep_flag(lwmgl, "-I/opt/homebrew/include");
+    c_dep_flag(lwmgl, "-fobjc-arc");
+#endif
+
     C_Dependency *imgui = c_git(
         b,
         "imgui",
@@ -91,6 +103,9 @@ void build(C_Build *b)
 
     c_flag(library, "-std=c++20");
     configureLibrary(library);
+#ifdef __APPLE__
+    c_use(library, lwmgl);
+#endif
     c_use(library, imgui);
 
     c_default_target(b, library);
