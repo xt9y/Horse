@@ -35,7 +35,7 @@ struct MeshComponent {
 };
 
 struct RenderableComponent {
-    bool visible = true;
+    bool visible = false;
 };
 
 enum class LightType {
@@ -46,16 +46,16 @@ enum class LightType {
 
 struct LightComponent {
     LightType type = LightType::Directional;
-    Vec3 color {1.0f, 1.0f, 1.0f};
-    float intensity = 1.0f;
+    Vec3 color{};
+    float intensity = 0.0f;
 };
 
 struct GlobalIlluminationComponent {
-    bool enabled = true;
-    float intensity = 1.0f;
-    std::uint8_t bounces = 2;
-    bool photon_mapping = true;
-    std::uint32_t photon_count = 4096u;
+    bool enabled = false;
+    float intensity = 0.0f;
+    std::uint8_t bounces = 0u;
+    bool photon_mapping = false;
+    std::uint32_t photon_count = 0u;
     float photon_radius = 0.0f;
 };
 
