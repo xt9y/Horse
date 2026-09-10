@@ -3,8 +3,6 @@
 
 #include "Renderer/Renderer.hpp"
 
-#include <cstdint>
-
 namespace Renderer {
 
 struct PathTracerSettings {
@@ -16,23 +14,6 @@ struct PathTracerSettings {
     int reset_phase_grid = 0;
     int moving_phase_grid = 0;
     int moving_depth_block = 0;
-};
-
-struct PathTracerStatistics {
-    bool active = false;
-    int output_width = 0;
-    int output_height = 0;
-    int trace_width = 0;
-    int trace_height = 0;
-    int samples_per_frame = 0;
-    int stationary_phase_grid = 0;
-    int reset_phase_grid = 0;
-    int moving_phase_grid = 0;
-    int moving_depth_block = 0;
-    std::uint64_t stationary_path_pixel_budget = 0u;
-    std::uint64_t reset_path_pixel_budget = 0u;
-    std::uint64_t moving_path_pixel_budget = 0u;
-    std::uint64_t moving_depth_ray_budget = 0u;
 };
 
 class PathTracer final : public IRenderer {
@@ -70,7 +51,6 @@ public:
     int movingPhaseGrid() const { return settings().moving_phase_grid; }
     int movingDepthBlock() const { return settings().moving_depth_block; }
 
-    PathTracerStatistics statistics() const;
     PathTracerSettings& settings();
     const PathTracerSettings& settings() const;
 
