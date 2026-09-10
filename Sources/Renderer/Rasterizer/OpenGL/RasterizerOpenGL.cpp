@@ -2,14 +2,18 @@
 
 #include "Camera.hpp"
 #include "Models/Models.hpp"
+#include "Renderer/DepthPrepass/OpenGL/DepthPrepassOpenGL.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
+#include "Renderer/HorizonGI/OpenGL/HorizonGIOpenGL.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Rasterizer/RasterizerShaders.hpp"
 #include "Renderer/Systems/OpenGL/Program.hpp"
+#include "Renderer/Systems/OpenGL/RenderSurface.hpp"
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
+#include "Renderer/Upscale/OpenGL/UpscaleOpenGL.hpp"
 #include "Renderer/Visibility/Visibility.hpp"
 
 #include <lwcgl/glmodern.h>
@@ -239,6 +243,11 @@ struct Rasterizer::Impl {
 
     Systems::OpenGL::Program main_program;
     Systems::OpenGL::Program shadow_program;
+    DepthPrepass::OpenGLPass depth_prepass;
+    HorizonGI::OpenGLPass horizon_gi;
+    Upscale::OpenGLPass upscaler;
+    Systems::OpenGL::RenderSurface scene_surface;
+    Systems::OpenGL::RenderSurface full_depth_surface;
     MainUniforms main_uniforms{};
     ShadowUniforms shadow_uniforms{};
 
@@ -1160,6 +1169,77 @@ void Rasterizer::setUpscalingDepthThreshold(float value)
     if (impl_) impl_->settings.lighting.depth_threshold = std::max(value, 0.0f);
 }
 
+void Rasterizer::setHorizonGiEnabled(bool value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.enabled = value;
+    impl_->horizon_gi.resetHistory();
+    impl_->upscaler.resetHistory();
+}
+
+void Rasterizer::setHorizonGiResolutionDivisor(int value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.pass.resolution_divisor = std::max(value, 1);
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiDirections(int value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.directions = std::clamp(value, 1, HorizonGI::MaximumDirections);
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiSteps(int value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.steps = std::clamp(value, 1, HorizonGI::MaximumSteps);
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiRadius(float value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.radius = std::max(value, 0.001f);
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiThickness(float value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.thickness = std::max(value, 0.0f);
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiAoStrength(float value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.ao_strength = std::max(value, 0.0f);
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiIndirectStrength(float value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.indirect_strength = std::max(value, 0.0f);
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiTemporalFilter(bool value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.pass.temporal_filter = value;
+    impl_->horizon_gi.resetHistory();
+}
+
+void Rasterizer::setHorizonGiTemporalWeight(float value)
+{
+    if (!impl_) return;
+    impl_->settings.horizon_gi.pass.temporal_weight = std::clamp(value, 0.0f, 1.0f);
+    impl_->horizon_gi.resetHistory();
+}
+
 void Rasterizer::setClearColor(Vec4 value)
 {
     if (impl_) impl_->settings.clear_color = value;
@@ -1225,9 +1305,35 @@ float Rasterizer::upscalingDepthThreshold() const
     return impl_ ? impl_->settings.lighting.depth_threshold : 0.0f;
 }
 
+HorizonGI::Settings& Rasterizer::horizonGiSettings()
+{
+    return impl_->settings.horizon_gi;
+}
+
+const HorizonGI::Settings& Rasterizer::horizonGiSettings() const
+{
+    return impl_->settings.horizon_gi;
+}
+
+HorizonGI::Statistics Rasterizer::horizonGiStatistics() const
+{
+    return impl_ ? impl_->horizon_gi.statistics() : HorizonGI::Statistics{};
+}
+
+Upscale::Statistics Rasterizer::upscaleStatistics() const
+{
+    return impl_ ? impl_->upscaler.statistics() : Upscale::Statistics{};
+}
+
 Vec4 Rasterizer::clearColor() const
 {
     return impl_ ? impl_->settings.clear_color : Vec4{};
+}
+
+bool Rasterizer::usesGlobalIlluminationField(const Ecs::World& world) const
+{
+    (void)world;
+    return !impl_ || !impl_->settings.horizon_gi.enabled;
 }
 
 RasterizerSettings& Rasterizer::settings()

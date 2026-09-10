@@ -21,16 +21,6 @@ struct OpenGLInput {
     std::uint64_t temporal_signature = 0u;
 };
 
-struct Statistics {
-    bool active = false;
-    bool indirect = false;
-    bool temporal_history = false;
-    int width = 0;
-    int height = 0;
-    int directions = 0;
-    int steps = 0;
-};
-
 class OpenGLPass {
 public:
     OpenGLPass();

@@ -2,8 +2,10 @@
 #define RW_ENGINE_RENDERER_RASTERIZER_HPP
 
 #include "Renderer/Components.hpp"
+#include "Renderer/HorizonGI/HorizonGI.hpp"
 #include "Renderer/Quality/ScaledPass.hpp"
 #include "Renderer/Renderer.hpp"
+#include "Renderer/Upscale/Upscale.hpp"
 
 namespace Renderer {
 
@@ -17,6 +19,7 @@ struct RasterizerSettings {
     float shadow_near_plane = 0.0f;
     float shadow_far_scale = 0.0f;
     Quality::ScaledPassSettings lighting{};
+    HorizonGI::Settings horizon_gi{};
     Vec4 clear_color{};
 };
 
@@ -50,6 +53,16 @@ public:
     void setTemporalUpscaling(bool value);
     void setTemporalUpscalingWeight(float value);
     void setUpscalingDepthThreshold(float value);
+    void setHorizonGiEnabled(bool value);
+    void setHorizonGiResolutionDivisor(int value);
+    void setHorizonGiDirections(int value);
+    void setHorizonGiSteps(int value);
+    void setHorizonGiRadius(float value);
+    void setHorizonGiThickness(float value);
+    void setHorizonGiAoStrength(float value);
+    void setHorizonGiIndirectStrength(float value);
+    void setHorizonGiTemporalFilter(bool value);
+    void setHorizonGiTemporalWeight(float value);
     void setClearColor(Vec4 value);
 
     bool viewportCulling() const;
@@ -64,12 +77,17 @@ public:
     bool temporalUpscaling() const;
     float temporalUpscalingWeight() const;
     float upscalingDepthThreshold() const;
+    HorizonGI::Settings& horizonGiSettings();
+    const HorizonGI::Settings& horizonGiSettings() const;
+    HorizonGI::Statistics horizonGiStatistics() const;
+    Upscale::Statistics upscaleStatistics() const;
     Vec4 clearColor() const;
 
     RasterizerSettings& settings();
     const RasterizerSettings& settings() const;
 
 protected:
+    bool usesGlobalIlluminationField(const Ecs::World& world) const override;
     bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) override;
     void present(Internal::FrameOutput& output) override;
 

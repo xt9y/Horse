@@ -2,6 +2,7 @@
 #define HORSE_RENDERER_UPSCALE_OPENGL_HPP
 
 #include "Renderer/Quality/ScaledPass.hpp"
+#include "Renderer/Upscale/Upscale.hpp"
 
 #include <cstdint>
 
@@ -20,17 +21,6 @@ struct OpenGLInput {
     int output_height = 1;
     float near_plane = 0.1f;
     std::uint64_t temporal_signature = 0u;
-};
-
-struct Statistics {
-    bool active = false;
-    bool depth_aware = false;
-    bool temporal_history = false;
-    bool effect = false;
-    int source_width = 0;
-    int source_height = 0;
-    int output_width = 0;
-    int output_height = 0;
 };
 
 class OpenGLPass {

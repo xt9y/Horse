@@ -19,6 +19,16 @@ struct Settings {
     float indirect_strength = 0.35f;
 };
 
+struct Statistics {
+    bool active = false;
+    bool indirect = false;
+    bool temporal_history = false;
+    int width = 0;
+    int height = 0;
+    int directions = 0;
+    int steps = 0;
+};
+
 Settings sanitized(Settings settings);
 
 } // namespace Renderer::HorizonGI
