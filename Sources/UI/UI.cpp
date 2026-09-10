@@ -212,12 +212,11 @@ void shutdownRendererBackend()
     backend = Backend::None;
 }
 
-void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
+void render(Renderer::Internal::FrameOutput& output)
 {
     if (!ready || !frame_active) return;
 
     const bool visible = frame_visible;
-    const bool overlay_visible = renderPersistentOverlays(world);
     ImGui::Render();
     frame_active = false;
     frame_visible = false;
@@ -232,7 +231,7 @@ void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
         return;
     }
 
-    if (!visible && !overlay_visible) return;
+    if (!visible) return;
 
     ImDrawData *draw_data = ImGui::GetDrawData();
     if (!draw_data) return;
