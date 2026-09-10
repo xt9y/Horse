@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 namespace Renderer::Visibility {
 namespace {
@@ -106,6 +107,28 @@ System& system()
     return value;
 }
 
+void System::setOverride(Result result)
+{
+    override_result_ = std::move(result);
+    std::size_t size = 1u;
+    for (const Ecs::Entity entity : override_result_.visible)
+        size = std::max(size, static_cast<std::size_t>(entity) + 1u);
+
+    override_visible_.assign(size, 0u);
+    for (const Ecs::Entity entity : override_result_.visible) {
+        if (static_cast<std::size_t>(entity) < override_visible_.size())
+            override_visible_[entity] = 1u;
+    }
+    override_active_ = true;
+}
+
+void System::clearOverride()
+{
+    override_active_ = false;
+    override_result_ = {};
+    override_visible_.clear();
+}
+
 Frustum System::makeFrustum(const Ecs::World& world, int width, int height) const
 {
     Frustum result;
@@ -153,6 +176,7 @@ Classification System::classify(
 
 Result System::evaluate(const Ecs::World& world, int width, int height) const
 {
+    if (override_active_) return override_result_;
     std::vector<Scenes::Scene::RenderItem> visible_items;
     return collectVisibleRenderItems(world, width, height, visible_items);
 }
@@ -164,10 +188,22 @@ Result System::collectVisibleRenderItems(
     std::vector<Scenes::Scene::RenderItem>& out) const
 {
     Result result;
-    result.frustum = makeFrustum(world, width, height);
     std::vector<Scenes::Scene::RenderItem> items;
     Scenes::Scene::collectRenderItems(world, items);
     out.clear();
+
+    if (override_active_) {
+        result = override_result_;
+        out.reserve(items.size());
+        for (const Scenes::Scene::RenderItem& item : items) {
+            const std::size_t entity = static_cast<std::size_t>(item.entity);
+            if (entity < override_visible_.size() && override_visible_[entity] != 0u)
+                out.push_back(item);
+        }
+        return result;
+    }
+
+    result.frustum = makeFrustum(world, width, height);
 
     if (!result.frustum.valid) {
         out = std::move(items);

@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <limits>
 #include <string>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -80,7 +79,6 @@ struct Inspector::Impl {
     Camera::CameraComponent frozen_player_camera{};
     Visibility::Result frozen_visibility{};
     Scenes::SceneCache frozen_cache;
-    std::vector<std::pair<Ecs::Entity, bool>> renderable_visibility;
     std::vector<std::pair<Ecs::Entity, bool>> camera_activity;
 
     const Ecs::World *live_world = nullptr;
@@ -342,24 +340,12 @@ bool Inspector::freeze(Ecs::World& world, int width, int height)
     impl_->frozen_cache = std::move(snapshot_cache);
     impl_->invalidateBvhMetadata();
 
-    impl_->renderable_visibility.clear();
     impl_->camera_activity.clear();
     for (const Ecs::Entity entity : world.entities()) {
-        if (RenderableComponent *renderable = world.get<RenderableComponent>(entity))
-            impl_->renderable_visibility.emplace_back(entity, renderable->visible);
         if (Camera::CameraComponent *camera = world.get<Camera::CameraComponent>(entity))
             impl_->camera_activity.emplace_back(entity, camera->active);
     }
 
-    const std::unordered_set<Ecs::Entity> culled(
-        impl_->frozen_visibility.culled.begin(),
-        impl_->frozen_visibility.culled.end()
-    );
-    for (const auto& [entity, visible] : impl_->renderable_visibility) {
-        if (!visible || culled.find(entity) == culled.end()) continue;
-        if (RenderableComponent *renderable = world.get<RenderableComponent>(entity))
-            renderable->visible = false;
-    }
     for (const auto& [entity, active] : impl_->camera_activity) {
         (void)active;
         if (Camera::CameraComponent *camera = world.get<Camera::CameraComponent>(entity))
@@ -372,6 +358,7 @@ bool Inspector::freeze(Ecs::World& world, int width, int height)
     debug_camera.active = true;
     world.add<Camera::CameraComponent>(impl_->debug_camera, debug_camera);
     impl_->frozen = true;
+    Visibility::system().setOverride(impl_->frozen_visibility);
     world.markChanged();
     return true;
 }
@@ -380,11 +367,7 @@ void Inspector::unfreeze(Ecs::World& world)
 {
     if (!impl_->frozen) return;
 
-    for (const auto& [entity, visible] : impl_->renderable_visibility) {
-        if (!world.alive(entity)) continue;
-        if (RenderableComponent *renderable = world.get<RenderableComponent>(entity))
-            renderable->visible = visible;
-    }
+    Visibility::system().clearOverride();
 
     if (impl_->debug_camera != Ecs::INVALID_ENTITY && world.alive(impl_->debug_camera))
         world.destroyEntity(impl_->debug_camera);
@@ -400,7 +383,6 @@ void Inspector::unfreeze(Ecs::World& world)
     impl_->debug_camera = Ecs::INVALID_ENTITY;
     impl_->frozen_visibility = {};
     impl_->frozen_cache.clear();
-    impl_->renderable_visibility.clear();
     impl_->camera_activity.clear();
     impl_->live_world = nullptr;
     impl_->live_revision = std::numeric_limits<std::uint64_t>::max();
@@ -434,6 +416,7 @@ void Inspector::clear(Ecs::World *world)
 {
     if (impl_->frozen && world) unfreeze(*world);
     if (impl_->frozen) return;
+    Visibility::system().clearOverride();
     impl_->live_world = nullptr;
     impl_->live_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->live_cache.clear();

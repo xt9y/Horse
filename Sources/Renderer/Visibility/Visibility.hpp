@@ -7,6 +7,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace Renderer::Visibility {
@@ -42,6 +43,10 @@ public:
     void setFarDistance(float value) { far_distance_ = value; }
     float farDistance() const { return far_distance_; }
 
+    void setOverride(Result result);
+    void clearOverride();
+    bool hasOverride() const { return override_active_; }
+
     Frustum makeFrustum(const Ecs::World& world, int width, int height) const;
     Classification classify(const Frustum& frustum, const Scenes::Scene::RenderItem& item) const;
     Result evaluate(const Ecs::World& world, int width, int height) const;
@@ -59,6 +64,9 @@ public:
 
 private:
     float far_distance_ = 0.0f;
+    bool override_active_ = false;
+    Result override_result_{};
+    std::vector<std::uint8_t> override_visible_;
 };
 
 System& system();
