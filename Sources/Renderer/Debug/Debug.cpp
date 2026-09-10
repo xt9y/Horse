@@ -52,44 +52,6 @@ bool inside(Vec3 point, Vec3 minimum, Vec3 maximum)
         point.z >= minimum.z && point.z <= maximum.z;
 }
 
-bool rayAabb(
-    Vec3 origin,
-    Vec3 direction,
-    Vec3 minimum,
-    Vec3 maximum,
-    float& distance)
-{
-    float near_distance = 0.0f;
-    float far_distance = std::numeric_limits<float>::infinity();
-
-    const auto slab = [&near_distance, &far_distance](
-        float origin_axis,
-        float direction_axis,
-        float minimum_axis,
-        float maximum_axis)
-    {
-        if (direction_axis == 0.0f)
-            return origin_axis >= minimum_axis && origin_axis <= maximum_axis;
-
-        float a = (minimum_axis - origin_axis) / direction_axis;
-        float b = (maximum_axis - origin_axis) / direction_axis;
-        if (a > b) std::swap(a, b);
-        near_distance = std::max(near_distance, a);
-        far_distance = std::min(far_distance, b);
-        return near_distance <= far_distance;
-    };
-
-    if (!slab(origin.x, direction.x, minimum.x, maximum.x) ||
-        !slab(origin.y, direction.y, minimum.y, maximum.y) ||
-        !slab(origin.z, direction.z, minimum.z, maximum.z))
-    {
-        return false;
-    }
-
-    distance = near_distance;
-    return far_distance >= 0.0f;
-}
-
 void collectBvhLevel(
     const std::vector<Scenes::GpuNode>& nodes,
     std::uint32_t index,
@@ -254,8 +216,7 @@ struct Inspector::Impl {
 
     void addBvh(
         const Scenes::SceneCache& cache,
-        Vec3 camera_position,
-        Vec3 camera_forward)
+        Vec3 camera_position)
     {
         const auto& nodes = cache.nodes();
         if (nodes.empty()) return;
@@ -270,26 +231,6 @@ struct Inspector::Impl {
             if (inside(camera_position, nodeMinimum(nodes[index]), nodeMaximum(nodes[index]))) {
                 selected = index;
                 break;
-            }
-        }
-
-        if (selected == std::numeric_limits<std::uint32_t>::max()) {
-            float best_distance = std::numeric_limits<float>::infinity();
-            for (const std::uint32_t index : level) {
-                float distance = 0.0f;
-                if (!rayAabb(
-                        camera_position,
-                        camera_forward,
-                        nodeMinimum(nodes[index]),
-                        nodeMaximum(nodes[index]),
-                        distance))
-                {
-                    continue;
-                }
-                if (distance < best_distance) {
-                    best_distance = distance;
-                    selected = index;
-                }
             }
         }
 
@@ -492,7 +433,7 @@ void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
     const Vec3 camera_up = Math::normalize(Math::cross(camera_right, camera_forward));
 
     state.lines.clear();
-    if (state.show_bvh) state.addBvh(*cache, camera_position, camera_forward);
+    if (state.show_bvh) state.addBvh(*cache, camera_position);
 
     const Visibility::Frustum source_frustum = state.sourceFrustum(world, output.width, output.height);
     if (state.show_viewport) {
