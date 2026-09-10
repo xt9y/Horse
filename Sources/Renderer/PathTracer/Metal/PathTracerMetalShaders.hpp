@@ -5,15 +5,9 @@ namespace Renderer::PathTracerMetalShaders {
 
 inline constexpr const char *source = R"MSL(
 #include <metal_stdlib>
+#include <metal_raytracing>
 using namespace metal;
-
-struct Node {
-    packed_float3 bmin;
-    uint first;
-    packed_float3 bmax;
-    uint meta;
-    uint4 extra;
-};
+using namespace raytracing;
 
 struct Triangle {
     float4 p0;
@@ -66,14 +60,13 @@ struct PresentOut {
     float2 uv;
 };
 
-constant uint LEAF_BIT = 0x80000000u;
 constant float PI = 3.14159265358979323846f;
 constant float RAY_EPSILON = 0.0025f;
 constant float INF = 1.0e30f;
 constant float SH_Y00 = 0.2820947918f;
 constant float SH_Y1 = 0.4886025119f;
-constant int MAX_CLOSEST_STEPS = 8192;
 constant int GI_HEADER_VEC4S = 4;
+constant int MAX_ALPHA_LAYERS = 16;
 
 uint hashUint(uint value)
 {
@@ -89,126 +82,6 @@ float randomFloat(thread uint& state)
 {
     state = hashUint(state);
     return float(state) * (1.0f / 4294967296.0f);
-}
-
-float3 safeInverse(float3 direction)
-{
-    return float3(
-        fabs(direction.x) > 1.0e-8f ? 1.0f / direction.x : 1.0e30f,
-        fabs(direction.y) > 1.0e-8f ? 1.0f / direction.y : 1.0e30f,
-        fabs(direction.z) > 1.0e-8f ? 1.0f / direction.z : 1.0e30f
-    );
-}
-
-float aabbEntry(float3 origin, float3 inverse_direction, float3 bmin, float3 bmax, float max_distance)
-{
-    float3 t0 = (bmin - origin) * inverse_direction;
-    float3 t1 = (bmax - origin) * inverse_direction;
-    float3 near_t = min(t0, t1);
-    float3 far_t = max(t0, t1);
-    float enter = max(max(near_t.x, near_t.y), max(near_t.z, 0.0f));
-    float exit_distance = min(min(far_t.x, far_t.y), far_t.z);
-    return exit_distance >= enter && enter < max_distance ? enter : INF;
-}
-
-bool hitTriangle(
-    float3 origin,
-    float3 direction,
-    Triangle triangle,
-    thread float& distance,
-    thread float3& barycentric)
-{
-    float3 edge1 = triangle.p1.xyz - triangle.p0.xyz;
-    float3 edge2 = triangle.p2.xyz - triangle.p0.xyz;
-    float3 p = cross(direction, edge2);
-    float determinant = dot(edge1, p);
-    if (fabs(determinant) < 1.0e-8f) return false;
-
-    float inverse_determinant = 1.0f / determinant;
-    float3 offset = origin - triangle.p0.xyz;
-    float u = dot(offset, p) * inverse_determinant;
-    if (u < 0.0f || u > 1.0f) return false;
-
-    float3 q = cross(offset, edge1);
-    float v = dot(direction, q) * inverse_determinant;
-    if (v < 0.0f || u + v > 1.0f) return false;
-
-    float t = dot(edge2, q) * inverse_determinant;
-    if (t <= RAY_EPSILON || t >= distance) return false;
-
-    distance = t;
-    barycentric = float3(1.0f - u - v, u, v);
-    return true;
-}
-
-Hit traceClosest(
-    float3 origin,
-    float3 direction,
-    float max_distance,
-    device const Node *nodes,
-    device const Triangle *triangles,
-    constant TraceUniforms& uniforms)
-{
-    Hit best;
-    best.found = false;
-    best.distance = max_distance;
-    best.position = float3(0.0f);
-    best.normal = float3(0.0f, 1.0f, 0.0f);
-    best.geometric_normal = float3(0.0f, 1.0f, 0.0f);
-    best.uv = float2(0.0f);
-    best.material = 0u;
-
-    const int node_count = max(uniforms.counts.x, 0);
-    const int triangle_count = max(uniforms.counts.y, 0);
-    if (node_count <= 0 || triangle_count <= 0) return best;
-
-    float3 inverse_direction = safeInverse(direction);
-    uint node_index = 0u;
-    int steps = 0;
-
-    while (node_index < uint(node_count) && steps++ < MAX_CLOSEST_STEPS) {
-        Node node = nodes[node_index];
-        if (aabbEntry(origin, inverse_direction, float3(node.bmin), float3(node.bmax), best.distance) >= INF) {
-            node_index = node.extra.x;
-            continue;
-        }
-
-        if ((node.meta & LEAF_BIT) != 0u) {
-            uint count = node.meta & ~LEAF_BIT;
-            uint end = min(node.first + count, uint(triangle_count));
-            for (uint triangle_index = node.first; triangle_index < end; ++triangle_index) {
-                Triangle triangle = triangles[triangle_index];
-                float distance = best.distance;
-                float3 barycentric;
-                if (!hitTriangle(origin, direction, triangle, distance, barycentric)) continue;
-
-                best.found = true;
-                best.distance = distance;
-                best.position = origin + direction * distance;
-                best.normal = normalize(
-                    triangle.n0.xyz * barycentric.x +
-                    triangle.n1.xyz * barycentric.y +
-                    triangle.n2.xyz * barycentric.z
-                );
-                best.geometric_normal = normalize(cross(
-                    triangle.p1.xyz - triangle.p0.xyz,
-                    triangle.p2.xyz - triangle.p0.xyz
-                ));
-                if (dot(best.geometric_normal, direction) > 0.0f) best.geometric_normal = -best.geometric_normal;
-                if (dot(best.normal, best.geometric_normal) < 0.0f) best.normal = -best.normal;
-                best.uv =
-                    triangle.uv01.xy * barycentric.x +
-                    triangle.uv01.zw * barycentric.y +
-                    triangle.uv2.xy * barycentric.z;
-                best.material = as_type<uint>(triangle.p0.w);
-            }
-            node_index = node.extra.x;
-        } else {
-            node_index = node.first;
-        }
-    }
-
-    return best;
 }
 
 float4 sampleTextureSlot(
@@ -255,6 +128,12 @@ float4 sampleTextureSlot(
     }
 }
 
+float2 triangleUv(Triangle triangle, float2 barycentric)
+{
+    float w0 = 1.0f - barycentric.x - barycentric.y;
+    return triangle.uv01.xy * w0 + triangle.uv01.zw * barycentric.x + triangle.uv2.xy * barycentric.y;
+}
+
 bool alphaCutoutPass(
     uint material_index,
     float2 uv,
@@ -279,57 +158,93 @@ Hit traceClosestAlpha(
     float3 origin,
     float3 direction,
     float max_distance,
-    device const Node *nodes,
+    primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
+    Hit hit;
+    hit.found = false;
+    hit.distance = max_distance;
+    hit.position = float3(0.0f);
+    hit.normal = float3(0.0f, 1.0f, 0.0f);
+    hit.geometric_normal = float3(0.0f, 1.0f, 0.0f);
+    hit.uv = float2(0.0f);
+    hit.material = 0u;
+
+    const int triangle_count = max(uniforms.counts.y, 0);
+    if (triangle_count <= 0) return hit;
+
+    const bool alpha_cutouts = uniforms.counts.w != 0;
+    intersector<triangle_data> triangle_intersector;
+    triangle_intersector.assume_geometry_type(geometry_type::triangle);
+    triangle_intersector.assume_identity_transforms(true);
     float3 current_origin = origin;
     float travelled = 0.0f;
-    Hit result;
-    result.found = false;
-    result.distance = max_distance;
 
-    for (int layer = 0; layer < 32; ++layer) {
+    for (int layer = 0; layer < MAX_ALPHA_LAYERS; ++layer) {
         float remaining = max_distance >= INF * 0.5f
             ? INF
             : max(max_distance - travelled, 0.0f);
-        if (remaining <= RAY_EPSILON) return result;
+        if (remaining <= RAY_EPSILON) return hit;
 
-        Hit hit = traceClosest(current_origin, direction, remaining, nodes, triangles, uniforms);
-        if (!hit.found) return result;
-        if (!alphaCutoutPass(hit.material, hit.uv, materials, uniforms, textures, material_sampler)) {
-            float step = hit.distance + RAY_EPSILON * 2.0f;
+        ray r(current_origin, direction, RAY_EPSILON, remaining);
+        intersection_result<triangle_data> result = triangle_intersector.intersect(r, acceleration_structure);
+        if (result.type == intersection_type::none || result.primitive_id >= uint(triangle_count)) return hit;
+
+        Triangle triangle = triangles[result.primitive_id];
+        float2 uv = triangleUv(triangle, result.triangle_barycentric_coord);
+        uint material = as_type<uint>(triangle.p0.w);
+        if (alpha_cutouts && !alphaCutoutPass(material, uv, materials, uniforms, textures, material_sampler)) {
+            float step = result.distance + RAY_EPSILON * 2.0f;
             travelled += step;
             current_origin += direction * step;
             continue;
         }
 
-        hit.distance += travelled;
+        float w0 = 1.0f - result.triangle_barycentric_coord.x - result.triangle_barycentric_coord.y;
+        float3 barycentric = float3(w0, result.triangle_barycentric_coord.x, result.triangle_barycentric_coord.y);
+        hit.found = true;
+        hit.distance = travelled + result.distance;
         hit.position = origin + direction * hit.distance;
+        hit.normal = normalize(triangle.n0.xyz * barycentric.x + triangle.n1.xyz * barycentric.y + triangle.n2.xyz * barycentric.z);
+        hit.geometric_normal = normalize(cross(triangle.p1.xyz - triangle.p0.xyz, triangle.p2.xyz - triangle.p0.xyz));
+        if (dot(hit.geometric_normal, direction) > 0.0f) hit.geometric_normal = -hit.geometric_normal;
+        if (dot(hit.normal, hit.geometric_normal) < 0.0f) hit.normal = -hit.normal;
+        hit.uv = uv;
+        hit.material = material;
         return hit;
     }
-    return result;
+    return hit;
 }
 
 bool traceAnyAlpha(
     float3 origin,
     float3 direction,
     float max_distance,
-    device const Node *nodes,
+    primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
+    if (uniforms.counts.w == 0) {
+        intersector<> shadow_intersector;
+        shadow_intersector.assume_geometry_type(geometry_type::triangle);
+        shadow_intersector.assume_identity_transforms(true);
+        shadow_intersector.accept_any_intersection(true);
+        ray r(origin, direction, RAY_EPSILON, max_distance);
+        intersection_result<> result = shadow_intersector.intersect(r, acceleration_structure);
+        return result.type != intersection_type::none;
+    }
     Hit hit = traceClosestAlpha(
         origin,
         direction,
         max_distance,
-        nodes,
+        acceleration_structure,
         triangles,
         materials,
         uniforms,
@@ -342,7 +257,7 @@ bool traceAnyAlpha(
 float deterministicDepthAlpha(
     float2 sample_pixel,
     uint2 size,
-    device const Node *nodes,
+    primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
     constant TraceUniforms& uniforms,
@@ -363,7 +278,7 @@ float deterministicDepthAlpha(
         uniforms.camera_position.xyz,
         depth_direction,
         INF,
-        nodes,
+        acceleration_structure,
         triangles,
         materials,
         uniforms,
@@ -460,7 +375,7 @@ float3 sampleGlobalIllumination(
 float3 tracePath(
     float3 origin,
     float3 direction,
-    device const Node *nodes,
+    primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
     device const float4 *gi_data,
@@ -472,7 +387,7 @@ float3 tracePath(
         origin,
         direction,
         INF,
-        nodes,
+        acceleration_structure,
         triangles,
         materials,
         uniforms,
@@ -498,7 +413,7 @@ float3 tracePath(
                 shadow_origin,
                 light_direction,
                 shadow_distance,
-                nodes,
+                acceleration_structure,
                 triangles,
                 materials,
                 uniforms,
@@ -518,11 +433,11 @@ float3 tracePath(
 }
 
 kernel void trace_kernel(
-    device const Node *nodes [[buffer(0)]],
     device const Triangle *triangles [[buffer(1)]],
     device const Material *materials [[buffer(2)]],
     constant TraceUniforms& uniforms [[buffer(3)]],
     device const float4 *gi_data [[buffer(4)]],
+    primitive_acceleration_structure acceleration_structure [[buffer(5)]],
     texture2d<float, access::read_write> accumulation [[texture(0)]],
     array<texture2d<float>, 32> textures [[texture(1)]],
     texture2d<float, access::write> primary_depth [[texture(33)]],
@@ -546,7 +461,7 @@ kernel void trace_kernel(
             float depth_value = deterministicDepthAlpha(
                 sample_pixel,
                 size,
-                nodes,
+                acceleration_structure,
                 triangles,
                 materials,
                 uniforms,
@@ -565,7 +480,7 @@ kernel void trace_kernel(
         float depth_value = deterministicDepthAlpha(
             float2(pixel) + float2(0.5f),
             size,
-            nodes,
+            acceleration_structure,
             triangles,
             materials,
             uniforms,
@@ -605,7 +520,7 @@ kernel void trace_kernel(
     float3 sample_radiance = tracePath(
         uniforms.camera_position.xyz,
         direction,
-        nodes,
+        acceleration_structure,
         triangles,
         materials,
         gi_data,

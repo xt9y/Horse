@@ -2,6 +2,7 @@
 
 #include "Renderer/PathTracer/PathTracer.hpp"
 
+#include "Models/Core/Texture.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/GlobalIlluminationMetal.hpp"
@@ -52,8 +53,17 @@ std::uint64_t globalIlluminationSignature(const GlobalIllumination::Field *field
 } // namespace
 
 struct PathTracer::Impl {
+    struct PackedPosition {
+        float x;
+        float y;
+        float z;
+    };
+
+    static_assert(sizeof(PackedPosition) == 12u);
+
     PathTracerSettings settings{};
     bool initialized = false;
+    bool has_alpha_cutouts = true;
     int width = 1;
     int height = 1;
     int trace_width = 1;
@@ -78,6 +88,8 @@ struct PathTracer::Impl {
     LWMGLSampler present_sampler = nullptr;
     LWMGLBuffer trace_uniform_buffer = nullptr;
     LWMGLBuffer present_uniform_buffer = nullptr;
+    LWMGLBuffer acceleration_vertex_buffer = nullptr;
+    LWMGLAccelerationStructure acceleration_structure = nullptr;
 
     bool active() const
     {
@@ -236,14 +248,90 @@ struct PathTracer::Impl {
         progressive.reset();
     }
 
+    void updateAlphaCutoutState()
+    {
+        has_alpha_cutouts = false;
+        for (const Systems::Scene::RenderItem& item : render_items) {
+            const Models::MaterialData *material = item.material;
+            if (!material) continue;
+            if (material->opacity < 1.0f) {
+                has_alpha_cutouts = true;
+                return;
+            }
+            if (material->diffuse_texture == Models::INVALID_TEXTURE) continue;
+            const Models::TextureAsset *texture = Models::texture(material->diffuse_texture);
+            if (texture && texture->image.meaningful_alpha) {
+                has_alpha_cutouts = true;
+                return;
+            }
+        }
+    }
+
+    void destroyAccelerationStructure()
+    {
+        if (acceleration_structure) Metal.destroyAccelerationStructure(acceleration_structure);
+        if (acceleration_vertex_buffer) Metal.destroyBuffer(acceleration_vertex_buffer);
+        acceleration_structure = nullptr;
+        acceleration_vertex_buffer = nullptr;
+    }
+
+    bool createAccelerationStructure()
+    {
+        destroyAccelerationStructure();
+        if (scene.triangles().empty()) return true;
+
+        std::vector<PackedPosition> positions;
+        positions.reserve(scene.triangles().size() * 3u);
+        for (const Systems::GpuTriangle& triangle : scene.triangles()) {
+            positions.push_back({triangle.p0[0], triangle.p0[1], triangle.p0[2]});
+            positions.push_back({triangle.p1[0], triangle.p1[1], triangle.p1[2]});
+            positions.push_back({triangle.p2[0], triangle.p2[1], triangle.p2[2]});
+        }
+
+        if (positions.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
+            return false;
+
+        const LWMGLBufferDesc vertex_desc = {
+            positions.size() * sizeof(PackedPosition),
+            LWMGL_STORAGE_SHARED
+        };
+        acceleration_vertex_buffer = Metal.createBuffer(&vertex_desc, positions.data());
+        if (!acceleration_vertex_buffer) return false;
+
+        const LWMGLTriangleGeometryDesc geometry = {
+            acceleration_vertex_buffer,
+            0u,
+            static_cast<std::uint32_t>(sizeof(PackedPosition)),
+            static_cast<std::uint32_t>(positions.size()),
+            nullptr,
+            0u,
+            0u,
+            1u
+        };
+        acceleration_structure = Metal.createTriangleAccelerationStructure(&geometry, 1u);
+        if (!acceleration_structure) {
+            Metal.destroyBuffer(acceleration_vertex_buffer);
+            acceleration_vertex_buffer = nullptr;
+            return false;
+        }
+        return true;
+    }
+
     bool syncSceneIfNeeded(const Ecs::World& world)
     {
         const std::uint64_t revision = world.changeRevision();
-        if (revision == world_revision && resources.ready()) return true;
+        if (revision == world_revision && resources.ready() &&
+            (scene.triangles().empty() || acceleration_structure))
+        {
+            return true;
+        }
 
         Visibility::system().collectVisibleRenderItems(world, width, height, render_items);
+        updateAlphaCutoutState();
         const std::uint64_t signature = scene.signature(world, render_items);
-        if (signature != scene_signature || !resources.ready()) {
+        if (signature != scene_signature || !resources.ready() ||
+            (!scene.triangles().empty() && !acceleration_structure))
+        {
             std::string error;
             if (!scene.sync(
                     world,
@@ -258,14 +346,22 @@ struct PathTracer::Impl {
                 std::fprintf(stderr, "[PathTracer]: Metal scene upload failed: %s\n", error.c_str());
                 return false;
             }
+            if (!createAccelerationStructure()) {
+                std::fprintf(
+                    stderr,
+                    "[PathTracer]: Metal acceleration structure failed: %s\n",
+                    lwmglGetLastError()
+                );
+                return false;
+            }
             scene_signature = signature;
             progressive.sceneChanged();
             std::fprintf(
                 stderr,
-                "[PathTracer]: Metal world cache %zu triangles, %zu nodes, %zu materials\n",
+                "[PathTracer]: Metal native AS %zu triangles, %zu materials, alpha=%s\n",
                 scene.triangles().size(),
-                scene.nodes().size(),
-                scene.materials().size()
+                scene.materials().size(),
+                has_alpha_cutouts ? "cutout" : "opaque"
             );
         }
         world_revision = revision;
@@ -293,7 +389,8 @@ struct PathTracer::Impl {
         LWMGLCommand& out_command)
     {
         out_command = nullptr;
-        if (!resources.ready() || !accumulation || !primary_depth) return false;
+        if (!resources.ready() || !acceleration_structure || !accumulation || !primary_depth)
+            return false;
 
         Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
             camera,
@@ -302,7 +399,7 @@ struct PathTracer::Impl {
             trace_height,
             width,
             height,
-            scene.nodes().size(),
+            0u,
             scene.triangles().size(),
             scene.materials().size(),
             Systems::SceneCache::opacityCutoff(),
@@ -316,6 +413,7 @@ struct PathTracer::Impl {
             static_cast<std::uint32_t>(settings.moving_phase_grid),
             static_cast<std::uint32_t>(settings.moving_depth_block),
         };
+        trace.counts[3] = has_alpha_cutouts ? 1 : 0;
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
         Systems::MetalPresentUniforms present{};
@@ -334,6 +432,7 @@ struct PathTracer::Impl {
         if (ok) ok = resources.bind(command, 1u);
         if (ok) ok = Metal.setBuffer(command, trace_uniform_buffer, 0u, 3u) == 0;
         if (ok) ok = Internal::bindGlobalIlluminationMetal(command, global_illumination, 4u);
+        if (ok) ok = Metal.setAccelerationStructure(command, acceleration_structure, 5u) == 0;
         if (ok) ok = Metal.setTexture(command, accumulation, 0u) == 0;
         if (ok) ok = Metal.setTexture(command, primary_depth, 33u) == 0;
         if (ok) ok = Metal.setSampler(command, material_sampler, 0u) == 0;
@@ -388,6 +487,11 @@ bool PathTracer::init()
 
     if (Metal.create(Display.getNativeWindow()) != 0) {
         std::fprintf(stderr, "[PathTracer]: Metal init failed: %s\n", lwmglGetLastError());
+        return false;
+    }
+    if (Metal.supportsRayTracing() == 0) {
+        std::fprintf(stderr, "[PathTracer]: native Metal ray tracing is not supported by this device\n");
+        Metal.destroy();
         return false;
     }
 
@@ -529,7 +633,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 
     if (!impl_->syncSceneIfNeeded(world)) return false;
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
-    if (!camera.valid) {
+    if (!camera.valid || impl_->scene.triangles().empty()) {
         LWMGLCommand command = nullptr;
         if (!impl_->beginClearDrawable(command)) return false;
         output.command = command;
@@ -576,6 +680,7 @@ void PathTracer::shutdown()
     if (Metal.isCreated()) Metal.waitIdle();
     Internal::shutdownFonts(Internal::GraphicsApi::Metal);
     Internal::shutdownGlobalIlluminationMetal();
+    impl_->destroyAccelerationStructure();
     impl_->resources.clear();
     impl_->scene.clear();
     impl_->destroyTraceTargets();
@@ -585,6 +690,7 @@ void PathTracer::shutdown()
     if (Metal.isCreated()) Metal.destroy();
 
     impl_->render_items.clear();
+    impl_->has_alpha_cutouts = true;
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->scene_signature = 0u;
     impl_->initialized = false;
