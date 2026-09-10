@@ -6,9 +6,8 @@
 
 namespace Renderer::FontAtlas {
 
-inline constexpr int WIDTH = 128;
-inline constexpr int HEIGHT = 128;
-inline constexpr const char *ASSET_PATH = "Assests/Font/font.png";
+inline constexpr int FALLBACK_WIDTH = 128;
+inline constexpr int FALLBACK_HEIGHT = 128;
 
 std::vector<std::uint8_t> rgba();
 
