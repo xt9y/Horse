@@ -1,5 +1,7 @@
 #include "Renderer/Fonts/FontLayout.hpp"
 
+#include "Font.hpp"
+
 #include <algorithm>
 
 namespace Renderer::FontLayout {
@@ -45,7 +47,14 @@ void layout(
 
 void screen(std::string_view text, Vec2 position, float scale, std::vector<GlyphQuad>& out)
 {
-    layout(text, position.x, position.y, std::max(scale, 0.0f) * 8.0f, 1.0f, out);
+    layout(
+        text,
+        position.x,
+        position.y,
+        std::max(scale, 0.0f) * Font::atlas().screen_cell_pixels,
+        1.0f,
+        out
+    );
 }
 
 void world(std::string_view text, float scale, std::vector<GlyphQuad>& out)
