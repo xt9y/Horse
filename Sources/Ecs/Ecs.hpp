@@ -102,6 +102,8 @@ private:
     };
 
 public:
+    World();
+
     Entity createEntity();
     bool destroyEntity(Entity entity);
 
@@ -253,13 +255,13 @@ private:
         if (!alive(entity)) throw std::out_of_range("ECS entity is not alive");
     }
 
-    void touch() { ++change_revision_; }
+    void touch();
 
     Entity next_entity_ = 0u;
     std::vector<Entity> entities_;
     std::vector<std::size_t> entity_sparse_;
     std::unordered_map<std::type_index, std::unique_ptr<StorageBase>> storages_;
-    std::uint64_t change_revision_ = 1u;
+    std::uint64_t change_revision_ = 0u;
 };
 
 } // namespace Ecs
