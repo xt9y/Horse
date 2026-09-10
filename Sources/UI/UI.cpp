@@ -156,7 +156,6 @@ void shutdown()
     if (ImGui::GetIO().IniFilename)
         ImGui::SaveIniSettingsToDisk(ImGui::GetIO().IniFilename);
 
-    Internal::clearPersistentOverlays();
     Internal::shutdownRendererBackend();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -213,12 +212,12 @@ void shutdownRendererBackend()
     backend = Backend::None;
 }
 
-void render(Renderer::Internal::FrameOutput& output)
+void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
 {
     if (!ready || !frame_active) return;
 
     const bool visible = frame_visible;
-    const bool overlay_visible = renderPersistentOverlays();
+    const bool overlay_visible = renderPersistentOverlays(world);
     ImGui::Render();
     frame_active = false;
     frame_visible = false;
