@@ -1,6 +1,6 @@
 #ifdef __APPLE__
 
-#include "Renderer/Systems/MetalSceneResources.hpp"
+#include "Renderer/Scenes/Metal/SceneResources.hpp"
 
 #include "Models/Core/Texture.hpp"
 
@@ -11,9 +11,9 @@
 #include <cstdint>
 #include <unordered_map>
 
-namespace Renderer::Systems {
+namespace Renderer::Scenes::Metal {
 
-struct MetalSceneResources::Impl {
+struct SceneResources::Impl {
     LWMGLBuffer node_buffer = nullptr;
     LWMGLBuffer triangle_buffer = nullptr;
     LWMGLBuffer material_buffer = nullptr;
@@ -83,16 +83,16 @@ struct MetalSceneResources::Impl {
     }
 };
 
-MetalSceneResources::MetalSceneResources() : impl_(new Impl) {}
+SceneResources::SceneResources() : impl_(new Impl) {}
 
-MetalSceneResources::~MetalSceneResources()
+SceneResources::~SceneResources()
 {
     clear();
     delete impl_;
     impl_ = nullptr;
 }
 
-bool MetalSceneResources::init(std::string *error)
+bool SceneResources::init(std::string *error)
 {
     if (!impl_) return false;
     if (impl_->white_texture) return true;
@@ -120,7 +120,7 @@ bool MetalSceneResources::init(std::string *error)
     return true;
 }
 
-bool MetalSceneResources::sync(const SceneCache& scene, std::string *error)
+bool SceneResources::sync(const Renderer::Scenes::SceneCache& scene, std::string *error)
 {
     if (!impl_ || !init(error)) return false;
     if (scene.textureHandles().size() > MaximumTextureSlots) {
@@ -153,7 +153,7 @@ bool MetalSceneResources::sync(const SceneCache& scene, std::string *error)
     return true;
 }
 
-bool MetalSceneResources::bind(LWMGLCommand command, std::uint32_t first_texture_binding) const
+bool SceneResources::bind(LWMGLCommand command, std::uint32_t first_texture_binding) const
 {
     if (!impl_ || !impl_->ready || !command) return false;
     bool ok = Metal.setBuffer(command, impl_->node_buffer, 0u, 0u) == 0;
@@ -169,16 +169,16 @@ bool MetalSceneResources::bind(LWMGLCommand command, std::uint32_t first_texture
     return ok;
 }
 
-void MetalSceneResources::clear()
+void SceneResources::clear()
 {
     if (impl_) impl_->clear();
 }
 
-bool MetalSceneResources::ready() const
+bool SceneResources::ready() const
 {
     return impl_ && impl_->ready;
 }
 
-} // namespace Renderer::Systems
+} // namespace Renderer::Scenes::Metal
 
 #endif

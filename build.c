@@ -65,23 +65,34 @@ void build(C_Build *b)
     c_sources(library, "Sources/*.cpp");
     c_sources(library, "Sources/*/*.cpp");
     c_sources(library, "Sources/Models/*/*.cpp");
-    c_sources(library, "Sources/Renderer/Rasterizer/Rasterizer.cpp");
 
-    // Renderer-wide systems shared by raster, path-traced and ray-traced backends.
-    c_sources(library, "Sources/Renderer/Systems/Scene.cpp");
-    c_sources(library, "Sources/Renderer/Systems/SceneCache.cpp");
-    c_sources(library, "Sources/Renderer/Systems/Uniforms.cpp");
+    c_sources(library, "Sources/Renderer/Fonts/FontAtlas.cpp");
+    c_sources(library, "Sources/Renderer/Fonts/FontLayout.cpp");
+    c_sources(library, "Sources/Renderer/Fonts/FontPass.cpp");
+    c_sources(library, "Sources/Renderer/Fonts/OpenGL/FontPassOpenGL.cpp");
+
+    c_sources(library, "Sources/Renderer/GlobalIllumination/GlobalIllumination.cpp");
+    c_sources(library, "Sources/Renderer/GlobalIllumination/TraceScene.cpp");
+    c_sources(library, "Sources/Renderer/GlobalIllumination/PhotonMapping/PhotonMap.cpp");
+
+    c_sources(library, "Sources/Renderer/Scenes/Scene.cpp");
+    c_sources(library, "Sources/Renderer/Scenes/SceneCache.cpp");
     c_sources(library, "Sources/Renderer/Systems/OpenGL/Program.cpp");
     c_sources(library, "Sources/Renderer/Systems/OpenGL/TextureCache.cpp");
+    c_sources(library, "Sources/Renderer/Rasterizer/OpenGL/RasterizerOpenGL.cpp");
 
 #ifdef __APPLE__
-    c_sources(library, "Sources/Renderer/Systems/MetalSceneResources.cpp");
-    c_sources(library, "Sources/Renderer/PathTracer/PathTracerMetal.cpp");
-    c_sources(library, "Sources/Renderer/RayTracer/RayTracerMetal.cpp");
+    c_sources(library, "Sources/Renderer/Fonts/Metal/FontPassMetal.cpp");
+    c_sources(library, "Sources/Renderer/GlobalIllumination/Metal/GlobalIlluminationMetal.cpp");
+    c_sources(library, "Sources/Renderer/Scenes/Metal/SceneResources.cpp");
+    c_sources(library, "Sources/Renderer/Systems/Metal/Uniforms.cpp");
+    c_sources(library, "Sources/Renderer/PathTracer/Metal/PathTracerMetal.cpp");
+    c_sources(library, "Sources/Renderer/RayTracer/Metal/RayTracerMetal.cpp");
 #else
-    c_sources(library, "Sources/Renderer/Systems/OpenGLSceneResources.cpp");
-    c_sources(library, "Sources/Renderer/PathTracer/PathTracer.cpp");
-    c_sources(library, "Sources/Renderer/RayTracer/RayTracer.cpp");
+    c_sources(library, "Sources/Renderer/GlobalIllumination/OpenGL/GlobalIlluminationOpenGL.cpp");
+    c_sources(library, "Sources/Renderer/Scenes/OpenGL/SceneResources.cpp");
+    c_sources(library, "Sources/Renderer/PathTracer/OpenGL/PathTracerOpenGL.cpp");
+    c_sources(library, "Sources/Renderer/RayTracer/OpenGL/RayTracerOpenGL.cpp");
 #endif
 
     c_flag(library, "-std=c++20");

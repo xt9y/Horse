@@ -1,6 +1,6 @@
 #ifndef __APPLE__
 
-#include "Renderer/Systems/OpenGLSceneResources.hpp"
+#include "Renderer/Scenes/OpenGL/SceneResources.hpp"
 
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
 
@@ -10,13 +10,13 @@
 #include <algorithm>
 #include <array>
 
-namespace Renderer::Systems {
+namespace Renderer::Scenes::OpenGL {
 
-struct OpenGLSceneResources::Impl {
+struct SceneResources::Impl {
     GLuint node_buffer = 0u;
     GLuint triangle_buffer = 0u;
     GLuint material_buffer = 0u;
-    OpenGL::TextureCache textures;
+    Systems::OpenGL::TextureCache textures;
     std::array<GLuint, MaximumTextureSlots> texture_slots{};
     bool ready = false;
 
@@ -59,16 +59,16 @@ struct OpenGLSceneResources::Impl {
     }
 };
 
-OpenGLSceneResources::OpenGLSceneResources() : impl_(new Impl) {}
+SceneResources::SceneResources() : impl_(new Impl) {}
 
-OpenGLSceneResources::~OpenGLSceneResources()
+SceneResources::~SceneResources()
 {
     clear();
     delete impl_;
     impl_ = nullptr;
 }
 
-bool OpenGLSceneResources::sync(const SceneCache& scene, std::string *error)
+bool SceneResources::sync(const Renderer::Scenes::SceneCache& scene, std::string *error)
 {
     if (!impl_) return false;
     if (scene.textureHandles().size() > MaximumTextureSlots) {
@@ -101,7 +101,7 @@ bool OpenGLSceneResources::sync(const SceneCache& scene, std::string *error)
     return true;
 }
 
-void OpenGLSceneResources::bind()
+void SceneResources::bind()
 {
     if (!impl_ || !impl_->ready) return;
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0u, impl_->node_buffer);
@@ -114,16 +114,16 @@ void OpenGLSceneResources::bind()
     GLModern.glActiveTexture(GL_TEXTURE0);
 }
 
-void OpenGLSceneResources::clear()
+void SceneResources::clear()
 {
     if (impl_) impl_->clear();
 }
 
-bool OpenGLSceneResources::ready() const
+bool SceneResources::ready() const
 {
     return impl_ && impl_->ready;
 }
 
-} // namespace Renderer::Systems
+} // namespace Renderer::Scenes::OpenGL
 
 #endif

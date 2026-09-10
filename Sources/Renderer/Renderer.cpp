@@ -1,7 +1,7 @@
 #include "Renderer/Renderer.hpp"
 
-#include "Renderer/FontPass.hpp"
-#include "Renderer/GlobalIllumination.hpp"
+#include "Renderer/Fonts/FontPass.hpp"
+#include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
 
 #include <lwcgl/lwcgl.h>
 

@@ -1,4 +1,4 @@
-#include "Renderer/Systems/SceneCache.hpp"
+#include "Renderer/Scenes/SceneCache.hpp"
 
 #include "Animation/Animation.hpp"
 #include "Camera.hpp"
@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace Renderer::Systems {
+namespace Renderer::Scenes {
 namespace {
 
 using Math::inverseModelMatrix;
@@ -410,4 +410,4 @@ std::uint64_t lightSignature(const LightState& light)
     return hash;
 }
 
-} // namespace Renderer::Systems
+} // namespace Renderer::Scenes

@@ -54,6 +54,9 @@ struct GlobalIlluminationComponent {
     bool enabled = true;
     float intensity = 1.0f;
     std::uint8_t bounces = 2;
+    bool photon_mapping = true;
+    std::uint32_t photon_count = 4096u;
+    float photon_radius = 0.0f;
 };
 
 } // namespace Renderer
