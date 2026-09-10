@@ -321,6 +321,9 @@ struct PathTracer::Impl {
         Systems::MetalPresentUniforms present{};
         present.exposure[0] = settings.exposure;
         present.exposure[1] = progressive.cameraMoving() ? 1.0f : 0.0f;
+        const std::uint32_t moving_grid = static_cast<std::uint32_t>(std::max(settings.moving_phase_grid, 1));
+        present.exposure[2] = static_cast<float>(moving_grid);
+        present.exposure[3] = static_cast<float>(progressive.frameIndex() % (moving_grid * moving_grid));
         if (Metal.uploadBuffer(present_uniform_buffer, 0u, &present, sizeof present) != 0) return false;
 
         LWMGLCommand command = Metal.begin();

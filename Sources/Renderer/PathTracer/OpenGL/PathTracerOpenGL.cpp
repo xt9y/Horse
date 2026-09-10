@@ -112,8 +112,9 @@ struct PathTracer::Impl {
 
     struct PresentUniforms {
         GLint accumulation = -1;
-        GLint phase_count = -1;
         GLint camera_moving = -1;
+        GLint moving_phase_grid = -1;
+        GLint frame_index = -1;
         GLint exposure = -1;
     };
 
@@ -248,8 +249,9 @@ struct PathTracer::Impl {
         }
 
         present_uniforms.accumulation = present_program.uniform("uAccumulation");
-        present_uniforms.phase_count = present_program.uniform("uPhaseCount");
         present_uniforms.camera_moving = present_program.uniform("uCameraMoving");
+        present_uniforms.moving_phase_grid = present_program.uniform("uMovingPhaseGrid");
+        present_uniforms.frame_index = present_program.uniform("uFrameIndex");
         present_uniforms.exposure = present_program.uniform("uExposure");
         present_program.use();
         setInt(present_uniforms.accumulation, 0);
@@ -365,8 +367,9 @@ struct PathTracer::Impl {
         present_program.use();
         GLModern.glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, accumulation);
-        setFloat(present_uniforms.phase_count, static_cast<float>(std::max(progressive.phaseCount(), 1u)));
         setInt(present_uniforms.camera_moving, progressive.cameraMoving() ? 1 : 0);
+        setInt(present_uniforms.moving_phase_grid, settings.moving_phase_grid);
+        setInt(present_uniforms.frame_index, static_cast<int>(progressive.frameIndex()));
         setFloat(present_uniforms.exposure, settings.exposure);
         glBegin(GL_TRIANGLES);
         glVertex2f(-1.0f, -1.0f);
