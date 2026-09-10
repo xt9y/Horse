@@ -110,5 +110,9 @@ void build(C_Build *b)
     c_sources(metal_namespace_contract, "tests/metal_namespace_contract.cpp");
     configureContract(metal_namespace_contract);
 
+    C_Target *imgui_contract = c_test(b, "imgui-contract");
+    c_sources(imgui_contract, "tests/imgui_contract.cpp");
+    configureContract(imgui_contract);
+
     c_default_target(b, library);
 }
