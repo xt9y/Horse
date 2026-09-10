@@ -25,6 +25,9 @@ bool prepareMetal(Renderer::Internal::FrameOutput& output);
 bool renderMetal(ImDrawData *draw_data, Renderer::Internal::FrameOutput& output);
 #endif
 
+bool renderPersistentOverlays();
+void clearPersistentOverlays();
+
 void render(Renderer::Internal::FrameOutput& output);
 void shutdownRendererBackend();
 
