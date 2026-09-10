@@ -5,6 +5,11 @@
 
 namespace Renderer {
 
+struct RasterizerSettings {
+    bool enabled = true;
+    bool wireframe = false;
+};
+
 class Rasterizer final : public IRenderer {
 public:
     struct Impl;
@@ -22,6 +27,9 @@ public:
     bool initialized() const override;
     bool enabled() const override;
     void setEnabled(bool enabled) override;
+
+    RasterizerSettings& settings();
+    const RasterizerSettings& settings() const;
 
 protected:
     bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) override;
