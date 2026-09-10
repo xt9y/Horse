@@ -6,32 +6,15 @@
 #include <GL/gl.h>
 #endif
 
-#include <cstddef>
-
 namespace Renderer::Debug::Internal {
-namespace {
-
-void drawLines(const std::vector<Vertex>& vertices)
-{
-    if (vertices.empty()) return;
-
-    glVertexPointer(4, GL_FLOAT, sizeof(Vertex), vertices.data()->position.data());
-    glColorPointer(4, GL_FLOAT, sizeof(Vertex), vertices.data()->color.data());
-    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size()));
-}
-
-} // namespace
 
 void renderOpenGL(
-    const std::vector<Vertex>& wireframe,
-    std::uint64_t wireframe_revision,
-    const std::vector<Vertex>& dynamic,
+    const std::vector<Vertex>& lines,
     const Math::Mat4& projection,
     const Math::Mat4& view,
     Renderer::Internal::FrameOutput& output)
 {
-    (void)wireframe_revision;
-    if (wireframe.empty() && dynamic.empty()) return;
+    if (lines.empty()) return;
 
     glPushAttrib(GL_ALL_ATTRIB_BITS);
     glPushClientAttrib(GL_CLIENT_ALL_ATTRIB_BITS);
@@ -48,7 +31,6 @@ void renderOpenGL(
         glDisable(GL_DEPTH_TEST);
     }
     glDepthMask(GL_FALSE);
-    glLineWidth(1.0f);
 
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
@@ -59,8 +41,9 @@ void renderOpenGL(
 
     glEnableClientState(GL_VERTEX_ARRAY);
     glEnableClientState(GL_COLOR_ARRAY);
-    drawLines(wireframe);
-    drawLines(dynamic);
+    glVertexPointer(4, GL_FLOAT, sizeof(Vertex), lines.data()->position.data());
+    glColorPointer(4, GL_FLOAT, sizeof(Vertex), lines.data()->color.data());
+    glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(lines.size()));
 
     glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
