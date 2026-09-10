@@ -1,5 +1,6 @@
 #include "Renderer/Math.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace Renderer::Math {
@@ -152,6 +153,23 @@ Mat4 inverseModelMatrix(const Transform& transform)
         ),
         translation(-transform.position.x, -transform.position.y, -transform.position.z)
     );
+}
+
+Mat4 perspective(float fov_degrees, float aspect, float near_plane, float far_plane)
+{
+    const float clamped_fov = std::clamp(fov_degrees, 1.0f, 179.0f);
+    const float safe_aspect = aspect > 1.0e-6f ? aspect : 1.0f;
+    const float safe_near = std::max(near_plane, 1.0e-4f);
+    const float safe_far = std::max(far_plane, safe_near + 1.0e-3f);
+    const float focal = 1.0f / std::tan(clamped_fov * (kPi / 360.0f));
+
+    Mat4 result{};
+    result[0] = focal / safe_aspect;
+    result[5] = focal;
+    result[10] = (safe_far + safe_near) / (safe_near - safe_far);
+    result[11] = -1.0f;
+    result[14] = (2.0f * safe_far * safe_near) / (safe_near - safe_far);
+    return result;
 }
 
 Mat4 viewMatrix(
