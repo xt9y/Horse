@@ -15,11 +15,13 @@ enum class Backend {
 
 bool initOpenGL();
 void shutdownOpenGL();
+void newFrameOpenGL();
 void renderOpenGL(ImDrawData *draw_data);
 
 #ifdef __APPLE__
 bool initMetal();
 void shutdownMetal();
+bool prepareMetal(Renderer::Internal::FrameOutput& output);
 bool renderMetal(ImDrawData *draw_data, Renderer::Internal::FrameOutput& output);
 #endif
 
