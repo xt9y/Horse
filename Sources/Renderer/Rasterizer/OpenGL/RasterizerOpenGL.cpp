@@ -9,6 +9,7 @@
 #include "Renderer/Systems/OpenGL/Program.hpp"
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
 #include "Renderer/Systems/Scene.hpp"
+#include "Renderer/Visibility/Visibility.hpp"
 
 #include <lwcgl/glmodern.h>
 #include <lwcgl/lwcgl.h>
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <unordered_set>
 #include <vector>
 
 #ifndef GL_TEXTURE_3D
@@ -59,8 +61,6 @@ namespace Renderer {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
-constexpr int kShadowResolution = 2048;
-constexpr int kLegacyShadowResolution = 512;
 constexpr int kGiTextureUnit = 1;
 constexpr int kShadowTextureUnit = 5;
 
@@ -225,12 +225,14 @@ struct Rasterizer::Impl {
         GLint model = -1;
     };
 
+    RasterizerSettings settings{};
     bool initialized = false;
-    bool enabled = true;
     int width = 1;
     int height = 1;
     Systems::OpenGL::TextureCache textures;
     std::vector<Systems::Scene::RenderItem> render_items;
+    std::unordered_set<Ecs::Entity> viewport_visible;
+    bool viewport_filter_valid = false;
 
     Systems::OpenGL::Program main_program;
     Systems::OpenGL::Program shadow_program;
@@ -261,6 +263,16 @@ struct Rasterizer::Impl {
     GLuint shadow_framebuffer = 0u;
     GLuint shadow_depth_renderbuffer = 0u;
     bool shadow_framebuffer_available = false;
+
+    void applyClearColor() const
+    {
+        glClearColor(
+            settings.clear_color.x,
+            settings.clear_color.y,
+            settings.clear_color.z,
+            settings.clear_color.w
+        );
+    }
 
     static GLFWglproc resolveFramebufferProc(const char *core, const char *extension)
     {
@@ -517,7 +529,8 @@ struct Rasterizer::Impl {
                 }
             }
         }
-        return std::max(std::sqrt(far_distance_squared) * 1.05f, 1.0f);
+        const float scale = std::max(settings.shadow_far_scale, 0.0f);
+        return std::max(std::sqrt(far_distance_squared) * scale, 1.0f);
     }
 
     void clearShadowFramebuffer()
@@ -629,10 +642,7 @@ struct Rasterizer::Impl {
             );
         }
 
-        if (shadow_framebuffer_available && !createShadowFramebuffer()) {
-            return false;
-        }
-
+        if (shadow_framebuffer_available && !createShadowFramebuffer()) return false;
         shadow_valid = false;
         return true;
     }
@@ -667,9 +677,17 @@ struct Rasterizer::Impl {
         );
     }
 
+    bool itemVisible(const Systems::Scene::RenderItem& item, bool shadow_pass) const
+    {
+        if (shadow_pass || !settings.viewport_culling || !viewport_filter_valid) return true;
+        return viewport_visible.find(item.entity) != viewport_visible.end();
+    }
+
     void drawGeometry(bool shadow_pass)
     {
         for (const Systems::Scene::RenderItem& item : render_items) {
+            if (!itemVisible(item, shadow_pass)) continue;
+
             const Models::MeshData* mesh = item.mesh;
             if (!mesh || mesh->indices.empty() || !item.transform) continue;
 
@@ -730,10 +748,11 @@ struct Rasterizer::Impl {
             return false;
         }
 
-        const int requested_size = kShadowResolution;
+        const int requested_size = std::max(settings.shadow_resolution, 1);
+        const int minimum_size = std::max(settings.minimum_shadow_resolution, 1);
         const int fallback_size = std::max(
-            64,
-            std::min({kLegacyShadowResolution, width, height})
+            minimum_size,
+            std::min({std::max(settings.fallback_shadow_resolution, 1), width, height})
         );
         const int target_size = shadow_framebuffer_available ? requested_size : fallback_size;
         if (!ensureShadowTextures(target_size)) {
@@ -749,7 +768,12 @@ struct Rasterizer::Impl {
         if (shadow_valid && shadow_signature == signature) return true;
 
         shadow_far = calculateShadowFar(light.transform.position);
-        const Math::Mat4 projection = perspectiveMatrix(90.0f, 1.0f, 0.05f, shadow_far);
+        const Math::Mat4 projection = perspectiveMatrix(
+            90.0f,
+            1.0f,
+            std::max(settings.shadow_near_plane, 1.0e-4f),
+            shadow_far
+        );
 
         for (int i = 0; i < 6; ++i) {
             GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kShadowTextureUnit + i));
@@ -825,7 +849,7 @@ struct Rasterizer::Impl {
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, width, height);
-        glClearColor(0.035f, 0.035f, 0.045f, 1.0f);
+        applyClearColor();
         shadow_signature = signature;
         shadow_valid = true;
         return true;
@@ -873,14 +897,29 @@ struct Rasterizer::Impl {
         GLModern.glActiveTexture(GL_TEXTURE0);
     }
 
+    void updateViewportVisibility(const Ecs::World& world)
+    {
+        viewport_visible.clear();
+        viewport_filter_valid = false;
+        if (!settings.viewport_culling) return;
+
+        const Visibility::Result visibility = Visibility::system().evaluate(world, width, height);
+        if (!visibility.frustum.valid) return;
+
+        viewport_visible.insert(visibility.visible.begin(), visibility.visible.end());
+        viewport_filter_valid = true;
+    }
+
     void draw(const Ecs::World& world, const GlobalIllumination::Field *gi)
     {
         Systems::Scene::collectRenderItems(world, render_items);
+        updateViewportVisibility(world);
+
         const Systems::Scene::LightState light = Systems::Scene::lightState(world);
         renderPointShadowMaps(light);
 
         glViewport(0, 0, width, height);
-        glClearColor(0.035f, 0.035f, 0.045f, 1.0f);
+        applyClearColor();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
@@ -963,7 +1002,7 @@ bool Rasterizer::init()
     glCullFace(GL_BACK);
     glDisable(GL_LIGHTING);
     glShadeModel(GL_SMOOTH);
-    glClearColor(0.035f, 0.035f, 0.045f, 1.0f);
+    impl_->applyClearColor();
     glViewport(0, 0, impl_->width, impl_->height);
     impl_->initialized = true;
 
@@ -982,7 +1021,8 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 {
     if (!impl_->initialized) return false;
 
-    if (!impl_->enabled) {
+    if (!impl_->settings.enabled) {
+        impl_->applyClearColor();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     } else {
         impl_->draw(world, output.global_illumination);
@@ -1009,6 +1049,8 @@ void Rasterizer::shutdown()
     impl_->clearShadowTextures();
     impl_->destroyPrograms();
     impl_->render_items.clear();
+    impl_->viewport_visible.clear();
+    impl_->viewport_filter_valid = false;
     impl_->initialized = false;
 }
 
@@ -1019,12 +1061,102 @@ bool Rasterizer::initialized() const
 
 bool Rasterizer::enabled() const
 {
-    return impl_ && impl_->enabled;
+    return impl_ && impl_->settings.enabled;
 }
 
 void Rasterizer::setEnabled(bool enabled)
 {
-    if (impl_) impl_->enabled = enabled;
+    if (impl_) impl_->settings.enabled = enabled;
+}
+
+void Rasterizer::setViewportCulling(bool value)
+{
+    if (impl_) impl_->settings.viewport_culling = value;
+}
+
+void Rasterizer::setShadowResolution(int value)
+{
+    if (!impl_) return;
+    impl_->settings.shadow_resolution = value;
+    impl_->shadow_valid = false;
+}
+
+void Rasterizer::setFallbackShadowResolution(int value)
+{
+    if (!impl_) return;
+    impl_->settings.fallback_shadow_resolution = value;
+    impl_->shadow_valid = false;
+}
+
+void Rasterizer::setMinimumShadowResolution(int value)
+{
+    if (!impl_) return;
+    impl_->settings.minimum_shadow_resolution = value;
+    impl_->shadow_valid = false;
+}
+
+void Rasterizer::setShadowNearPlane(float value)
+{
+    if (!impl_) return;
+    impl_->settings.shadow_near_plane = value;
+    impl_->shadow_valid = false;
+}
+
+void Rasterizer::setShadowFarScale(float value)
+{
+    if (!impl_) return;
+    impl_->settings.shadow_far_scale = value;
+    impl_->shadow_valid = false;
+}
+
+void Rasterizer::setClearColor(Vec4 value)
+{
+    if (impl_) impl_->settings.clear_color = value;
+}
+
+bool Rasterizer::viewportCulling() const
+{
+    return impl_ && impl_->settings.viewport_culling;
+}
+
+int Rasterizer::shadowResolution() const
+{
+    return impl_ ? impl_->settings.shadow_resolution : 0;
+}
+
+int Rasterizer::fallbackShadowResolution() const
+{
+    return impl_ ? impl_->settings.fallback_shadow_resolution : 0;
+}
+
+int Rasterizer::minimumShadowResolution() const
+{
+    return impl_ ? impl_->settings.minimum_shadow_resolution : 0;
+}
+
+float Rasterizer::shadowNearPlane() const
+{
+    return impl_ ? impl_->settings.shadow_near_plane : 0.0f;
+}
+
+float Rasterizer::shadowFarScale() const
+{
+    return impl_ ? impl_->settings.shadow_far_scale : 0.0f;
+}
+
+Vec4 Rasterizer::clearColor() const
+{
+    return impl_ ? impl_->settings.clear_color : Vec4{};
+}
+
+RasterizerSettings& Rasterizer::settings()
+{
+    return impl_->settings;
+}
+
+const RasterizerSettings& Rasterizer::settings() const
+{
+    return impl_->settings;
 }
 
 } // namespace Renderer
