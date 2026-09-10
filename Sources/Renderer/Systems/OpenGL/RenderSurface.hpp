@@ -27,6 +27,8 @@ public:
     );
     bool bind() const;
     static void unbind();
+    bool copyColorFromFramebuffer() const;
+    bool copyDepthFromFramebuffer() const;
     void clear();
 
     bool ready() const { return framebuffer_ != 0u && color_texture_ != 0u; }

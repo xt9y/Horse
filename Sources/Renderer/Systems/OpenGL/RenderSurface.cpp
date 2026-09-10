@@ -269,6 +269,24 @@ void RenderSurface::unbind()
     glDrawBuffer(GL_BACK);
 }
 
+bool RenderSurface::copyColorFromFramebuffer() const
+{
+    if (!ready()) return false;
+    glBindTexture(GL_TEXTURE_2D, color_texture_);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width_, height_);
+    glBindTexture(GL_TEXTURE_2D, 0u);
+    return glGetError() == GL_NO_ERROR;
+}
+
+bool RenderSurface::copyDepthFromFramebuffer() const
+{
+    if (!ready() || depth_texture_ == 0u) return false;
+    glBindTexture(GL_TEXTURE_2D, depth_texture_);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width_, height_);
+    glBindTexture(GL_TEXTURE_2D, 0u);
+    return glGetError() == GL_NO_ERROR;
+}
+
 void RenderSurface::clear()
 {
     if (framebuffer_ != 0u && loadApi()) api.delete_framebuffers(1, reinterpret_cast<GLuint *>(&framebuffer_));
