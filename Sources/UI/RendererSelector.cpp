@@ -13,7 +13,8 @@ bool option(
 {
     ImGui::BeginDisabled(!available);
     const bool selected = choice == value;
-    const bool pressed = ImGui::RadioButton(label, selected);
+    const bool pressed = ImGui::Selectable(label, selected);
+    if (selected) ImGui::SetItemDefaultFocus();
     ImGui::EndDisabled();
 
     if (!pressed || !available) return false;
@@ -29,16 +30,13 @@ bool rendererSelector(
 {
     if (!ImGui::GetCurrentContext()) return false;
 
-    ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(180.0f, 0.0f), ImGuiCond_FirstUseEver);
-
     bool changed = false;
-    if (ImGui::Begin("Renderer", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (ImGui::BeginCombo("Renderer Backend", rendererName(choice))) {
         changed |= option("Rasterizer", RendererChoice::Rasterizer, choice, available.rasterizer);
         changed |= option("Ray Tracer", RendererChoice::RayTracer, choice, available.ray_tracer);
         changed |= option("Path Tracer", RendererChoice::PathTracer, choice, available.path_tracer);
+        ImGui::EndCombo();
     }
-    ImGui::End();
     return changed;
 }
 
@@ -46,8 +44,8 @@ const char *rendererName(RendererChoice choice)
 {
     switch (choice) {
         case RendererChoice::Rasterizer: return "Rasterizer";
-        case RendererChoice::RayTracer: return "RayTracer";
-        case RendererChoice::PathTracer: return "PathTracer";
+        case RendererChoice::RayTracer: return "Ray Tracer";
+        case RendererChoice::PathTracer: return "Path Tracer";
     }
     return "Rasterizer";
 }
