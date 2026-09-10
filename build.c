@@ -106,5 +106,9 @@ void build(C_Build *b)
     c_sources(photon_mapping_contract, "tests/photon_mapping_contract.cpp");
     configureContract(photon_mapping_contract);
 
+    C_Target *metal_namespace_contract = c_test(b, "metal-namespace-contract");
+    c_sources(metal_namespace_contract, "tests/metal_namespace_contract.cpp");
+    configureContract(metal_namespace_contract);
+
     c_default_target(b, library);
 }
