@@ -39,6 +39,17 @@ struct CellHash {
     }
 };
 
+struct DirectionalEmissionDomain {
+    Vec3 center{};
+    Vec3 direction {0.0f, -1.0f, 0.0f};
+    Vec3 tangent {1.0f, 0.0f, 0.0f};
+    Vec3 bitangent {0.0f, 0.0f, 1.0f};
+    float along = 0.0f;
+    float across = 0.0f;
+    float vertical = 0.0f;
+    float area = 0.0f;
+};
+
 Vec3 add(Vec3 a, Vec3 b)
 {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
@@ -128,7 +139,7 @@ Vec3 fibonacciDirection(std::uint32_t index, std::uint32_t count)
 
 float radicalInverse(std::uint32_t value, std::uint32_t base)
 {
-    float inverse_base = 1.0f / static_cast<float>(base);
+    const float inverse_base = 1.0f / static_cast<float>(base);
     float factor = inverse_base;
     float result = 0.0f;
     while (value > 0u) {
@@ -153,7 +164,10 @@ float autoRadius(const TraceBounds& bounds, std::uint32_t photon_count)
 {
     const Vec3 extent = subtract(bounds.maximum, bounds.minimum);
     const float maximum_extent = std::max(maximumComponent(extent), 1.0e-3f);
-    const float cells_per_axis = std::max(std::cbrt(static_cast<float>(std::max(photon_count, 1u))), 1.0f);
+    const float cells_per_axis = std::max(
+        std::cbrt(static_cast<float>(std::max(photon_count, 1u))),
+        1.0f
+    );
     return std::clamp(
         maximum_extent * (1.5f / cells_per_axis),
         maximum_extent * 0.005f,
@@ -161,39 +175,50 @@ float autoRadius(const TraceBounds& bounds, std::uint32_t photon_count)
     );
 }
 
-void directionalEmission(
+DirectionalEmissionDomain directionalEmissionDomain(
     const TraceBounds& bounds,
-    const Scenes::LightState& light,
-    std::uint32_t index,
-    Vec3& origin,
-    Vec3& direction)
+    Vec3 light_direction)
 {
-    direction = normalize(light.direction);
-    const Vec3 center = multiply(add(bounds.minimum, bounds.maximum), 0.5f);
+    DirectionalEmissionDomain domain;
+    domain.direction = normalize(light_direction);
+    domain.center = multiply(add(bounds.minimum, bounds.maximum), 0.5f);
     const Vec3 half = multiply(subtract(bounds.maximum, bounds.minimum), 0.5f);
-    const Vec3 helper = std::abs(direction.y) < 0.999f
+    const Vec3 helper = std::abs(domain.direction.y) < 0.999f
         ? Vec3{0.0f, 1.0f, 0.0f}
         : Vec3{1.0f, 0.0f, 0.0f};
-    const Vec3 tangent = normalize(cross(helper, direction));
-    const Vec3 bitangent = cross(direction, tangent);
+    domain.tangent = normalize(cross(helper, domain.direction));
+    domain.bitangent = cross(domain.direction, domain.tangent);
 
     const auto support = [half](Vec3 axis) {
         return std::abs(axis.x) * half.x +
             std::abs(axis.y) * half.y +
             std::abs(axis.z) * half.z;
     };
-    const float along = support(direction);
-    const float across = support(tangent);
-    const float vertical = support(bitangent);
+    domain.along = support(domain.direction);
+    domain.across = support(domain.tangent);
+    domain.vertical = support(domain.bitangent);
+    domain.area = std::max(4.0f * domain.across * domain.vertical, 1.0e-6f);
+    return domain;
+}
+
+void directionalEmission(
+    const DirectionalEmissionDomain& domain,
+    std::uint32_t index,
+    Vec3& origin,
+    Vec3& direction)
+{
+    direction = domain.direction;
     const float u = radicalInverse(index + 1u, 2u) * 2.0f - 1.0f;
     const float v = radicalInverse(index + 1u, 3u) * 2.0f - 1.0f;
-
     origin = add(
         add(
-            subtract(center, multiply(direction, along + kRayEpsilon * 8.0f)),
-            multiply(tangent, u * across)
+            subtract(
+                domain.center,
+                multiply(domain.direction, domain.along + kRayEpsilon * 8.0f)
+            ),
+            multiply(domain.tangent, u * domain.across)
         ),
-        multiply(bitangent, v * vertical)
+        multiply(domain.bitangent, v * domain.vertical)
     );
 }
 
@@ -233,16 +258,22 @@ void PhotonMap::rebuild(
     const std::uint8_t maximum_bounces = std::clamp<std::uint8_t>(settings.bounces, 1u, 8u);
     storage_->photons.reserve(static_cast<std::size_t>(settings.photon_count) * maximum_bounces);
 
+    const bool directional = light.type == LightType::Directional;
+    const DirectionalEmissionDomain domain = directional
+        ? directionalEmissionDomain(scene_bounds, light.direction)
+        : DirectionalEmissionDomain{};
+    const float emitted_power = std::max(light.intensity, 0.0f) *
+        (directional ? domain.area : 4.0f * kPi);
     const Vec3 initial_power = multiply(
         light.color,
-        std::max(light.intensity, 0.0f) / static_cast<float>(settings.photon_count)
+        emitted_power / static_cast<float>(settings.photon_count)
     );
 
     for (std::uint32_t photon_index = 0u; photon_index < settings.photon_count; ++photon_index) {
         Vec3 origin{};
         Vec3 direction{};
-        if (light.type == LightType::Directional) {
-            directionalEmission(scene_bounds, light, photon_index, origin, direction);
+        if (directional) {
+            directionalEmission(domain, photon_index, origin, direction);
         } else {
             origin = light.position;
             direction = fibonacciDirection(photon_index, settings.photon_count);
