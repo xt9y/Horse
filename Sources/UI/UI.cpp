@@ -69,6 +69,10 @@ void applyStyle()
     style.ScrollbarSize = 11.0f;
     style.GrabMinSize = 8.0f;
 
+    style.FontScaleMain = 0.82f;
+    style.ScaleAllSizes(0.82f);
+    style.FrameRounding = 0.0f;
+
     ImVec4 *colors = style.Colors;
     colors[ImGuiCol_Text] = ImVec4(0.88f, 0.89f, 0.92f, 1.00f);
     colors[ImGuiCol_TextDisabled] = ImVec4(0.42f, 0.44f, 0.49f, 1.00f);
@@ -117,7 +121,7 @@ bool init()
 
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.IniFilename = nullptr;
+    io.IniFilename = "imgui.ini";
     io.LogFilename = nullptr;
 
     applyStyle();
@@ -149,6 +153,10 @@ void shutdown()
         frame_active = false;
     }
 
+    if (ImGui::GetIO().IniFilename)
+        ImGui::SaveIniSettingsToDisk(ImGui::GetIO().IniFilename);
+
+    Internal::clearPersistentOverlays();
     Internal::shutdownRendererBackend();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -210,6 +218,7 @@ void render(Renderer::Internal::FrameOutput& output)
     if (!ready || !frame_active) return;
 
     const bool visible = frame_visible;
+    const bool overlay_visible = renderPersistentOverlays();
     ImGui::Render();
     frame_active = false;
     frame_visible = false;
@@ -224,7 +233,7 @@ void render(Renderer::Internal::FrameOutput& output)
         return;
     }
 
-    if (!visible) return;
+    if (!visible && !overlay_visible) return;
 
     ImDrawData *draw_data = ImGui::GetDrawData();
     if (!draw_data) return;
