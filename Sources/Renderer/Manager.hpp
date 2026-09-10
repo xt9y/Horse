@@ -4,6 +4,7 @@
 #include "Renderer/Renderer.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -17,6 +18,8 @@ public:
     struct Entry {
         std::string name;
         std::unique_ptr<IRenderer> renderer;
+        std::function<bool()> activate;
+        std::function<void()> deactivate;
         bool available = false;
     };
 
@@ -25,30 +28,52 @@ public:
     {
         auto renderer = std::make_unique<T>(std::forward<Args>(args)...);
         T& reference = *renderer;
-        entries_.push_back(Entry{std::move(name), std::move(renderer), false});
+        IRenderer *base = renderer.get();
+        entries_.push_back(Entry{
+            std::move(name),
+            std::move(renderer),
+            [base] { return base->activate(); },
+            [base] { base->deactivate(); },
+            false,
+        });
         return reference;
+    }
+
+    void setLifecycle(
+        IRenderer& renderer,
+        std::function<bool()> activate,
+        std::function<void()> deactivate)
+    {
+        for (Entry& entry : entries_) {
+            if (entry.renderer.get() != &renderer) continue;
+            entry.activate = std::move(activate);
+            entry.deactivate = std::move(deactivate);
+            return;
+        }
     }
 
     bool initialize()
     {
-        shutdown();
         active_ = invalidIndex();
-
         for (std::size_t index = 0u; index < entries_.size(); ++index) {
             Entry& entry = entries_[index];
             entry.available = entry.renderer && entry.renderer->init();
             if (!entry.available) continue;
-            entry.renderer->deactivate();
+            if (entry.deactivate) entry.deactivate();
             if (active_ == invalidIndex()) active_ = index;
         }
 
         if (active_ == invalidIndex()) return false;
-        return activate(active_);
+        const std::size_t initial = active_;
+        active_ = invalidIndex();
+        return activate(initial);
     }
 
     void shutdown()
     {
-        if (Entry *entry = activeEntry()) entry->renderer->deactivate();
+        if (Entry *entry = activeEntry()) {
+            if (entry->deactivate) entry->deactivate();
+        }
         for (auto iterator = entries_.rbegin(); iterator != entries_.rend(); ++iterator) {
             if (iterator->renderer) iterator->renderer->shutdown();
             iterator->available = false;
@@ -59,14 +84,16 @@ public:
     bool activate(std::size_t index)
     {
         if (index >= entries_.size() || !entries_[index].available) return false;
-        if (active_ == index) return entries_[index].renderer->activate();
+        if (active_ == index) return true;
 
         const std::size_t previous = active_;
-        if (Entry *entry = activeEntry()) entry->renderer->deactivate();
+        if (Entry *entry = activeEntry()) {
+            if (entry->deactivate) entry->deactivate();
+        }
 
-        if (!entries_[index].renderer->activate()) {
+        if (entries_[index].activate && !entries_[index].activate()) {
             if (previous < entries_.size() && entries_[previous].available &&
-                entries_[previous].renderer->activate())
+                (!entries_[previous].activate || entries_[previous].activate()))
             {
                 active_ = previous;
             } else {
