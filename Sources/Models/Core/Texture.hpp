@@ -23,6 +23,11 @@ TextureHandle loadTextureWithOpacity(
     const std::string& opacity_path,
     std::string *error = nullptr
 );
+TextureHandle combineTextureOpacity(
+    TextureHandle color,
+    TextureHandle opacity,
+    std::string *error = nullptr
+);
 TextureHandle loadTextureMemory(
     const std::string& cache_key,
     const void *data,
