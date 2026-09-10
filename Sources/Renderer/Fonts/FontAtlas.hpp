@@ -8,6 +8,8 @@ namespace Renderer::FontAtlas {
 
 inline constexpr int FALLBACK_WIDTH = 128;
 inline constexpr int FALLBACK_HEIGHT = 128;
+inline constexpr int WIDTH = FALLBACK_WIDTH;
+inline constexpr int HEIGHT = FALLBACK_HEIGHT;
 
 std::vector<std::uint8_t> rgba();
 
