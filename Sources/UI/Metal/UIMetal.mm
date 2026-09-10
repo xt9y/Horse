@@ -23,14 +23,25 @@ void shutdownMetal()
     ImGui_ImplMetal_Shutdown();
 }
 
+bool prepareMetal(Renderer::Internal::FrameOutput& output)
+{
+    if (!output.command || !Metal.nativeRenderPassDescriptor) return false;
+
+    const LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
+    void *native_pass = Metal.nativeRenderPassDescriptor(command);
+    if (!native_pass) return false;
+
+    ImGui_ImplMetal_NewFrame((__bridge MTLRenderPassDescriptor *)native_pass);
+    return true;
+}
+
 bool renderMetal(
     ImDrawData *draw_data,
     Renderer::Internal::FrameOutput& output)
 {
     if (!draw_data || !output.command ||
         !Metal.nativeCommandBuffer ||
-        !Metal.nativeRenderEncoder ||
-        !Metal.nativeRenderPassDescriptor)
+        !Metal.nativeRenderEncoder)
     {
         return false;
     }
@@ -38,10 +49,9 @@ bool renderMetal(
     const LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
     void *native_command = Metal.nativeCommandBuffer(command);
     void *native_encoder = Metal.nativeRenderEncoder(command);
-    void *native_pass = Metal.nativeRenderPassDescriptor(command);
-    if (!native_command || !native_encoder || !native_pass) return false;
+    if (!native_command || !native_encoder) return false;
+    if (!prepareMetal(output)) return false;
 
-    ImGui_ImplMetal_NewFrame((__bridge MTLRenderPassDescriptor *)native_pass);
     ImGui_ImplMetal_RenderDrawData(
         draw_data,
         (__bridge id<MTLCommandBuffer>)native_command,
