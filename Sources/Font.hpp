@@ -14,6 +14,13 @@ enum class Space : std::uint8_t {
     World,
 };
 
+struct AtlasSettings {
+    std::string path = "Assets/Font/font.png";
+    std::uint16_t columns = 16u;
+    std::uint16_t rows = 16u;
+    float screen_cell_pixels = 8.0f;
+};
+
 struct TextComponent {
     std::string text;
     Space space = Space::Screen;
@@ -22,6 +29,14 @@ struct TextComponent {
     Renderer::Vec4 color {1.0f, 1.0f, 1.0f, 1.0f};
     bool depth_test = true;
 };
+
+void configureAtlas(
+    std::string path,
+    std::uint16_t columns,
+    std::uint16_t rows,
+    float screen_cell_pixels
+);
+const AtlasSettings& atlas();
 
 Ecs::Entity screen(
     Ecs::World& ecs,
