@@ -1,5 +1,6 @@
 #include "Renderer/Fonts/FontPass.hpp"
 
+#include "Font.hpp"
 #include "Models/Images/Image.hpp"
 #include "Renderer/Fonts/FontAtlas.hpp"
 
@@ -143,14 +144,17 @@ GLuint fontTexture()
 
     Models::Images::Image image;
     std::string error;
-    const bool loaded = Models::Images::load(FontAtlas::ASSET_PATH, &image, &error)
-        && image.width == FontAtlas::WIDTH
-        && image.height == FontAtlas::HEIGHT
-        && image.rgba.size() == static_cast<std::size_t>(FontAtlas::WIDTH * FontAtlas::HEIGHT * 4);
+    const Font::AtlasSettings& atlas = Font::atlas();
+    const bool loaded = !atlas.path.empty()
+        && Models::Images::load(atlas.path, &image, &error)
+        && image.width > 0
+        && image.height > 0
+        && image.rgba.size() == static_cast<std::size_t>(image.width) *
+            static_cast<std::size_t>(image.height) * 4u;
 
     if (!loaded) {
-        image.width = FontAtlas::WIDTH;
-        image.height = FontAtlas::HEIGHT;
+        image.width = FontAtlas::FALLBACK_WIDTH;
+        image.height = FontAtlas::FALLBACK_HEIGHT;
         image.rgba = FontAtlas::rgba();
         image.meaningful_alpha = true;
     }
