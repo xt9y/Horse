@@ -14,7 +14,7 @@ void IRenderer::render(const Ecs::World& world)
     output.global_illumination = GlobalIllumination::update(world);
     if (!renderScene(world, output)) return;
     Internal::renderFonts(world, output);
-    UI::Internal::render(output);
+    UI::Internal::render(world, output);
     present(output);
     if (output.api == Internal::GraphicsApi::OpenGL) {
         Display.updateNoMessages();
