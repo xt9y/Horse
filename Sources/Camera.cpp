@@ -59,10 +59,11 @@ void Controller::update(Ecs::World& world, float delta_seconds)
     const int mouse_dy = Mouse.getDY();
 
     if (mouse_grabbed) {
-        constexpr float mouse_sensitivity = 0.12f;
-        transform->rotation.y -= static_cast<float>(mouse_dx) * mouse_sensitivity;
-        transform->rotation.x += static_cast<float>(mouse_dy) * mouse_sensitivity;
-        transform->rotation.x = std::clamp(transform->rotation.x, -89.0f, 89.0f);
+        transform->rotation.y -= static_cast<float>(mouse_dx) * mouse_sensitivity_;
+        transform->rotation.x += static_cast<float>(mouse_dy) * mouse_sensitivity_;
+        const float minimum_pitch = std::min(minimum_pitch_, maximum_pitch_);
+        const float maximum_pitch = std::max(minimum_pitch_, maximum_pitch_);
+        transform->rotation.x = std::clamp(transform->rotation.x, minimum_pitch, maximum_pitch);
     }
 
     const Renderer::Vec3 forward = flightDirection(
@@ -71,8 +72,8 @@ void Controller::update(Ecs::World& world, float delta_seconds)
     );
     const Renderer::Vec3 right = strafeDirection(transform->rotation.y);
 
-    float speed = 100.0f * delta_seconds;
-    if (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT)) speed *= 10.0f;
+    float speed = speed_ * delta_seconds;
+    if (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT)) speed *= sprint_multiplier_;
 
     auto move = [&](const Renderer::Vec3& direction, float amount) {
         transform->position.x += direction.x * amount;
