@@ -4,7 +4,6 @@
 
 #include <lwmgl/lwmgl.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -12,7 +11,7 @@
 namespace Renderer::Debug::Internal {
 namespace {
 
-constexpr const char *kShader = R"msl(
+constexpr const char *shader = R"msl(
 #include <metal_stdlib>
 using namespace metal;
 
@@ -54,28 +53,24 @@ struct State {
     LWMGLFunction vertex = nullptr;
     LWMGLFunction fragment = nullptr;
     LWMGLRenderPipeline pipeline = nullptr;
-    LWMGLBuffer wireframe = nullptr;
-    LWMGLBuffer dynamic = nullptr;
+    LWMGLBuffer lines = nullptr;
     LWMGLBuffer uniforms = nullptr;
-    std::size_t wireframe_capacity = 0u;
-    std::size_t dynamic_capacity = 0u;
-    std::uint64_t wireframe_revision = 0u;
+    std::size_t lines_capacity = 0u;
 };
 
 State state;
 
-bool createBuffer(LWMGLBuffer& buffer, std::size_t& capacity, std::size_t bytes)
+bool resizeBuffer(LWMGLBuffer& buffer, std::size_t& capacity, std::size_t bytes)
 {
-    const std::size_t required = std::max<std::size_t>(bytes, 16u);
-    if (buffer && capacity >= required) return true;
+    if (buffer && capacity >= bytes) return true;
     if (buffer) Metal.destroyBuffer(buffer);
     buffer = nullptr;
     capacity = 0u;
 
-    const LWMGLBufferDesc desc = {required, LWMGL_STORAGE_SHARED};
+    const LWMGLBufferDesc desc = {bytes, LWMGL_STORAGE_SHARED};
     buffer = Metal.createBuffer(&desc, nullptr);
     if (!buffer) return false;
-    capacity = required;
+    capacity = bytes;
     return true;
 }
 
@@ -84,7 +79,7 @@ bool init()
     if (state.pipeline) return true;
     if (!Metal.isCreated() || !Metal.drawLines) return false;
 
-    state.library = Metal.createLibraryFromSource(kShader, std::strlen(kShader));
+    state.library = Metal.createLibraryFromSource(shader, std::strlen(shader));
     if (!state.library) return false;
     state.vertex = Metal.createFunction(state.library, "debug_vertex");
     state.fragment = Metal.createFunction(state.library, "debug_fragment");
@@ -97,60 +92,38 @@ bool init()
     if (!state.pipeline) return false;
 
     std::size_t uniform_capacity = 0u;
-    return createBuffer(state.uniforms, uniform_capacity, sizeof(float) * 16u);
-}
-
-bool upload(
-    LWMGLBuffer& buffer,
-    std::size_t& capacity,
-    const std::vector<Vertex>& vertices)
-{
-    if (vertices.empty()) return true;
-    const std::size_t bytes = vertices.size() * sizeof(Vertex);
-    if (!createBuffer(buffer, capacity, bytes)) return false;
-    return Metal.uploadBuffer(buffer, 0u, vertices.data(), bytes) == 0;
-}
-
-void draw(LWMGLCommand command, LWMGLBuffer buffer, std::size_t count)
-{
-    if (!buffer || count == 0u || count > std::numeric_limits<std::uint32_t>::max()) return;
-    if (Metal.setBuffer(command, buffer, 0u, 0u) != 0) return;
-    (void)Metal.drawLines(command, 0u, static_cast<std::uint32_t>(count));
+    return resizeBuffer(state.uniforms, uniform_capacity, sizeof(float) * 16u);
 }
 
 } // namespace
 
 void renderMetal(
-    const std::vector<Vertex>& wireframe,
-    std::uint64_t wireframe_revision,
-    const std::vector<Vertex>& dynamic,
+    const std::vector<Vertex>& lines,
     const Math::Mat4& projection,
     const Math::Mat4& view,
     Renderer::Internal::FrameOutput& output)
 {
-    if (!output.command || (wireframe.empty() && dynamic.empty())) return;
+    if (!output.command || lines.empty()) return;
     if (!init()) return;
+    if (lines.size() > std::numeric_limits<std::uint32_t>::max()) return;
 
-    const LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
-    if (wireframe_revision != state.wireframe_revision) {
-        if (!upload(state.wireframe, state.wireframe_capacity, wireframe)) return;
-        state.wireframe_revision = wireframe_revision;
-    }
-    if (!upload(state.dynamic, state.dynamic_capacity, dynamic)) return;
+    const std::size_t bytes = lines.size() * sizeof(Vertex);
+    if (!resizeBuffer(state.lines, state.lines_capacity, bytes)) return;
+    if (Metal.uploadBuffer(state.lines, 0u, lines.data(), bytes) != 0) return;
 
     const Math::Mat4 mvp = Math::multiply(projection, view);
     if (Metal.uploadBuffer(state.uniforms, 0u, mvp.data(), sizeof(float) * 16u) != 0) return;
-    if (Metal.setRenderPipeline(command, state.pipeline) != 0) return;
-    if (Metal.setBuffer(command, state.uniforms, 0u, 1u) != 0) return;
 
-    draw(command, state.wireframe, wireframe.size());
-    draw(command, state.dynamic, dynamic.size());
+    const LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
+    if (Metal.setRenderPipeline(command, state.pipeline) != 0) return;
+    if (Metal.setBuffer(command, state.lines, 0u, 0u) != 0) return;
+    if (Metal.setBuffer(command, state.uniforms, 0u, 1u) != 0) return;
+    (void)Metal.drawLines(command, 0u, static_cast<std::uint32_t>(lines.size()));
 }
 
 void shutdownMetal()
 {
-    if (state.wireframe) Metal.destroyBuffer(state.wireframe);
-    if (state.dynamic) Metal.destroyBuffer(state.dynamic);
+    if (state.lines) Metal.destroyBuffer(state.lines);
     if (state.uniforms) Metal.destroyBuffer(state.uniforms);
     if (state.pipeline) Metal.destroyRenderPipeline(state.pipeline);
     if (state.vertex) Metal.destroyFunction(state.vertex);
