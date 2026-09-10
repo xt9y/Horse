@@ -12,7 +12,6 @@ namespace Renderer::GlobalIllumination::PhotonMapping {
 namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
-constexpr float kRayEpsilon = 0.0025f;
 
 struct Cell {
     int x = 0;
@@ -204,6 +203,7 @@ DirectionalEmissionDomain directionalEmissionDomain(
 void directionalEmission(
     const DirectionalEmissionDomain& domain,
     std::uint32_t index,
+    float ray_epsilon,
     Vec3& origin,
     Vec3& direction)
 {
@@ -214,7 +214,7 @@ void directionalEmission(
         add(
             subtract(
                 domain.center,
-                multiply(domain.direction, domain.along + kRayEpsilon * 8.0f)
+                multiply(domain.direction, domain.along + ray_epsilon * 8.0f)
             ),
             multiply(domain.tangent, u * domain.across)
         ),
@@ -273,7 +273,7 @@ void PhotonMap::rebuild(
         Vec3 origin{};
         Vec3 direction{};
         if (directional) {
-            directionalEmission(domain, photon_index, origin, direction);
+            directionalEmission(domain, photon_index, settings.ray_epsilon, origin, direction);
         } else {
             origin = light.position;
             direction = fibonacciDirection(photon_index, settings.photon_count);
@@ -285,7 +285,8 @@ void PhotonMap::rebuild(
             const TraceHit hit = scene.traceClosest(
                 origin,
                 direction,
-                std::numeric_limits<float>::infinity()
+                std::numeric_limits<float>::infinity(),
+                settings.ray_epsilon
             );
             if (!hit.found) break;
 
@@ -302,7 +303,7 @@ void PhotonMap::rebuild(
             if (maximumComponent(power) <= 1.0e-7f) break;
 
             direction = cosineHemisphere(hit.normal, seed);
-            origin = add(hit.position, multiply(hit.normal, kRayEpsilon * 4.0f));
+            origin = add(hit.position, multiply(hit.normal, settings.ray_epsilon * 4.0f));
         }
     }
 

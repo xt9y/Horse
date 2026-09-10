@@ -12,8 +12,6 @@
 namespace Renderer::GlobalIllumination {
 namespace {
 
-constexpr float kRayEpsilon = 0.0025f;
-
 float component(Vec3 value, int axis)
 {
     return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
@@ -92,6 +90,7 @@ bool triangleHit(
     Vec3 origin,
     Vec3 direction,
     float maximum_distance,
+    float ray_epsilon,
     float& distance,
     float& u,
     float& v)
@@ -115,7 +114,7 @@ bool triangleHit(
     if (v < 0.0f || u + v > 1.0f) return false;
 
     distance = dot(edge2, q) * inverse_determinant;
-    return distance > kRayEpsilon && distance < maximum_distance;
+    return distance > ray_epsilon && distance < maximum_distance;
 }
 
 Vec3 textureColor(const Scenes::SceneCache& cache, int texture_index, Vec2 uv)
@@ -183,7 +182,11 @@ std::uint64_t TraceScene::signature(
     return cache_.signature(world, items);
 }
 
-TraceHit TraceScene::traceClosest(Vec3 origin, Vec3 direction, float maximum_distance) const
+TraceHit TraceScene::traceClosest(
+    Vec3 origin,
+    Vec3 direction,
+    float maximum_distance,
+    float ray_epsilon) const
 {
     TraceHit hit;
     hit.distance = maximum_distance;
@@ -209,7 +212,16 @@ TraceHit TraceScene::traceClosest(Vec3 origin, Vec3 direction, float maximum_dis
                 float distance = hit.distance;
                 float u = 0.0f;
                 float v = 0.0f;
-                if (!triangleHit(triangle, origin, direction, hit.distance, distance, u, v)) continue;
+                if (!triangleHit(
+                    triangle,
+                    origin,
+                    direction,
+                    hit.distance,
+                    ray_epsilon,
+                    distance,
+                    u,
+                    v
+                )) continue;
 
                 const float w = 1.0f - u - v;
                 Vec3 normal{
@@ -241,9 +253,13 @@ TraceHit TraceScene::traceClosest(Vec3 origin, Vec3 direction, float maximum_dis
     return hit;
 }
 
-bool TraceScene::occluded(Vec3 origin, Vec3 direction, float maximum_distance) const
+bool TraceScene::occluded(
+    Vec3 origin,
+    Vec3 direction,
+    float maximum_distance,
+    float ray_epsilon) const
 {
-    const TraceHit hit = traceClosest(origin, direction, maximum_distance);
+    const TraceHit hit = traceClosest(origin, direction, maximum_distance, ray_epsilon);
     return hit.found && hit.distance < maximum_distance;
 }
 

@@ -38,8 +38,18 @@ public:
         const std::vector<Scenes::Scene::RenderItem>& items
     ) const;
 
-    TraceHit traceClosest(Vec3 origin, Vec3 direction, float maximum_distance) const;
-    bool occluded(Vec3 origin, Vec3 direction, float maximum_distance) const;
+    TraceHit traceClosest(
+        Vec3 origin,
+        Vec3 direction,
+        float maximum_distance,
+        float ray_epsilon
+    ) const;
+    bool occluded(
+        Vec3 origin,
+        Vec3 direction,
+        float maximum_distance,
+        float ray_epsilon
+    ) const;
     Vec3 albedo(const TraceHit& hit) const;
     TraceBounds bounds() const;
     bool empty() const { return cache_.triangles().empty(); }

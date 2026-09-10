@@ -10,10 +10,11 @@
 namespace Renderer::GlobalIllumination::PhotonMapping {
 
 struct Settings {
-    bool enabled = true;
-    std::uint32_t photon_count = 4096u;
-    std::uint8_t bounces = 2u;
+    bool enabled = false;
+    std::uint32_t photon_count = 0u;
+    std::uint8_t bounces = 0u;
     float radius = 0.0f;
+    float ray_epsilon = 0.0f;
 };
 
 struct Photon {

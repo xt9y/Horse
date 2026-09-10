@@ -168,7 +168,8 @@ bool photonSettingsEqual(
     return a.enabled == b.enabled &&
         a.photon_count == b.photon_count &&
         a.bounces == b.bounces &&
-        a.radius == b.radius;
+        a.radius == b.radius &&
+        a.ray_epsilon == b.ray_epsilon;
 }
 
 Vec3 directIrradiance(const TraceHit& hit)
@@ -194,7 +195,12 @@ Vec3 directIrradiance(const TraceHit& hit)
     if (cosine <= 0.0f) return {};
 
     const Vec3 shadow_origin = add(hit.position, multiply(hit.normal, tuning.ray_epsilon));
-    if (state.trace_scene.occluded(shadow_origin, light_direction, shadow_distance)) return {};
+    if (state.trace_scene.occluded(
+        shadow_origin,
+        light_direction,
+        shadow_distance,
+        tuning.ray_epsilon
+    )) return {};
 
     return multiply(
         clampPositive(state.light.color),
@@ -309,7 +315,8 @@ void solveProbe(std::size_t probe_index)
         const TraceHit hit = state.trace_scene.traceClosest(
             origin,
             direction,
-            std::numeric_limits<float>::infinity()
+            std::numeric_limits<float>::infinity(),
+            tuning.ray_epsilon
         );
         if (!hit.found) continue;
 
@@ -521,6 +528,7 @@ const Field *update(const Ecs::World& world)
     );
     photon_settings.bounces = bounces;
     photon_settings.radius = std::max(settings.component.photon_radius, 0.0f);
+    photon_settings.ray_epsilon = tuning.ray_epsilon;
 
     const bool bounce_changed = bounces != state.bounces;
     const bool photon_changed = !photonSettingsEqual(photon_settings, state.photon_settings);
