@@ -4,6 +4,8 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Components.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace Physics {
@@ -31,9 +33,24 @@ struct RaycastHit {
     float distance = 0.0f;
 };
 
+struct SpatialStats {
+    std::size_t colliders = 0u;
+    std::size_t nodes = 0u;
+    std::uint64_t rebuilds = 0u;
+};
+
 bool raycast(
     const Ecs::World& world,
     Renderer::Vec3 origin,
+    Renderer::Vec3 direction,
+    float maximum_distance,
+    RaycastHit *hit = nullptr
+);
+
+bool sphereCast(
+    const Ecs::World& world,
+    Renderer::Vec3 origin,
+    float radius,
     Renderer::Vec3 direction,
     float maximum_distance,
     RaycastHit *hit = nullptr
@@ -52,6 +69,8 @@ void overlapAabb(
     Renderer::Vec3 maximum,
     std::vector<Ecs::Entity>& out
 );
+
+SpatialStats spatialStats(const Ecs::World& world);
 
 } // namespace Physics
 
