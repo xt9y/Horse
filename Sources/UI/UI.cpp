@@ -71,6 +71,12 @@ bool init()
         return false;
     }
 
+    if (!activateBackend(Internal::Backend::OpenGL)) {
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        return false;
+    }
+
     ready = true;
     return true;
 }
@@ -97,6 +103,8 @@ void beginFrame()
 
     if (frame_active) ImGui::EndFrame();
     ImGui_ImplGlfw_NewFrame();
+    if (backend == Internal::Backend::OpenGL)
+        Internal::newFrameOpenGL();
     ImGui::NewFrame();
     frame_active = true;
 }
@@ -143,7 +151,14 @@ void render(Renderer::Internal::FrameOutput& output)
     frame_active = false;
 
     const Backend requested = backendFor(output.api);
-    if (!activateBackend(requested)) return;
+    if (requested != backend) {
+        if (!activateBackend(requested)) return;
+#ifdef __APPLE__
+        if (backend == Backend::Metal)
+            (void)prepareMetal(output);
+#endif
+        return;
+    }
 
     ImDrawData *draw_data = ImGui::GetDrawData();
     if (!draw_data) return;
