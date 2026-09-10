@@ -31,7 +31,6 @@ void renderOpenGL(
     Renderer::Internal::FrameOutput& output)
 {
     (void)wireframe_revision;
-    (void)output;
     if (wireframe.empty() && dynamic.empty()) return;
 
     glPushAttrib(GL_ALL_ATTRIB_BITS);
@@ -42,8 +41,12 @@ void renderOpenGL(
     glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glEnable(GL_DEPTH_TEST);
-    glDepthFunc(GL_LEQUAL);
+    if (output.depth == Renderer::Internal::DepthSource::Native) {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LEQUAL);
+    } else {
+        glDisable(GL_DEPTH_TEST);
+    }
     glDepthMask(GL_FALSE);
     glLineWidth(1.0f);
 
