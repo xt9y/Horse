@@ -15,10 +15,10 @@ enum class Space : std::uint8_t {
 };
 
 struct AtlasSettings {
-    std::string path = "Assets/Font/font.png";
-    std::uint16_t columns = 16u;
-    std::uint16_t rows = 16u;
-    float screen_cell_pixels = 8.0f;
+    std::string path;
+    std::uint16_t columns = 0u;
+    std::uint16_t rows = 0u;
+    float screen_cell_pixels = 0.0f;
 };
 
 struct TextComponent {
