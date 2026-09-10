@@ -3,8 +3,10 @@
 #include "Camera.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Renderer/Hierarchy.hpp"
+#include "Renderer/Lod.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace Renderer::Scenes::Scene {
 namespace {
@@ -22,6 +24,37 @@ Transform resolvedTransform(const Ecs::World& world, Ecs::Entity entity, const T
 {
     Transform result{};
     return Hierarchy::worldTransform(world, entity, &result) ? result : local;
+}
+
+float distanceSquared(Vec3 a, Vec3 b)
+{
+    const float x = a.x - b.x;
+    const float y = a.y - b.y;
+    const float z = a.z - b.z;
+    return x * x + y * y + z * z;
+}
+
+MeshComponent selectedMesh(
+    const Ecs::World& world,
+    Ecs::Entity entity,
+    const MeshComponent& base,
+    Vec3 world_position,
+    const CameraState& camera)
+{
+    MeshComponent selected = base;
+    const LodGroup *group = world.get<LodGroup>(entity);
+    if (!group || group->levels.empty() || !camera.valid) return selected;
+
+    const float distance = std::sqrt(distanceSquared(world_position, camera.transform.position));
+    float selected_threshold = -1.0f;
+    for (const LodLevel& level : group->levels) {
+        const float threshold = std::max(level.minimum_distance, 0.0f);
+        if (level.mesh == UINT32_MAX || distance < threshold || threshold < selected_threshold) continue;
+        selected.mesh = level.mesh;
+        if (level.material != UINT32_MAX) selected.material = level.material;
+        selected_threshold = threshold;
+    }
+    return selected;
 }
 
 } // namespace
@@ -64,6 +97,7 @@ LightState lightState(const Ecs::World& world)
 void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
 {
     out.clear();
+    const CameraState camera = cameraState(world);
 
     for (const Ecs::Entity entity : world.entities()) {
         const RenderableComponent* renderable = world.get<RenderableComponent>(entity);
@@ -73,15 +107,23 @@ void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
         const Transform* transform = world.get<Transform>(entity);
         if (!mesh_component || !transform) continue;
 
-        const Models::MeshData* mesh = Models::mesh(mesh_component->mesh);
+        const Transform world_transform = resolvedTransform(world, entity, *transform);
+        const MeshComponent selected = selectedMesh(
+            world,
+            entity,
+            *mesh_component,
+            world_transform.position,
+            camera
+        );
+        const Models::MeshData* mesh = Models::mesh(selected.mesh);
         if (!mesh) continue;
 
         out.push_back(RenderItem{
             .entity = entity,
-            .transform = TransformState{resolvedTransform(world, entity, *transform), true},
-            .mesh_component = mesh_component,
+            .transform = TransformState{world_transform, true},
+            .mesh_component = MeshState{selected, true},
             .mesh = mesh,
-            .material = Models::material(mesh_component->material),
+            .material = Models::material(selected.material),
         });
     }
 

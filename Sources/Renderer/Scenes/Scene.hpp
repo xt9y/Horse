@@ -33,10 +33,19 @@ struct TransformState {
     const Transform* operator->() const { return valid ? &value : nullptr; }
 };
 
+struct MeshState {
+    MeshComponent value{};
+    bool valid = false;
+
+    explicit operator bool() const { return valid; }
+    const MeshComponent& operator*() const { return value; }
+    const MeshComponent* operator->() const { return valid ? &value : nullptr; }
+};
+
 struct RenderItem {
     Ecs::Entity entity = Ecs::INVALID_ENTITY;
     TransformState transform{};
-    const MeshComponent* mesh_component = nullptr;
+    MeshState mesh_component{};
     const Models::MeshData* mesh = nullptr;
     const Models::MaterialData* material = nullptr;
 };
