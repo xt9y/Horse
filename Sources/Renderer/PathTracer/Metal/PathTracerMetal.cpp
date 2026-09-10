@@ -440,9 +440,18 @@ bool PathTracer::init()
 bool PathTracer::activate()
 {
     if (!impl_ || !impl_->initialized || !Metal.isCreated()) return false;
-    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() != 0) return true;
-    if (!Metal.attachSurface || Metal.attachSurface(Display.getNativeWindow()) != 0) {
-        std::fprintf(stderr, "[PathTracer]: Metal surface activation failed: %s\n", lwmglGetLastError());
+    if (!Metal.isSurfaceAttached || Metal.isSurfaceAttached() == 0) {
+        if (!Metal.attachSurface || Metal.attachSurface(Display.getNativeWindow()) != 0) {
+            std::fprintf(stderr, "[PathTracer]: Metal surface activation failed: %s\n", lwmglGetLastError());
+            return false;
+        }
+    }
+    if (Metal.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)) != 0)
+    {
+        std::fprintf(stderr, "[PathTracer]: Metal surface resize failed: %s\n", lwmglGetLastError());
+        if (Metal.detachSurface) Metal.detachSurface();
         return false;
     }
     return true;
@@ -465,13 +474,15 @@ void PathTracer::resize(int width, int height)
     impl_->updateTraceResolution();
 
     if (!impl_->initialized) return;
-    if (Metal.resize(
-            static_cast<std::uint32_t>(impl_->width),
-            static_cast<std::uint32_t>(impl_->height)) != 0)
-    {
-        std::fprintf(stderr, "[PathTracer]: Metal resize failed: %s\n", lwmglGetLastError());
-        shutdown();
-        return;
+    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() != 0) {
+        if (Metal.resize(
+                static_cast<std::uint32_t>(impl_->width),
+                static_cast<std::uint32_t>(impl_->height)) != 0)
+        {
+            std::fprintf(stderr, "[PathTracer]: Metal resize failed: %s\n", lwmglGetLastError());
+            shutdown();
+            return;
+        }
     }
 
     if (impl_->trace_width == previous_width && impl_->trace_height == previous_height) {

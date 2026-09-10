@@ -479,9 +479,18 @@ bool RayTracer::init()
 bool RayTracer::activate()
 {
     if (!impl_ || !impl_->initialized || !Metal.isCreated()) return false;
-    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() != 0) return true;
-    if (!Metal.attachSurface || Metal.attachSurface(Display.getNativeWindow()) != 0) {
-        std::fprintf(stderr, "[RayTracer]: Metal surface activation failed: %s\n", lwmglGetLastError());
+    if (!Metal.isSurfaceAttached || Metal.isSurfaceAttached() == 0) {
+        if (!Metal.attachSurface || Metal.attachSurface(Display.getNativeWindow()) != 0) {
+            std::fprintf(stderr, "[RayTracer]: Metal surface activation failed: %s\n", lwmglGetLastError());
+            return false;
+        }
+    }
+    if (Metal.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)) != 0)
+    {
+        std::fprintf(stderr, "[RayTracer]: Metal surface resize failed: %s\n", lwmglGetLastError());
+        if (Metal.detachSurface) Metal.detachSurface();
         return false;
     }
     return true;
@@ -503,12 +512,15 @@ void RayTracer::resize(int width, int height)
     const int previous_height = impl_->trace_height;
     impl_->updateResolution();
     if (!impl_->initialized) return;
-    if (Metal.resize(
-            static_cast<std::uint32_t>(impl_->width),
-            static_cast<std::uint32_t>(impl_->height)) != 0)
-    {
-        shutdown();
-        return;
+    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() != 0) {
+        if (Metal.resize(
+                static_cast<std::uint32_t>(impl_->width),
+                static_cast<std::uint32_t>(impl_->height)) != 0)
+        {
+            std::fprintf(stderr, "[RayTracer]: Metal resize failed: %s\n", lwmglGetLastError());
+            shutdown();
+            return;
+        }
     }
     if (previous_width == impl_->trace_width && previous_height == impl_->trace_height) return;
     impl_->destroyTargets();
