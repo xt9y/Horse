@@ -299,6 +299,7 @@ struct PathTracer::Impl {
             scene.nodes().size(),
             scene.triangles().size(),
             scene.materials().size(),
+            Systems::SceneCache::opacityCutoff(),
             progressive.frameIndex(),
             progressive.resetPending(),
             progressive.cameraMoving()

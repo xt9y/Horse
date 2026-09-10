@@ -101,6 +101,7 @@ struct PathTracer::Impl {
         GLint light_position = -1;
         GLint light_color = -1;
         GLint light_intensity = -1;
+        GLint alpha_cutoff = -1;
         std::array<GLint, Systems::OpenGLSceneResources::MaximumTextureSlots> textures{};
     };
 
@@ -222,6 +223,7 @@ struct PathTracer::Impl {
         trace_uniforms.light_position = trace_program.uniform("uLightPosition");
         trace_uniforms.light_color = trace_program.uniform("uLightColor");
         trace_uniforms.light_intensity = trace_program.uniform("uLightIntensity");
+        trace_uniforms.alpha_cutoff = trace_program.uniform("uAlphaCutoff");
 
         trace_program.use();
         for (std::size_t slot = 0u; slot < trace_uniforms.textures.size(); ++slot) {
@@ -320,6 +322,7 @@ struct PathTracer::Impl {
         setVec3(trace_uniforms.light_position, light.position);
         setVec3(trace_uniforms.light_color, light.color);
         setFloat(trace_uniforms.light_intensity, light.intensity);
+        setFloat(trace_uniforms.alpha_cutoff, Systems::SceneCache::opacityCutoff());
 
         resources.bind();
         GL42.glBindImageTexture(0u, accumulation, 0, GL_FALSE, 0, GL_READ_WRITE, GL_RGBA32F);

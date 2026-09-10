@@ -62,7 +62,6 @@ constant float INF = 1.0e30f;
 constant float SH_Y00 = 0.2820947918f;
 constant float SH_Y1 = 0.4886025119f;
 constant int GI_HEADER_VEC4S = 4;
-constant float ALPHA_CUTOFF = 0.5f;
 constant int MAX_ALPHA_LAYERS = 16;
 
 float4 sampleTextureSlot(
@@ -133,7 +132,7 @@ bool alphaCutoutPass(
     if (slot >= 0 && slot < 32) {
         alpha *= sampleTextureSlot(slot, uv, textures, material_sampler).a;
     }
-    return alpha >= ALPHA_CUTOFF;
+    return alpha >= uniforms.resolution_aspect.w;
 }
 
 Hit traceClosestAlpha(

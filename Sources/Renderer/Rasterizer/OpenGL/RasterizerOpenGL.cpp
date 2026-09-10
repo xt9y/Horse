@@ -9,6 +9,7 @@
 #include "Renderer/Systems/OpenGL/Program.hpp"
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
 #include "Renderer/Systems/Scene.hpp"
+#include "Renderer/Systems/SceneCache.hpp"
 #include "Renderer/Visibility/Visibility.hpp"
 
 #include <lwcgl/glmodern.h>
@@ -211,6 +212,7 @@ struct Rasterizer::Impl {
         GLint gi_intensity = -1;
         GLint shadow_far = -1;
         GLint shadow_texel = -1;
+        GLint alpha_cutoff = -1;
         GLint model = -1;
         GLint normal_matrix = -1;
         GLint shadow_matrix[6] {-1, -1, -1, -1, -1, -1};
@@ -222,6 +224,7 @@ struct Rasterizer::Impl {
         GLint base_alpha = -1;
         GLint light_position = -1;
         GLint shadow_far = -1;
+        GLint alpha_cutoff = -1;
         GLint model = -1;
     };
 
@@ -379,6 +382,7 @@ struct Rasterizer::Impl {
         main_uniforms.gi_intensity = main_program.uniform("uGiIntensity");
         main_uniforms.shadow_far = main_program.uniform("uShadowFar");
         main_uniforms.shadow_texel = main_program.uniform("uShadowTexel");
+        main_uniforms.alpha_cutoff = main_program.uniform("uAlphaCutoff");
         main_uniforms.model = main_program.uniform("uModel");
         main_uniforms.normal_matrix = main_program.uniform("uNormalMatrix");
         main_uniforms.shadow_matrix[0] = main_program.uniform("uShadowMatrix0");
@@ -393,6 +397,7 @@ struct Rasterizer::Impl {
         shadow_uniforms.base_alpha = shadow_program.uniform("uBaseAlpha");
         shadow_uniforms.light_position = shadow_program.uniform("uLightPosition");
         shadow_uniforms.shadow_far = shadow_program.uniform("uShadowFar");
+        shadow_uniforms.alpha_cutoff = shadow_program.uniform("uAlphaCutoff");
         shadow_uniforms.model = shadow_program.uniform("uModel");
 
         main_program.use();
@@ -685,6 +690,10 @@ struct Rasterizer::Impl {
 
     void drawGeometry(bool shadow_pass)
     {
+        const float alpha_cutoff = std::clamp(Systems::SceneCache::opacityCutoff(), 0.0f, 1.0f);
+        if (shadow_pass) setFloat(shadow_uniforms.alpha_cutoff, alpha_cutoff);
+        else setFloat(main_uniforms.alpha_cutoff, alpha_cutoff);
+
         for (const Systems::Scene::RenderItem& item : render_items) {
             if (!itemVisible(item, shadow_pass)) continue;
 
@@ -693,7 +702,7 @@ struct Rasterizer::Impl {
 
             const Models::MaterialData* material = item.material;
             const float opacity = material ? std::clamp(material->opacity, 0.0f, 1.0f) : 1.0f;
-            if (opacity < 0.5f) continue;
+            if (opacity < alpha_cutoff) continue;
 
             const bool requested_texture = material && material->diffuse_texture != Models::INVALID_TEXTURE;
             const unsigned int texture_id = requested_texture ? textureFor(material->diffuse_texture) : 0u;

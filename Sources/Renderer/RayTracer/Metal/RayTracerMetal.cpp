@@ -360,6 +360,7 @@ struct RayTracer::Impl {
             0u,
             scene.triangles().size(),
             scene.materials().size(),
+            Systems::SceneCache::opacityCutoff(),
             0u,
             false,
             false

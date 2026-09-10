@@ -74,7 +74,6 @@ constant uint RESET_PHASE_GRID = 1u;
 constant uint MOVING_PHASE_GRID = 4u;
 constant uint MOVING_DEPTH_BLOCK = 2u;
 constant int GI_HEADER_VEC4S = 4;
-constant float ALPHA_CUTOFF = 0.5f;
 
 uint hashUint(uint value)
 {
@@ -273,7 +272,7 @@ bool alphaCutoutPass(
         float4 texel = sampleTextureSlot(slot, uv, textures, material_sampler);
         alpha *= texel.a;
     }
-    return alpha >= ALPHA_CUTOFF;
+    return alpha >= uniforms.resolution_aspect.w;
 }
 
 Hit traceClosestAlpha(

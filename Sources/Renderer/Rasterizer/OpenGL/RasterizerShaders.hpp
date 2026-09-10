@@ -51,6 +51,7 @@ uniform vec3 uGiMaximum;
 uniform float uGiIntensity;
 uniform float uShadowFar;
 uniform float uShadowTexel;
+uniform float uAlphaCutoff;
 uniform mat4 uShadowMatrix0;
 uniform mat4 uShadowMatrix1;
 uniform mat4 uShadowMatrix2;
@@ -65,7 +66,6 @@ varying vec2 vUv;
 const float PI = 3.14159265358979323846;
 const float SH_Y00 = 0.2820947918;
 const float SH_Y1 = 0.4886025119;
-const float ALPHA_CUTOFF = 0.5;
 
 float decodeDepth(vec3 encoded)
 {
@@ -161,7 +161,7 @@ void main()
 {
     vec4 texel = uHasTexture != 0 ? texture2D(uDiffuse, vUv) : vec4(1.0);
     float alpha = clamp(uBaseColor.a * texel.a, 0.0, 1.0);
-    if (alpha < ALPHA_CUTOFF) discard;
+    if (alpha < uAlphaCutoff) discard;
 
     vec3 normal = normalize(vWorldNormal);
     vec3 direct = vec3(0.0);
@@ -218,11 +218,10 @@ uniform int uHasTexture;
 uniform float uBaseAlpha;
 uniform vec3 uLightPosition;
 uniform float uShadowFar;
+uniform float uAlphaCutoff;
 
 varying vec3 vWorldPosition;
 varying vec2 vUv;
-
-const float ALPHA_CUTOFF = 0.5;
 
 vec3 encodeDepth(float depth)
 {
@@ -234,7 +233,7 @@ vec3 encodeDepth(float depth)
 void main()
 {
     vec4 texel = uHasTexture != 0 ? texture2D(uDiffuse, vUv) : vec4(1.0);
-    if (clamp(uBaseAlpha * texel.a, 0.0, 1.0) < ALPHA_CUTOFF) discard;
+    if (clamp(uBaseAlpha * texel.a, 0.0, 1.0) < uAlphaCutoff) discard;
     float depth = clamp(length(vWorldPosition - uLightPosition) / max(uShadowFar, 1.0e-4), 0.0, 0.999999);
     gl_FragColor = vec4(encodeDepth(depth), 1.0);
 }

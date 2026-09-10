@@ -35,6 +35,7 @@ MetalTraceUniforms makeMetalTraceUniforms(
     std::size_t node_count,
     std::size_t triangle_count,
     std::size_t material_count,
+    float alpha_cutoff,
     std::uint32_t frame_index,
     bool reset,
     bool camera_moving

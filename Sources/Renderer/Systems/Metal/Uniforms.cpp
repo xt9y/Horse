@@ -15,6 +15,7 @@ MetalTraceUniforms makeMetalTraceUniforms(
     std::size_t node_count,
     std::size_t triangle_count,
     std::size_t material_count,
+    float alpha_cutoff,
     std::uint32_t frame_index,
     bool reset,
     bool camera_moving)
@@ -41,7 +42,7 @@ MetalTraceUniforms makeMetalTraceUniforms(
         static_cast<float>(std::max(trace_width, 1)),
         static_cast<float>(std::max(trace_height, 1)),
         static_cast<float>(std::max(output_width, 1)) / static_cast<float>(std::max(output_height, 1)),
-        0.0f
+        std::clamp(alpha_cutoff, 0.0f, 1.0f)
     };
     uniforms.counts = {
         static_cast<std::int32_t>(node_count),

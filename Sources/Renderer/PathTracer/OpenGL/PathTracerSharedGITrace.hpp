@@ -75,6 +75,7 @@ uniform int uHasLight;
 uniform vec3 uLightPosition;
 uniform vec3 uLightColor;
 uniform float uLightIntensity;
+uniform float uAlphaCutoff;
 
 const uint LEAF_BIT = 0x80000000u;
 const float PI = 3.14159265358979323846;
@@ -89,7 +90,6 @@ const int RESET_PHASE_GRID = 1;
 const int MOVING_PHASE_GRID = 4;
 const int MOVING_DEPTH_BLOCK = 2;
 const int GI_HEADER_VEC4S = 4;
-const float ALPHA_CUTOFF = 0.5;
 
 struct Hit {
     bool found;
@@ -179,7 +179,7 @@ bool alphaCutoutPass(uint material_index, vec2 uv)
         vec4 texel = sampleTextureSlot(slot, uv);
         alpha *= texel.a;
     }
-    return alpha >= ALPHA_CUTOFF;
+    return alpha >= uAlphaCutoff;
 }
 
 Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
