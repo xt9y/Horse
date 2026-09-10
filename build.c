@@ -102,5 +102,9 @@ void build(C_Build *b)
     c_sources(renderer_systems_contract, "tests/renderer_systems_contract.cpp");
     configureContract(renderer_systems_contract);
 
+    C_Target *photon_mapping_contract = c_test(b, "photon-mapping-contract");
+    c_sources(photon_mapping_contract, "tests/photon_mapping_contract.cpp");
+    configureContract(photon_mapping_contract);
+
     c_default_target(b, library);
 }
