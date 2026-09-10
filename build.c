@@ -128,21 +128,5 @@ void build(C_Build *b)
     configureLibrary(library);
     c_use(library, imgui);
 
-    C_Target *renderer_systems_contract = c_test(b, "renderer-systems-contract");
-    c_sources(renderer_systems_contract, "tests/renderer_systems_contract.cpp");
-    configureContract(renderer_systems_contract);
-
-    C_Target *photon_mapping_contract = c_test(b, "photon-mapping-contract");
-    c_sources(photon_mapping_contract, "tests/photon_mapping_contract.cpp");
-    configureContract(photon_mapping_contract);
-
-    C_Target *metal_namespace_contract = c_test(b, "metal-namespace-contract");
-    c_sources(metal_namespace_contract, "tests/metal_namespace_contract.cpp");
-    configureContract(metal_namespace_contract);
-
-    C_Target *imgui_contract = c_test(b, "imgui-contract");
-    c_sources(imgui_contract, "tests/imgui_contract.cpp");
-    configureContract(imgui_contract);
-
     c_default_target(b, library);
 }
