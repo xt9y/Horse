@@ -41,6 +41,8 @@ public:
     virtual ~IRenderer() = default;
 
     virtual bool init() = 0;
+    virtual bool activate() { return initialized(); }
+    virtual void deactivate() {}
     virtual void resize(int width, int height) = 0;
     void render(const Ecs::World& world);
     virtual void shutdown() = 0;
