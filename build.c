@@ -47,19 +47,6 @@ static void configureLibrary(C_Target *target)
 #endif
 }
 
-static void configureContract(C_Target *target)
-{
-    c_include(target, ".");
-    c_include(target, "Sources");
-    c_flag(target, "-std=c++20");
-    c_warnings_strict(target);
-#ifdef __APPLE__
-    c_link_system(target, "c++");
-#else
-    c_link_system(target, "stdc++");
-#endif
-}
-
 void build(C_Build *b)
 {
     C_Dependency *imgui = c_git(
@@ -91,37 +78,15 @@ void build(C_Build *b)
     c_sources(library, "Sources/*.cpp");
     c_sources(library, "Sources/*/*.cpp");
     c_sources(library, "Sources/Models/*/*.cpp");
-
-    c_sources(library, "Sources/Renderer/Fonts/FontAtlas.cpp");
-    c_sources(library, "Sources/Renderer/Fonts/FontLayout.cpp");
-    c_sources(library, "Sources/Renderer/Fonts/FontPass.cpp");
-    c_sources(library, "Sources/Renderer/Fonts/OpenGL/FontPassOpenGL.cpp");
-
-    c_sources(library, "Sources/Renderer/GlobalIllumination/GlobalIllumination.cpp");
-    c_sources(library, "Sources/Renderer/GlobalIllumination/TraceScene.cpp");
-    c_sources(library, "Sources/Renderer/GlobalIllumination/PhotonMapping/PhotonMap.cpp");
-
-    c_sources(library, "Sources/Renderer/Scenes/Scene.cpp");
-    c_sources(library, "Sources/Renderer/Scenes/SceneCache.cpp");
-    c_sources(library, "Sources/Renderer/Systems/OpenGL/Program.cpp");
-    c_sources(library, "Sources/Renderer/Systems/OpenGL/TextureCache.cpp");
-    c_sources(library, "Sources/Renderer/Rasterizer/OpenGL/RasterizerOpenGL.cpp");
-    c_sources(library, "Sources/UI/OpenGL/UIOpenGL.cpp");
+    c_sources(library, "Sources/Renderer/*/*.cpp");
+    c_sources(library, "Sources/Renderer/*/OpenGL/*.cpp");
+    c_sources(library, "Sources/Renderer/GlobalIllumination/PhotonMapping/*.cpp");
+    c_sources(library, "Sources/UI/OpenGL/*.cpp");
 
 #ifdef __APPLE__
-    c_sources(library, "Sources/Renderer/Fonts/Metal/FontPassMetal.cpp");
-    c_sources(library, "Sources/Renderer/GlobalIllumination/Metal/GlobalIlluminationMetal.cpp");
-    c_sources(library, "Sources/Renderer/Scenes/Metal/SceneResources.cpp");
-    c_sources(library, "Sources/Renderer/Systems/Metal/Uniforms.cpp");
-    c_sources(library, "Sources/Renderer/PathTracer/Metal/PathTracerMetal.cpp");
-    c_sources(library, "Sources/Renderer/RayTracer/Metal/RayTracerMetal.cpp");
-    c_sources(library, "Sources/UI/Metal/UIMetal.mm");
+    c_sources(library, "Sources/Renderer/*/Metal/*.cpp");
+    c_sources(library, "Sources/UI/Metal/*.mm");
     c_flag(library, "-fobjc-arc");
-#else
-    c_sources(library, "Sources/Renderer/GlobalIllumination/OpenGL/GlobalIlluminationOpenGL.cpp");
-    c_sources(library, "Sources/Renderer/Scenes/OpenGL/SceneResources.cpp");
-    c_sources(library, "Sources/Renderer/PathTracer/OpenGL/PathTracerOpenGL.cpp");
-    c_sources(library, "Sources/Renderer/RayTracer/OpenGL/RayTracerOpenGL.cpp");
 #endif
 
     c_flag(library, "-std=c++20");
