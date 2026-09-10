@@ -85,6 +85,7 @@ void build(C_Build *b)
 
 #ifdef __APPLE__
     c_sources(library, "Sources/Renderer/*/Metal/*.cpp");
+    c_sources(library, "Sources/Renderer/*/Metal/*.mm");
     c_sources(library, "Sources/UI/Metal/*.mm");
     c_flag(library, "-fobjc-arc");
 #endif
