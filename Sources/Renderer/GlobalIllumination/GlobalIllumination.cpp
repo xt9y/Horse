@@ -393,20 +393,28 @@ void advanceCalculation()
     ++state.bounce_index;
 }
 
+void disableIlluminationState()
+{
+    state.photon_map.clear();
+    state.photon_settings.enabled = false;
+    state.photon_settings.photon_count = 0u;
+    state.photon_settings.bounces = 0u;
+    state.photon_settings.radius = 0.0f;
+    state.published = {};
+    state.working = {};
+    state.source = {};
+    state.probe_cursor = 0u;
+    state.bounce_index = 0u;
+    state.bounces = 0u;
+    state.photon_build_ms = 0.0;
+    state.calculating = false;
+}
+
 } // namespace
 
 const Field *update(const Ecs::World& world)
 {
     const SettingsState settings = settingsState(world);
-    if (!settings.valid) return nullptr;
-
-    const float intensity = std::max(settings.component.intensity, 0.0f);
-    const std::uint8_t bounces = std::clamp<std::uint8_t>(settings.component.bounces, 1u, 4u);
-    PhotonMapping::Settings photon_settings;
-    photon_settings.enabled = settings.component.photon_mapping;
-    photon_settings.photon_count = std::min(settings.component.photon_count, 262144u);
-    photon_settings.bounces = bounces;
-    photon_settings.radius = std::max(settings.component.photon_radius, 0.0f);
 
     if (state.world != &world) {
         reset();
@@ -417,13 +425,14 @@ const Field *update(const Ecs::World& world)
     bool light_changed = false;
     const std::uint64_t revision = world.changeRevision();
     if (revision != state.world_revision) {
+        const bool first_sync = state.world_revision == std::numeric_limits<std::uint64_t>::max();
         Scenes::Scene::collectRenderItems(world, state.render_items);
         const std::uint64_t geometry_signature = state.trace_scene.signature(world, state.render_items);
         const Scenes::LightState light = Scenes::lightState(Scenes::Scene::lightState(world));
         const std::uint64_t light_signature = Scenes::lightSignature(light);
 
-        geometry_changed = geometry_signature != state.geometry_signature;
-        light_changed = light_signature != state.light_signature;
+        geometry_changed = first_sync || geometry_signature != state.geometry_signature;
+        light_changed = first_sync || light_signature != state.light_signature;
         state.world_revision = revision;
         state.light = light;
 
@@ -442,6 +451,20 @@ const Field *update(const Ecs::World& world)
         }
         if (light_changed) state.light_signature = light_signature;
     }
+
+    if (!settings.valid) {
+        if (state.bounces != 0u || state.photon_map.valid() || state.published.valid() || state.calculating)
+            disableIlluminationState();
+        return nullptr;
+    }
+
+    const float intensity = std::max(settings.component.intensity, 0.0f);
+    const std::uint8_t bounces = std::clamp<std::uint8_t>(settings.component.bounces, 1u, 4u);
+    PhotonMapping::Settings photon_settings;
+    photon_settings.enabled = settings.component.photon_mapping;
+    photon_settings.photon_count = std::min(settings.component.photon_count, 262144u);
+    photon_settings.bounces = bounces;
+    photon_settings.radius = std::max(settings.component.photon_radius, 0.0f);
 
     const bool bounce_changed = bounces != state.bounces;
     const bool photon_changed = !photonSettingsEqual(photon_settings, state.photon_settings);
