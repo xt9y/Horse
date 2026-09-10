@@ -6,11 +6,11 @@
 namespace Renderer {
 
 struct PathTracerSettings {
-    bool enabled = true;
-    int resolution_divisor = 4;
-    int samples_per_frame = 1;
-    int max_bounces = 1; // Compatibility only; GI bounces live on GlobalIlluminationComponent.
-    float exposure = 1.0f;
+    bool enabled = false;
+    int resolution_divisor = 0;
+    int samples_per_frame = 0;
+    int max_bounces = 0;
+    float exposure = 0.0f;
 };
 
 class PathTracer final : public IRenderer {
@@ -30,6 +30,13 @@ public:
     bool initialized() const override;
     bool enabled() const override;
     void setEnabled(bool enabled) override;
+
+    void setResolutionDivisor(int divisor) { settings().resolution_divisor = divisor; }
+    void setSamplesPerFrame(int samples) { settings().samples_per_frame = samples; }
+    void setExposure(float exposure) { settings().exposure = exposure; }
+    int resolutionDivisor() const { return settings().resolution_divisor; }
+    int samplesPerFrame() const { return settings().samples_per_frame; }
+    float exposure() const { return settings().exposure; }
 
     PathTracerSettings& settings();
     const PathTracerSettings& settings() const;
