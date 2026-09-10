@@ -64,9 +64,19 @@ struct RayTracer::Impl {
 
     bool active() const { return initialized && settings.enabled; }
 
+    bool configured() const
+    {
+        return settings.resolution_divisor > 0;
+    }
+
     void updateResolution()
     {
-        const int divisor = std::clamp(settings.resolution_divisor, 4, 8);
+        const int divisor = settings.resolution_divisor;
+        if (divisor <= 0) {
+            trace_width = 0;
+            trace_height = 0;
+            return;
+        }
         trace_width = std::max(width / divisor, 1);
         trace_height = std::max(height / divisor, 1);
     }
@@ -77,7 +87,7 @@ struct RayTracer::Impl {
         for (const Systems::Scene::RenderItem& item : render_items) {
             const Models::MaterialData *material = item.material;
             if (!material) continue;
-            if (material->opacity < 0.999f) {
+            if (material->opacity < 1.0f) {
                 has_alpha_cutouts = true;
                 return;
             }
@@ -180,6 +190,8 @@ struct RayTracer::Impl {
 
     bool createTargets()
     {
+        if (trace_width <= 0 || trace_height <= 0) return false;
+
         const LWMGLTextureDesc output_desc = {
             static_cast<std::uint32_t>(trace_width),
             static_cast<std::uint32_t>(trace_height),
@@ -408,6 +420,10 @@ RayTracer::~RayTracer()
 bool RayTracer::init()
 {
     if (impl_->initialized) return true;
+    if (!impl_->configured()) {
+        std::fprintf(stderr, "[RayTracer]: configure the renderer before init\n");
+        return false;
+    }
     if (!Display.isCreated() || !Display.getNativeWindow()) {
         std::fprintf(stderr, "[RayTracer]: lwcgl Display must be created before Metal RayTracer\n");
         return false;
@@ -418,6 +434,7 @@ bool RayTracer::init()
     }
     if (Metal.supportsRayTracing() == 0) {
         std::fprintf(stderr, "[RayTracer]: native Metal ray tracing is not supported by this device\n");
+        Metal.destroy();
         return false;
     }
 
@@ -458,6 +475,25 @@ bool RayTracer::init()
     return true;
 }
 
+bool RayTracer::activate()
+{
+    if (!impl_ || !impl_->initialized || !Metal.isCreated()) return false;
+    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() != 0) return true;
+    if (!Metal.attachSurface || Metal.attachSurface(Display.getNativeWindow()) != 0) {
+        std::fprintf(stderr, "[RayTracer]: Metal surface activation failed: %s\n", lwmglGetLastError());
+        return false;
+    }
+    return true;
+}
+
+void RayTracer::deactivate()
+{
+    if (!impl_ || !impl_->initialized || !Metal.isCreated()) return;
+    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() == 0) return;
+    Metal.waitIdle();
+    if (Metal.detachSurface) Metal.detachSurface();
+}
+
 void RayTracer::resize(int width, int height)
 {
     impl_->width = std::max(width, 1);
@@ -480,7 +516,7 @@ void RayTracer::resize(int width, int height)
 
 bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
-    if (!impl_->initialized) return false;
+    if (!impl_->initialized || !Metal.isSurfaceAttached || Metal.isSurfaceAttached() == 0) return false;
     output.api = Internal::GraphicsApi::Metal;
     output.depth = Internal::DepthSource::None;
     output.width = impl_->width;
@@ -538,6 +574,7 @@ void RayTracer::present(Internal::FrameOutput& output)
 void RayTracer::shutdown()
 {
     if (!impl_) return;
+    deactivate();
     if (Metal.isCreated()) Metal.waitIdle();
     Internal::shutdownFonts(Internal::GraphicsApi::Metal);
     Internal::shutdownGlobalIlluminationMetal();
