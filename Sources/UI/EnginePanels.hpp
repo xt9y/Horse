@@ -6,7 +6,15 @@
 #include "Renderer/RayTracer/RayTracer.hpp"
 #include "UI/RendererSelector.hpp"
 
+#include <cstddef>
+
 namespace UI {
+
+struct SceneSelection {
+    const char *const *names = nullptr;
+    std::size_t count = 0u;
+    std::size_t selected = 0u;
+};
 
 void enginePanels(
     Ecs::World& world,
@@ -14,7 +22,7 @@ void enginePanels(
     Renderer::PathTracer& path_tracer,
     RendererChoice& renderer,
     const RendererAvailability& available,
-    const char *scene_name
+    SceneSelection& scenes
 );
 
 } // namespace UI
