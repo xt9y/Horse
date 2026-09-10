@@ -46,6 +46,8 @@ void setBoundsMargin(float scale, float minimum);
 void setRayEpsilon(float value);
 void setMaximumBounces(std::uint8_t value);
 void setMaximumPhotonCount(std::uint32_t value);
+void setPaused(bool value);
+bool paused();
 
 const Field *update(const Ecs::World& world);
 Vec3 sample(const Field *field, Vec3 position, Vec3 normal);
