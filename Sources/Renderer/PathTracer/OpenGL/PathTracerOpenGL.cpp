@@ -98,6 +98,7 @@ struct PathTracer::Impl {
         GLint frame_index = -1;
         GLint reset_accumulation = -1;
         GLint camera_moving = -1;
+        GLint visibility_all = -1;
         GLint stationary_phase_grid = -1;
         GLint reset_phase_grid = -1;
         GLint moving_phase_grid = -1;
@@ -127,11 +128,14 @@ struct PathTracer::Impl {
     std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t scene_signature = 0u;
     std::uint64_t visibility_signature = 0u;
+    std::uint64_t visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
+    bool visibility_all = true;
 
     Systems::SceneCache scene;
     Systems::OpenGLSceneResources resources;
     Systems::ProgressiveState progressive;
     std::vector<Systems::Scene::RenderItem> render_items;
+    std::vector<std::uint32_t> visibility_mask;
 
     Systems::OpenGL::Program trace_program;
     Systems::OpenGL::Program present_program;
@@ -231,6 +235,7 @@ struct PathTracer::Impl {
         trace_uniforms.frame_index = trace_program.uniform("uFrameIndex");
         trace_uniforms.reset_accumulation = trace_program.uniform("uResetAccumulation");
         trace_uniforms.camera_moving = trace_program.uniform("uCameraMoving");
+        trace_uniforms.visibility_all = trace_program.uniform("uVisibilityAll");
         trace_uniforms.stationary_phase_grid = trace_program.uniform("uStationaryPhaseGrid");
         trace_uniforms.reset_phase_grid = trace_program.uniform("uResetPhaseGrid");
         trace_uniforms.moving_phase_grid = trace_program.uniform("uMovingPhaseGrid");
@@ -283,19 +288,11 @@ struct PathTracer::Impl {
     bool syncSceneIfNeeded(const Ecs::World& world)
     {
         const std::uint64_t revision = world.changeRevision();
-        const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
-        const std::uint64_t current_visibility_signature =
-            Systems::cameraSignature(camera) ^
-            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
-            static_cast<std::uint32_t>(height);
-        if (revision == world_revision &&
-            current_visibility_signature == visibility_signature &&
-            resources.ready())
-        {
+        if (revision == world_revision && resources.ready()) {
             return true;
         }
 
-        Visibility::system().collectVisibleRenderItems(world, width, height, render_items);
+        Systems::Scene::collectRenderItems(world, render_items);
         const std::uint64_t signature = scene.signature(world, render_items);
         if (signature != scene_signature || !resources.ready()) {
             std::string error;
@@ -314,6 +311,7 @@ struct PathTracer::Impl {
             }
             scene_signature = signature;
             progressive.sceneChanged();
+            visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
             std::fprintf(
                 stderr,
                 "[PathTracer]: world cache %zu triangles, %zu nodes, %zu materials\n",
@@ -323,7 +321,30 @@ struct PathTracer::Impl {
             );
         }
         world_revision = revision;
-        visibility_signature = current_visibility_signature;
+        return true;
+    }
+
+    bool syncVisibilityIfNeeded(const Ecs::World& world)
+    {
+        const std::uint64_t revision = world.changeRevision();
+        const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
+        const std::uint64_t current_signature =
+            Systems::cameraSignature(camera) ^
+            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
+            static_cast<std::uint32_t>(height);
+        if (revision == visibility_world_revision && current_signature == visibility_signature)
+            return true;
+
+        const Visibility::Result visibility = Visibility::system().buildEntityMask(
+            world, width, height, visibility_mask);
+        std::string error;
+        if (!resources.syncVisibility(visibility_mask, &error)) {
+            std::fprintf(stderr, "[PathTracer]: OpenGL visibility upload failed: %s\n", error.c_str());
+            return false;
+        }
+        visibility_all = visibility.culled.empty();
+        visibility_world_revision = revision;
+        visibility_signature = current_signature;
         return true;
     }
 
@@ -346,6 +367,7 @@ struct PathTracer::Impl {
         setInt(trace_uniforms.frame_index, static_cast<int>(progressive.frameIndex()));
         setInt(trace_uniforms.reset_accumulation, progressive.resetPending() ? 1 : 0);
         setInt(trace_uniforms.camera_moving, progressive.cameraMoving() ? 1 : 0);
+        setInt(trace_uniforms.visibility_all, visibility_all ? 1 : 0);
         setInt(trace_uniforms.stationary_phase_grid, settings.stationary_phase_grid);
         setInt(trace_uniforms.reset_phase_grid, settings.reset_phase_grid);
         setInt(trace_uniforms.moving_phase_grid, settings.moving_phase_grid);
@@ -502,7 +524,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         if (!impl_->createTraceTargets()) return false;
     }
 
-    if (!impl_->syncSceneIfNeeded(world)) return false;
+    if (!impl_->syncSceneIfNeeded(world) || !impl_->syncVisibilityIfNeeded(world)) return false;
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
     if (!camera.valid) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -542,9 +564,12 @@ void PathTracer::shutdown()
     impl_->destroyTraceTargets();
     impl_->destroyPrograms();
     impl_->render_items.clear();
+    impl_->visibility_mask.clear();
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->scene_signature = 0u;
     impl_->visibility_signature = 0u;
+    impl_->visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
+    impl_->visibility_all = true;
     impl_->initialized = false;
     impl_->progressive.reset();
 }

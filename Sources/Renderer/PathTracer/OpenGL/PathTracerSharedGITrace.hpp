@@ -33,6 +33,7 @@ layout(std430, binding = 0) readonly buffer Nodes { Node nodes[]; };
 layout(std430, binding = 1) readonly buffer Triangles { Triangle triangles[]; };
 layout(std430, binding = 4) readonly buffer Materials { Material materials[]; };
 layout(std430, binding = 5) readonly buffer SharedGiField { vec4 gi_data[]; };
+layout(std430, binding = 6) readonly buffer EntityVisibility { uint entity_visibility[]; };
 
 layout(rgba32f, binding = 0) uniform image2D uAccumulation;
 layout(rgba32f, binding = 1) uniform image2D uPrimaryDepth;
@@ -70,6 +71,7 @@ uniform int uSampleBase;
 uniform int uFrameIndex;
 uniform int uResetAccumulation;
 uniform int uCameraMoving;
+uniform int uVisibilityAll;
 uniform int uStationaryPhaseGrid;
 uniform int uResetPhaseGrid;
 uniform int uMovingPhaseGrid;
@@ -182,6 +184,11 @@ bool alphaCutoutPass(uint material_index, vec2 uv)
     return alpha >= uAlphaCutoff;
 }
 
+bool triangleVisible(Triangle triangle)
+{
+    return uVisibilityAll != 0 || entity_visibility[floatBitsToUint(triangle.p1.w)] != 0u;
+}
+
 Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
 {
     Hit best;
@@ -211,6 +218,7 @@ Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
             uint end = min(node.first + count, uint(uTriangleCount));
             for (uint triangle_index = node.first; triangle_index < end; ++triangle_index) {
                 Triangle triangle = triangles[triangle_index];
+                if (!triangleVisible(triangle)) continue;
                 float distance = best.distance;
                 vec3 barycentric;
                 if (!hitTriangle(origin, direction, triangle, distance, barycentric)) continue;
@@ -285,6 +293,7 @@ bool traceAny(vec3 origin, vec3 direction, float max_distance)
             uint end = min(node.first + count, uint(uTriangleCount));
             for (uint triangle_index = node.first; triangle_index < end; ++triangle_index) {
                 Triangle triangle = triangles[triangle_index];
+                if (!triangleVisible(triangle)) continue;
                 float distance = max_distance;
                 vec3 barycentric;
                 if (!hitTriangle(origin, direction, triangle, distance, barycentric)) continue;

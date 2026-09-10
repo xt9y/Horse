@@ -4,7 +4,9 @@
 #include "Renderer/Scenes/SceneCache.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Renderer::Scenes::OpenGL {
 
@@ -19,6 +21,7 @@ public:
     SceneResources& operator=(const SceneResources&) = delete;
 
     bool sync(const Renderer::Scenes::SceneCache& scene, std::string *error = nullptr);
+    bool syncVisibility(const std::vector<std::uint32_t>& visibility, std::string *error = nullptr);
     void bind();
     void clear();
 

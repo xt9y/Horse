@@ -329,7 +329,7 @@ bool SceneCache::sync(
 
             GpuTriangle triangle;
             triangle.p0 = {p0.x, p0.y, p0.z, std::bit_cast<float>(material_index)};
-            triangle.p1 = {p1.x, p1.y, p1.z, 0.0f};
+            triangle.p1 = {p1.x, p1.y, p1.z, std::bit_cast<float>(item.entity)};
             triangle.p2 = {p2.x, p2.y, p2.z, 0.0f};
             triangle.n0 = {n0.x, n0.y, n0.z, 0.0f};
             triangle.n1 = {n1.x, n1.y, n1.z, 0.0f};

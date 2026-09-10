@@ -17,6 +17,8 @@ struct SceneResources::Impl {
     LWMGLBuffer node_buffer = nullptr;
     LWMGLBuffer triangle_buffer = nullptr;
     LWMGLBuffer material_buffer = nullptr;
+    LWMGLBuffer visibility_buffer = nullptr;
+    std::size_t visibility_capacity = 0u;
     LWMGLTexture white_texture = nullptr;
     std::unordered_map<Models::TextureHandle, LWMGLTexture> texture_cache;
     std::array<LWMGLTexture, MaximumTextureSlots> texture_slots{};
@@ -67,9 +69,12 @@ struct SceneResources::Impl {
         if (node_buffer) ::Metal.destroyBuffer(node_buffer);
         if (triangle_buffer) ::Metal.destroyBuffer(triangle_buffer);
         if (material_buffer) ::Metal.destroyBuffer(material_buffer);
+        if (visibility_buffer) ::Metal.destroyBuffer(visibility_buffer);
         node_buffer = nullptr;
         triangle_buffer = nullptr;
         material_buffer = nullptr;
+        visibility_buffer = nullptr;
+        visibility_capacity = 0u;
 
         for (const auto& entry : texture_cache) {
             if (entry.second) ::Metal.destroyTexture(entry.second);
@@ -153,12 +158,44 @@ bool SceneResources::sync(const Renderer::Scenes::SceneCache& scene, std::string
     return true;
 }
 
+bool SceneResources::syncVisibility(
+    const std::vector<std::uint32_t>& visibility,
+    std::string *error)
+{
+    if (!impl_) return false;
+
+    std::vector<std::uint32_t> padded = visibility;
+    if (padded.size() < 4u) padded.resize(4u, 0u);
+    const std::size_t bytes = padded.size() * sizeof(std::uint32_t);
+
+    if (!impl_->visibility_buffer || impl_->visibility_capacity < padded.size()) {
+        const LWMGLBufferDesc desc = {bytes, LWMGL_STORAGE_SHARED};
+        LWMGLBuffer replacement = ::Metal.createBuffer(&desc, padded.data());
+        if (!replacement) {
+            if (error) *error = "failed to create Metal visibility buffer";
+            return false;
+        }
+        if (impl_->visibility_buffer) ::Metal.destroyBuffer(impl_->visibility_buffer);
+        impl_->visibility_buffer = replacement;
+        impl_->visibility_capacity = padded.size();
+        return true;
+    }
+
+    if (::Metal.uploadBuffer(impl_->visibility_buffer, 0u, padded.data(), bytes) != 0) {
+        if (error) *error = "failed to upload Metal visibility buffer";
+        return false;
+    }
+    return true;
+}
+
 bool SceneResources::bind(LWMGLCommand command, std::uint32_t first_texture_binding) const
 {
     if (!impl_ || !impl_->ready || !command) return false;
     bool ok = ::Metal.setBuffer(command, impl_->node_buffer, 0u, 0u) == 0;
     if (ok) ok = ::Metal.setBuffer(command, impl_->triangle_buffer, 0u, 1u) == 0;
     if (ok) ok = ::Metal.setBuffer(command, impl_->material_buffer, 0u, 2u) == 0;
+    if (ok) ok = impl_->visibility_buffer &&
+        ::Metal.setBuffer(command, impl_->visibility_buffer, 0u, 6u) == 0;
     for (std::size_t slot = 0u; ok && slot < impl_->texture_slots.size(); ++slot) {
         ok = ::Metal.setTexture(
             command,

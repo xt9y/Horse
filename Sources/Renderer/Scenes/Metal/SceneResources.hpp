@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Renderer::Scenes::Metal {
 
@@ -25,6 +26,7 @@ public:
 
     bool init(std::string *error = nullptr);
     bool sync(const Renderer::Scenes::SceneCache& scene, std::string *error = nullptr);
+    bool syncVisibility(const std::vector<std::uint32_t>& visibility, std::string *error = nullptr);
     bool bind(LWMGLCommand command, std::uint32_t first_texture_binding = 1u) const;
     void clear();
 

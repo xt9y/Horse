@@ -16,6 +16,7 @@ struct SceneResources::Impl {
     GLuint node_buffer = 0u;
     GLuint triangle_buffer = 0u;
     GLuint material_buffer = 0u;
+    GLuint visibility_buffer = 0u;
     Systems::OpenGL::TextureCache textures;
     std::array<GLuint, MaximumTextureSlots> texture_slots{};
     bool ready = false;
@@ -45,7 +46,7 @@ struct SceneResources::Impl {
     void clear()
     {
         if (GL15.glDeleteBuffers) {
-            const GLuint buffers[] = {node_buffer, triangle_buffer, material_buffer};
+            const GLuint buffers[] = {node_buffer, triangle_buffer, material_buffer, visibility_buffer};
             for (GLuint buffer : buffers) {
                 if (buffer != 0u) GL15.glDeleteBuffers(1, &buffer);
             }
@@ -53,6 +54,7 @@ struct SceneResources::Impl {
         node_buffer = 0u;
         triangle_buffer = 0u;
         material_buffer = 0u;
+        visibility_buffer = 0u;
         textures.clear();
         texture_slots.fill(0u);
         ready = false;
@@ -101,12 +103,31 @@ bool SceneResources::sync(const Renderer::Scenes::SceneCache& scene, std::string
     return true;
 }
 
+bool SceneResources::syncVisibility(
+    const std::vector<std::uint32_t>& visibility,
+    std::string *error)
+{
+    if (!impl_) return false;
+    std::vector<std::uint32_t> padded = visibility;
+    if (padded.size() < 4u) padded.resize(4u, 0u);
+    if (!impl_->uploadBuffer(
+            impl_->visibility_buffer,
+            padded.data(),
+            padded.size() * sizeof(std::uint32_t)))
+    {
+        if (error) *error = "failed to upload OpenGL visibility buffer";
+        return false;
+    }
+    return true;
+}
+
 void SceneResources::bind()
 {
     if (!impl_ || !impl_->ready) return;
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0u, impl_->node_buffer);
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1u, impl_->triangle_buffer);
     GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4u, impl_->material_buffer);
+    GL30.glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6u, impl_->visibility_buffer);
     for (std::size_t slot = 0u; slot < impl_->texture_slots.size(); ++slot) {
         GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + slot));
         glBindTexture(GL_TEXTURE_2D, impl_->texture_slots[slot]);

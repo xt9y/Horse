@@ -161,6 +161,7 @@ Hit traceClosestAlpha(
     primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
+    device const uint *entity_visibility,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 32> textures,
     sampler material_sampler)
@@ -177,7 +178,8 @@ Hit traceClosestAlpha(
     const int triangle_count = max(uniforms.counts.y, 0);
     if (triangle_count <= 0) return hit;
 
-    const bool alpha_cutouts = uniforms.counts.w != 0;
+    const bool alpha_cutouts = (uniforms.counts.w & 1) != 0;
+    const bool visibility_all = (uniforms.counts.w & 2) != 0;
     intersector<triangle_data> triangle_intersector;
     triangle_intersector.assume_geometry_type(geometry_type::triangle);
     triangle_intersector.assume_identity_transforms(true);
@@ -197,7 +199,10 @@ Hit traceClosestAlpha(
         Triangle triangle = triangles[result.primitive_id];
         float2 uv = triangleUv(triangle, result.triangle_barycentric_coord);
         uint material = as_type<uint>(triangle.p0.w);
-        if (alpha_cutouts && !alphaCutoutPass(material, uv, materials, uniforms, textures, material_sampler)) {
+        uint entity = as_type<uint>(triangle.p1.w);
+        if ((!visibility_all && entity_visibility[entity] == 0u) ||
+            (alpha_cutouts && !alphaCutoutPass(material, uv, materials, uniforms, textures, material_sampler)))
+        {
             float step = result.distance + RAY_EPSILON * 2.0f;
             travelled += step;
             current_origin += direction * step;
@@ -227,11 +232,14 @@ bool traceAnyAlpha(
     primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
+    device const uint *entity_visibility,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 32> textures,
     sampler material_sampler)
 {
-    if (uniforms.counts.w == 0) {
+    const bool alpha_cutouts = (uniforms.counts.w & 1) != 0;
+    const bool visibility_all = (uniforms.counts.w & 2) != 0;
+    if (!alpha_cutouts && visibility_all) {
         intersector<> shadow_intersector;
         shadow_intersector.assume_geometry_type(geometry_type::triangle);
         shadow_intersector.assume_identity_transforms(true);
@@ -247,6 +255,7 @@ bool traceAnyAlpha(
         acceleration_structure,
         triangles,
         materials,
+        entity_visibility,
         uniforms,
         textures,
         material_sampler
@@ -260,6 +269,7 @@ float deterministicDepthAlpha(
     primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
+    device const uint *entity_visibility,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 32> textures,
     sampler material_sampler)
@@ -281,6 +291,7 @@ float deterministicDepthAlpha(
         acceleration_structure,
         triangles,
         materials,
+        entity_visibility,
         uniforms,
         textures,
         material_sampler
@@ -379,6 +390,7 @@ float3 tracePath(
     device const Triangle *triangles,
     device const Material *materials,
     device const float4 *gi_data,
+    device const uint *entity_visibility,
     constant TraceUniforms& uniforms,
     array<texture2d<float>, 32> textures,
     sampler material_sampler)
@@ -390,6 +402,7 @@ float3 tracePath(
         acceleration_structure,
         triangles,
         materials,
+        entity_visibility,
         uniforms,
         textures,
         material_sampler
@@ -416,6 +429,7 @@ float3 tracePath(
                 acceleration_structure,
                 triangles,
                 materials,
+                entity_visibility,
                 uniforms,
                 textures,
                 material_sampler
@@ -438,6 +452,7 @@ kernel void trace_kernel(
     constant TraceUniforms& uniforms [[buffer(3)]],
     device const float4 *gi_data [[buffer(4)]],
     primitive_acceleration_structure acceleration_structure [[buffer(5)]],
+    device const uint *entity_visibility [[buffer(6)]],
     texture2d<float, access::read_write> accumulation [[texture(0)]],
     array<texture2d<float>, 32> textures [[texture(1)]],
     texture2d<float, access::write> primary_depth [[texture(33)]],
@@ -464,6 +479,7 @@ kernel void trace_kernel(
                 acceleration_structure,
                 triangles,
                 materials,
+                entity_visibility,
                 uniforms,
                 textures,
                 material_sampler
@@ -483,6 +499,7 @@ kernel void trace_kernel(
             acceleration_structure,
             triangles,
             materials,
+            entity_visibility,
             uniforms,
             textures,
             material_sampler
@@ -528,6 +545,7 @@ kernel void trace_kernel(
             triangles,
             materials,
             gi_data,
+            entity_visibility,
             uniforms,
             textures,
             material_sampler

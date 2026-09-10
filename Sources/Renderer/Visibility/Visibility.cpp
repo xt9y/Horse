@@ -191,6 +191,26 @@ Result System::collectVisibleRenderItems(
     return result;
 }
 
+Result System::buildEntityMask(
+    const Ecs::World& world,
+    int width,
+    int height,
+    std::vector<std::uint32_t>& out) const
+{
+    std::vector<Scenes::Scene::RenderItem> visible_items;
+    Result result = collectVisibleRenderItems(world, width, height, visible_items);
+
+    std::size_t size = 1u;
+    for (const Ecs::Entity entity : world.entities())
+        size = std::max(size, static_cast<std::size_t>(entity) + 1u);
+
+    out.assign(size, 0u);
+    for (const Scenes::Scene::RenderItem& item : visible_items) {
+        if (static_cast<std::size_t>(item.entity) < out.size()) out[item.entity] = 1u;
+    }
+    return result;
+}
+
 std::array<Vec3, 8> System::corners(const Frustum& frustum) const
 {
     std::array<Vec3, 8> result{};

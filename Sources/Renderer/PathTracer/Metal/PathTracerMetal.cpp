@@ -71,11 +71,14 @@ struct PathTracer::Impl {
     std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t scene_signature = 0u;
     std::uint64_t visibility_signature = 0u;
+    std::uint64_t visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
+    bool visibility_all = true;
 
     Systems::SceneCache scene;
     Systems::MetalSceneResources resources;
     Systems::ProgressiveState progressive;
     std::vector<Systems::Scene::RenderItem> render_items;
+    std::vector<std::uint32_t> visibility_mask;
 
     LWMGLLibrary shader_library = nullptr;
     LWMGLFunction trace_function = nullptr;
@@ -321,20 +324,13 @@ struct PathTracer::Impl {
     bool syncSceneIfNeeded(const Ecs::World& world)
     {
         const std::uint64_t revision = world.changeRevision();
-        const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
-        const std::uint64_t current_visibility_signature =
-            Systems::cameraSignature(camera) ^
-            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
-            static_cast<std::uint32_t>(height);
-        if (revision == world_revision &&
-            current_visibility_signature == visibility_signature &&
-            resources.ready() &&
+        if (revision == world_revision && resources.ready() &&
             (scene.triangles().empty() || acceleration_structure))
         {
             return true;
         }
 
-        Visibility::system().collectVisibleRenderItems(world, width, height, render_items);
+        Systems::Scene::collectRenderItems(world, render_items);
         updateAlphaCutoutState();
         const std::uint64_t signature = scene.signature(world, render_items);
         if (signature != scene_signature || !resources.ready() ||
@@ -364,6 +360,7 @@ struct PathTracer::Impl {
             }
             scene_signature = signature;
             progressive.sceneChanged();
+            visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
             std::fprintf(
                 stderr,
                 "[PathTracer]: Metal native AS %zu triangles, %zu materials, alpha=%s\n",
@@ -373,7 +370,30 @@ struct PathTracer::Impl {
             );
         }
         world_revision = revision;
-        visibility_signature = current_visibility_signature;
+        return true;
+    }
+
+    bool syncVisibilityIfNeeded(const Ecs::World& world)
+    {
+        const std::uint64_t revision = world.changeRevision();
+        const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
+        const std::uint64_t current_signature =
+            Systems::cameraSignature(camera) ^
+            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
+            static_cast<std::uint32_t>(height);
+        if (revision == visibility_world_revision && current_signature == visibility_signature)
+            return true;
+
+        const Visibility::Result visibility = Visibility::system().buildEntityMask(
+            world, width, height, visibility_mask);
+        std::string error;
+        if (!resources.syncVisibility(visibility_mask, &error)) {
+            std::fprintf(stderr, "[PathTracer]: Metal visibility upload failed: %s\n", error.c_str());
+            return false;
+        }
+        visibility_all = visibility.culled.empty();
+        visibility_world_revision = revision;
+        visibility_signature = current_signature;
         return true;
     }
 
@@ -423,7 +443,7 @@ struct PathTracer::Impl {
             static_cast<std::uint32_t>(settings.moving_depth_block),
         };
         trace.counts[0] = settings.samples_per_frame;
-        trace.counts[3] = has_alpha_cutouts ? 1 : 0;
+        trace.counts[3] = (has_alpha_cutouts ? 1 : 0) | (visibility_all ? 2 : 0);
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
         Systems::MetalPresentUniforms present{};
@@ -641,7 +661,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         if (!impl_->createTraceTargets()) return false;
     }
 
-    if (!impl_->syncSceneIfNeeded(world)) return false;
+    if (!impl_->syncSceneIfNeeded(world) || !impl_->syncVisibilityIfNeeded(world)) return false;
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
     if (!camera.valid || impl_->scene.triangles().empty()) {
         LWMGLCommand command = nullptr;
@@ -700,10 +720,13 @@ void PathTracer::shutdown()
     if (Metal.isCreated()) Metal.destroy();
 
     impl_->render_items.clear();
+    impl_->visibility_mask.clear();
     impl_->has_alpha_cutouts = true;
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->scene_signature = 0u;
     impl_->visibility_signature = 0u;
+    impl_->visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
+    impl_->visibility_all = true;
     impl_->initialized = false;
     impl_->progressive.reset();
 }

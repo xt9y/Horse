@@ -50,6 +50,11 @@ public:
         int width,
         int height,
         std::vector<Scenes::Scene::RenderItem>& out) const;
+    Result buildEntityMask(
+        const Ecs::World& world,
+        int width,
+        int height,
+        std::vector<std::uint32_t>& out) const;
     std::array<Vec3, 8> corners(const Frustum& frustum) const;
 
 private:
