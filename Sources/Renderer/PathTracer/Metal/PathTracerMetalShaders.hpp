@@ -158,6 +158,7 @@ Hit traceClosestAlpha(
     float3 origin,
     float3 direction,
     float max_distance,
+    bool apply_visibility,
     primitive_acceleration_structure acceleration_structure,
     device const Triangle *triangles,
     device const Material *materials,
@@ -200,7 +201,7 @@ Hit traceClosestAlpha(
         float2 uv = triangleUv(triangle, result.triangle_barycentric_coord);
         uint material = as_type<uint>(triangle.p0.w);
         uint entity = as_type<uint>(triangle.p1.w);
-        if ((!visibility_all && entity_visibility[entity] == 0u) ||
+        if ((apply_visibility && !visibility_all && entity_visibility[entity] == 0u) ||
             (alpha_cutouts && !alphaCutoutPass(material, uv, materials, uniforms, textures, material_sampler)))
         {
             float step = result.distance + RAY_EPSILON * 2.0f;
@@ -238,8 +239,7 @@ bool traceAnyAlpha(
     sampler material_sampler)
 {
     const bool alpha_cutouts = (uniforms.counts.w & 1) != 0;
-    const bool visibility_all = (uniforms.counts.w & 2) != 0;
-    if (!alpha_cutouts && visibility_all) {
+    if (!alpha_cutouts) {
         intersector<> shadow_intersector;
         shadow_intersector.assume_geometry_type(geometry_type::triangle);
         shadow_intersector.assume_identity_transforms(true);
@@ -252,6 +252,7 @@ bool traceAnyAlpha(
         origin,
         direction,
         max_distance,
+        false,
         acceleration_structure,
         triangles,
         materials,
@@ -288,6 +289,7 @@ float deterministicDepthAlpha(
         uniforms.camera_position.xyz,
         depth_direction,
         INF,
+        true,
         acceleration_structure,
         triangles,
         materials,
@@ -399,6 +401,7 @@ float3 tracePath(
         origin,
         direction,
         INF,
+        true,
         acceleration_structure,
         triangles,
         materials,

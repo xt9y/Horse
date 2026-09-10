@@ -189,7 +189,7 @@ bool triangleVisible(Triangle triangle)
     return uVisibilityAll != 0 || entity_visibility[floatBitsToUint(triangle.p1.w)] != 0u;
 }
 
-Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
+Hit traceClosest(vec3 origin, vec3 direction, float max_distance, bool apply_visibility)
 {
     Hit best;
     best.found = false;
@@ -218,7 +218,7 @@ Hit traceClosest(vec3 origin, vec3 direction, float max_distance)
             uint end = min(node.first + count, uint(uTriangleCount));
             for (uint triangle_index = node.first; triangle_index < end; ++triangle_index) {
                 Triangle triangle = triangles[triangle_index];
-                if (!triangleVisible(triangle)) continue;
+                if (apply_visibility && !triangleVisible(triangle)) continue;
                 float distance = best.distance;
                 vec3 barycentric;
                 if (!hitTriangle(origin, direction, triangle, distance, barycentric)) continue;
@@ -265,7 +265,7 @@ float deterministicDepth(vec2 sample_pixel)
         uCameraRight * (depth_ndc.x * uAspect * uTanHalfFov) +
         uCameraUp * (depth_ndc.y * uTanHalfFov)
     );
-    Hit depth_hit = traceClosest(uCameraPosition, depth_direction, INF);
+    Hit depth_hit = traceClosest(uCameraPosition, depth_direction, INF, true);
     if (!depth_hit.found) return INF;
     return max(
         dot(depth_hit.position - uCameraPosition, normalize(uCameraForward)),
@@ -293,7 +293,6 @@ bool traceAny(vec3 origin, vec3 direction, float max_distance)
             uint end = min(node.first + count, uint(uTriangleCount));
             for (uint triangle_index = node.first; triangle_index < end; ++triangle_index) {
                 Triangle triangle = triangles[triangle_index];
-                if (!triangleVisible(triangle)) continue;
                 float distance = max_distance;
                 vec3 barycentric;
                 if (!hitTriangle(origin, direction, triangle, distance, barycentric)) continue;
@@ -403,7 +402,7 @@ vec3 sampleGlobalIllumination(vec3 position, vec3 normal)
 
 vec3 tracePath(vec3 origin, vec3 direction)
 {
-    Hit hit = traceClosest(origin, direction, INF);
+    Hit hit = traceClosest(origin, direction, INF, true);
     if (!hit.found) return vec3(0.0);
 
     vec3 albedo = materialAlbedo(hit.material, hit.uv);
