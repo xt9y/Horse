@@ -15,8 +15,6 @@
 namespace Renderer::Scenes {
 
 inline constexpr std::uint32_t LeafBit = 0x80000000u;
-inline constexpr std::uint32_t LeafSize = 8u;
-inline constexpr std::size_t MaximumTriangles = 1000000u;
 
 struct alignas(16) GpuNode {
     float min_x = 0.0f;
@@ -52,7 +50,7 @@ struct CameraState {
     Vec3 forward {0.0f, 0.0f, -1.0f};
     Vec3 right {1.0f, 0.0f, 0.0f};
     Vec3 up {0.0f, 1.0f, 0.0f};
-    float fov_degrees = 60.0f;
+    float fov_degrees = 0.0f;
 };
 
 struct LightState {
@@ -66,6 +64,11 @@ struct LightState {
 
 class SceneCache {
 public:
+    static void setLeafSize(std::uint32_t value) { leaf_size_ = value; }
+    static void setMaximumTriangles(std::size_t value) { maximum_triangles_ = value; }
+    static std::uint32_t leafSize() { return leaf_size_; }
+    static std::size_t maximumTriangles() { return maximum_triangles_; }
+
     bool sync(
         const Ecs::World& world,
         const std::vector<Scene::RenderItem>& items,
@@ -94,6 +97,9 @@ public:
 
 private:
     std::uint32_t buildNode(std::uint32_t start, std::uint32_t count);
+
+    inline static std::uint32_t leaf_size_ = 0u;
+    inline static std::size_t maximum_triangles_ = 0u;
 
     std::vector<GpuNode> nodes_;
     std::vector<GpuTriangle> triangles_;
