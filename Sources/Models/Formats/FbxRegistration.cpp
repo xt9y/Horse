@@ -1,4 +1,5 @@
 #include "Models/Formats/Fbx.hpp"
+#include "Models/Formats/FbxSanitize.hpp"
 #include "Models/Formats/Registry.hpp"
 
 #include <utility>
@@ -11,6 +12,11 @@ bool loadFbx(const std::string& path, Document *output, std::string *error)
     if (!output) return false;
     Fbx::Document source;
     if (!Fbx::load(path, &source, error)) return false;
+    Fbx::sanitize(&source);
+    if (source.parts.empty()) {
+        if (error) *error = "FBX contains no valid renderable triangles after validation: " + path;
+        return false;
+    }
 
     output->parts.clear();
     output->parts.reserve(source.parts.size());
