@@ -20,6 +20,8 @@ public:
     RayTracer& operator=(const RayTracer&) = delete;
 
     bool init() override;
+    bool activate() override;
+    void deactivate() override;
     void resize(int width, int height) override;
     void shutdown() override;
 
