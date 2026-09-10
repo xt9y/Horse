@@ -112,15 +112,26 @@ struct RayTracer::Impl {
         return initialized && settings.enabled;
     }
 
+    bool configured() const
+    {
+        return settings.resolution_divisor > 0;
+    }
+
     void updateResolution()
     {
-        const int divisor = std::clamp(settings.resolution_divisor, 4, 8);
+        const int divisor = settings.resolution_divisor;
+        if (divisor <= 0) {
+            trace_width = 0;
+            trace_height = 0;
+            return;
+        }
         trace_width = std::max(width / divisor, 1);
         trace_height = std::max(height / divisor, 1);
     }
 
     bool createFloatTexture(GLuint& target, GLint filter)
     {
+        if (trace_width <= 0 || trace_height <= 0) return false;
         GLuint texture = 0u;
         glGenTextures(1, &texture);
         if (texture == 0u) return false;
@@ -330,6 +341,10 @@ RayTracer::~RayTracer()
 bool RayTracer::init()
 {
     if (impl_->initialized) return true;
+    if (!impl_->configured()) {
+        std::fprintf(stderr, "[RayTracer]: configure the renderer before init\n");
+        return false;
+    }
     if (!lwcglModernGLAvailable() && lwcglLoadModernGL() != 0) {
         std::fprintf(stderr, "[RayTracer]: modern OpenGL unavailable\n");
         return false;
@@ -349,6 +364,8 @@ bool RayTracer::init()
         return false;
     }
 
+    impl_->width = std::max(Display.getWidth(), 1);
+    impl_->height = std::max(Display.getHeight(), 1);
     impl_->updateResolution();
     if (!impl_->createPrograms() || !impl_->createTargets()) {
         shutdown();
@@ -367,6 +384,15 @@ bool RayTracer::init()
         impl_->trace_height
     );
     return true;
+}
+
+bool RayTracer::activate()
+{
+    return impl_ && impl_->initialized;
+}
+
+void RayTracer::deactivate()
+{
 }
 
 void RayTracer::resize(int width, int height)
