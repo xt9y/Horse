@@ -4,6 +4,7 @@
 #include "Font.hpp"
 #include "Renderer/Components.hpp"
 #include "Renderer/Environment.hpp"
+#include "Renderer/PostProcess.hpp"
 #include "Renderer/Manager.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Renderer/PathTracer/PathTracer.hpp"
