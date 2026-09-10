@@ -1,8 +1,29 @@
 #include "Ecs/Ecs.hpp"
 
+#include <atomic>
 #include <limits>
 
 namespace Ecs {
+namespace {
+
+std::atomic<std::uint64_t> next_revision {1u};
+
+std::uint64_t nextRevision()
+{
+    return next_revision.fetch_add(1u, std::memory_order_relaxed);
+}
+
+} // namespace
+
+World::World()
+    : change_revision_(nextRevision())
+{
+}
+
+void World::touch()
+{
+    change_revision_ = nextRevision();
+}
 
 Entity World::createEntity()
 {
