@@ -52,33 +52,6 @@ bool inside(Vec3 point, Vec3 minimum, Vec3 maximum)
         point.z >= minimum.z && point.z <= maximum.z;
 }
 
-void collectBvhLevel(
-    const std::vector<Scenes::GpuNode>& nodes,
-    std::uint32_t index,
-    int depth,
-    int target,
-    std::vector<std::uint32_t>& out)
-{
-    if (index >= nodes.size()) return;
-    const Scenes::GpuNode& node = nodes[index];
-    const bool leaf = (node.meta & Scenes::LeafBit) != 0u;
-    if (depth == target || leaf) {
-        if (depth == target) out.push_back(index);
-        return;
-    }
-    if (depth > target) return;
-    collectBvhLevel(nodes, node.first, depth + 1, target, out);
-    collectBvhLevel(nodes, node.meta, depth + 1, target, out);
-}
-
-std::uint32_t treeDepth(const std::vector<Scenes::GpuNode>& nodes, std::uint32_t index)
-{
-    if (index >= nodes.size()) return 0u;
-    const Scenes::GpuNode& node = nodes[index];
-    if ((node.meta & Scenes::LeafBit) != 0u) return 1u;
-    return 1u + std::max(treeDepth(nodes, node.first), treeDepth(nodes, node.meta));
-}
-
 } // namespace
 
 struct Inspector::Impl {
@@ -105,7 +78,44 @@ struct Inspector::Impl {
     const Ecs::World *live_world = nullptr;
     std::uint64_t live_revision = std::numeric_limits<std::uint64_t>::max();
     Scenes::SceneCache live_cache;
+    const Scenes::SceneCache *bvh_cache = nullptr;
+    std::vector<std::vector<std::uint32_t>> bvh_levels;
     std::vector<Internal::Vertex> lines;
+
+    void invalidateBvhMetadata()
+    {
+        bvh_cache = nullptr;
+        bvh_levels.clear();
+    }
+
+    void prepareBvhMetadata(const Scenes::SceneCache& cache)
+    {
+        if (bvh_cache == &cache) return;
+
+        bvh_cache = &cache;
+        bvh_levels.clear();
+
+        const auto& nodes = cache.nodes();
+        if (nodes.empty()) return;
+
+        std::vector<std::uint32_t> current{0u};
+        std::vector<std::uint32_t> next;
+        while (!current.empty()) {
+            bvh_levels.push_back(current);
+            next.clear();
+            next.reserve(current.size() * 2u);
+
+            for (const std::uint32_t index : current) {
+                if (index >= nodes.size()) continue;
+                const Scenes::GpuNode& node = nodes[index];
+                if ((node.meta & Scenes::LeafBit) != 0u) continue;
+                if (node.first < nodes.size()) next.push_back(node.first);
+                if (node.meta < nodes.size()) next.push_back(node.meta);
+            }
+
+            current.swap(next);
+        }
+    }
 
     Internal::Vertex vertex(Vec3 position, Vec4 color) const
     {
@@ -200,8 +210,10 @@ struct Inspector::Impl {
                 &error))
         {
             live_cache.clear();
+            invalidateBvhMetadata();
             return nullptr;
         }
+        invalidateBvhMetadata();
         live_world = &world;
         live_revision = revision;
         return &live_cache;
@@ -221,10 +233,12 @@ struct Inspector::Impl {
         const auto& nodes = cache.nodes();
         if (nodes.empty()) return;
 
-        const int maximum_level = std::max(static_cast<int>(treeDepth(nodes, 0u)) - 1, 0);
+        prepareBvhMetadata(cache);
+        if (bvh_levels.empty()) return;
+
+        const int maximum_level = static_cast<int>(bvh_levels.size()) - 1;
         const int level_index = std::clamp(bvh_level, 0, maximum_level);
-        std::vector<std::uint32_t> level;
-        collectBvhLevel(nodes, 0u, 0, level_index, level);
+        const std::vector<std::uint32_t>& level = bvh_levels[static_cast<std::size_t>(level_index)];
 
         std::uint32_t selected = std::numeric_limits<std::uint32_t>::max();
         for (const std::uint32_t index : level) {
@@ -297,6 +311,7 @@ bool Inspector::freeze(Ecs::World& world, int width, int height)
     impl_->frozen_player_camera = *player_camera;
     impl_->frozen_visibility = std::move(visibility);
     impl_->frozen_cache = std::move(snapshot_cache);
+    impl_->invalidateBvhMetadata();
 
     impl_->renderable_visibility.clear();
     impl_->camera_activity.clear();
@@ -361,6 +376,7 @@ void Inspector::unfreeze(Ecs::World& world)
     impl_->live_world = nullptr;
     impl_->live_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->live_cache.clear();
+    impl_->invalidateBvhMetadata();
     world.markChanged();
 }
 
@@ -387,6 +403,7 @@ void Inspector::clear(Ecs::World *world)
     impl_->live_world = nullptr;
     impl_->live_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->live_cache.clear();
+    impl_->invalidateBvhMetadata();
     impl_->lines.clear();
 }
 
