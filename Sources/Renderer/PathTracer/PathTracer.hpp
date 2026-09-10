@@ -9,7 +9,6 @@ struct PathTracerSettings {
     bool enabled = false;
     int resolution_divisor = 0;
     int samples_per_frame = 0;
-    int max_bounces = 0;
     float exposure = 0.0f;
 };
 
@@ -24,6 +23,8 @@ public:
     PathTracer& operator=(const PathTracer&) = delete;
 
     bool init() override;
+    bool activate() override;
+    void deactivate() override;
     void resize(int width, int height) override;
     void shutdown() override;
 
