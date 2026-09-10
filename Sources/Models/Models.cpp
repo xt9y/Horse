@@ -1,9 +1,7 @@
 #include "Models/Models.hpp"
 
 #include "Models/Core/Texture.hpp"
-#include "Models/Formats/Fbx.hpp"
-#include "Models/Formats/FbxSanitize.hpp"
-#include "Models/Formats/Obj.hpp"
+#include "Models/Formats/Registry.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -45,28 +43,28 @@ std::string lowerExtension(const std::string& path)
     return value;
 }
 
-template <typename Parts>
-ModelHandle storeModel(
-    const std::string& key,
-    Parts& source_parts,
-    Animation::SkeletonHandle skeleton_handle,
-    std::vector<Animation::ClipHandle> animation_handles)
+ModelHandle storeModel(const std::string& key, Formats::Document document)
 {
     Model model;
     model.path = key;
-    model.skeleton = skeleton_handle;
-    model.animations = std::move(animation_handles);
-    model.parts.reserve(source_parts.size());
+    model.parts.reserve(document.parts.size());
 
-    for (auto& source_part : source_parts) {
-        const MeshHandle mesh_handle = static_cast<MeshHandle>(meshes().size());
-        meshes().push_back(std::move(source_part.mesh));
-
-        const MaterialHandle material_handle = static_cast<MaterialHandle>(materials().size());
-        materials().push_back(std::move(source_part.material));
+    for (Formats::Part& source_part : document.parts) {
+        const MeshHandle mesh_handle = registerMesh(std::move(source_part.mesh));
+        const MaterialHandle material_handle = registerMaterial(std::move(source_part.material));
+        if (mesh_handle == INVALID_MESH || material_handle == INVALID_MATERIAL)
+            return INVALID_MODEL;
         model.parts.push_back({mesh_handle, material_handle});
     }
 
+    if (document.has_skeleton && !document.skeleton.bones.empty())
+        model.skeleton = Animation::registerSkeleton(std::move(document.skeleton));
+
+    model.animations.reserve(document.animations.size());
+    for (Animation::AnimationClip& animation_asset : document.animations)
+        model.animations.push_back(Animation::registerClip(std::move(animation_asset)));
+
+    if (models().size() >= static_cast<std::size_t>(INVALID_MODEL)) return INVALID_MODEL;
     const ModelHandle handle = static_cast<ModelHandle>(models().size());
     models().push_back(std::move(model));
     cache().emplace(key, handle);
@@ -82,47 +80,19 @@ ModelHandle load(const std::string& path, std::string *error)
     if (const auto found = cache().find(key); found != cache().end()) return found->second;
 
     const std::string extension = lowerExtension(key);
-    if (extension == ".obj") {
-        Obj::Document document;
-        if (!Obj::load(key, &document, error)) return INVALID_MODEL;
-        return storeModel(
-            key,
-            document.parts,
-            Animation::INVALID_SKELETON,
-            {}
-        );
+    const Formats::Loader loader = Formats::loaderFor(extension);
+    if (!loader) {
+        if (error) *error = "unsupported model format: " + extension;
+        return INVALID_MODEL;
     }
 
-    if (extension == ".fbx") {
-        Fbx::Document document;
-        if (!Fbx::load(key, &document, error)) return INVALID_MODEL;
-        Fbx::sanitize(&document);
-        if (document.parts.empty()) {
-            if (error) *error = "FBX contains no valid renderable triangles after validation: " + key;
-            return INVALID_MODEL;
-        }
-
-        Animation::SkeletonHandle skeleton_handle = Animation::INVALID_SKELETON;
-        if (document.has_skeleton && !document.skeleton.bones.empty()) {
-            skeleton_handle = Animation::registerSkeleton(std::move(document.skeleton));
-        }
-
-        std::vector<Animation::ClipHandle> animation_handles;
-        animation_handles.reserve(document.animations.size());
-        for (Animation::AnimationClip& animation_asset : document.animations) {
-            animation_handles.push_back(Animation::registerClip(std::move(animation_asset)));
-        }
-
-        return storeModel(
-            key,
-            document.parts,
-            skeleton_handle,
-            std::move(animation_handles)
-        );
+    Formats::Document document;
+    if (!loader(key, &document, error)) return INVALID_MODEL;
+    if (document.parts.empty()) {
+        if (error) *error = "model contains no renderable parts: " + key;
+        return INVALID_MODEL;
     }
-
-    if (error) *error = "unsupported model format: " + extension;
-    return INVALID_MODEL;
+    return storeModel(key, std::move(document));
 }
 
 MeshHandle registerMesh(MeshData mesh)
