@@ -758,7 +758,15 @@ struct Rasterizer::Impl {
             return false;
         }
 
-        const int requested_size = std::max(settings.shadow_resolution, 1);
+        int requested_size = std::max(settings.shadow_resolution, 1);
+        if (settings.shadow_resolution_divisor > 1) {
+            const int relative_size = std::max(
+                (std::max(width, height) + settings.shadow_resolution_divisor - 1) /
+                    settings.shadow_resolution_divisor,
+                1
+            );
+            requested_size = std::min(requested_size, relative_size);
+        }
         const int minimum_size = std::max(settings.minimum_shadow_resolution, 1);
         const int fallback_size = std::max(
             minimum_size,
@@ -1091,6 +1099,13 @@ void Rasterizer::setShadowResolution(int value)
     impl_->shadow_valid = false;
 }
 
+void Rasterizer::setShadowResolutionDivisor(int value)
+{
+    if (!impl_) return;
+    impl_->settings.shadow_resolution_divisor = std::max(value, 1);
+    impl_->shadow_valid = false;
+}
+
 void Rasterizer::setFallbackShadowResolution(int value)
 {
     if (!impl_) return;
@@ -1119,6 +1134,32 @@ void Rasterizer::setShadowFarScale(float value)
     impl_->shadow_valid = false;
 }
 
+void Rasterizer::setLightingResolutionDivisor(int value)
+{
+    if (!impl_) return;
+    impl_->settings.lighting.resolution_divisor = std::max(value, 1);
+}
+
+void Rasterizer::setDepthAwareUpscaling(bool value)
+{
+    if (impl_) impl_->settings.lighting.depth_aware_upscale = value;
+}
+
+void Rasterizer::setTemporalUpscaling(bool value)
+{
+    if (impl_) impl_->settings.lighting.temporal_filter = value;
+}
+
+void Rasterizer::setTemporalUpscalingWeight(float value)
+{
+    if (impl_) impl_->settings.lighting.temporal_weight = std::clamp(value, 0.0f, 1.0f);
+}
+
+void Rasterizer::setUpscalingDepthThreshold(float value)
+{
+    if (impl_) impl_->settings.lighting.depth_threshold = std::max(value, 0.0f);
+}
+
 void Rasterizer::setClearColor(Vec4 value)
 {
     if (impl_) impl_->settings.clear_color = value;
@@ -1132,6 +1173,11 @@ bool Rasterizer::viewportCulling() const
 int Rasterizer::shadowResolution() const
 {
     return impl_ ? impl_->settings.shadow_resolution : 0;
+}
+
+int Rasterizer::shadowResolutionDivisor() const
+{
+    return impl_ ? std::max(impl_->settings.shadow_resolution_divisor, 1) : 1;
 }
 
 int Rasterizer::fallbackShadowResolution() const
@@ -1152,6 +1198,31 @@ float Rasterizer::shadowNearPlane() const
 float Rasterizer::shadowFarScale() const
 {
     return impl_ ? impl_->settings.shadow_far_scale : 0.0f;
+}
+
+int Rasterizer::lightingResolutionDivisor() const
+{
+    return impl_ ? std::max(impl_->settings.lighting.resolution_divisor, 1) : 1;
+}
+
+bool Rasterizer::depthAwareUpscaling() const
+{
+    return impl_ && impl_->settings.lighting.depth_aware_upscale;
+}
+
+bool Rasterizer::temporalUpscaling() const
+{
+    return impl_ && impl_->settings.lighting.temporal_filter;
+}
+
+float Rasterizer::temporalUpscalingWeight() const
+{
+    return impl_ ? impl_->settings.lighting.temporal_weight : 0.0f;
+}
+
+float Rasterizer::upscalingDepthThreshold() const
+{
+    return impl_ ? impl_->settings.lighting.depth_threshold : 0.0f;
 }
 
 Vec4 Rasterizer::clearColor() const
