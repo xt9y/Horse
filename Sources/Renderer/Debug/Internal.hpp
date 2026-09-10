@@ -5,7 +5,6 @@
 #include "Renderer/Renderer.hpp"
 
 #include <array>
-#include <cstdint>
 #include <vector>
 
 namespace Renderer::Debug::Internal {
@@ -18,9 +17,7 @@ struct Vertex {
 void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output);
 
 void renderOpenGL(
-    const std::vector<Vertex>& wireframe,
-    std::uint64_t wireframe_revision,
-    const std::vector<Vertex>& dynamic,
+    const std::vector<Vertex>& lines,
     const Math::Mat4& projection,
     const Math::Mat4& view,
     Renderer::Internal::FrameOutput& output
@@ -29,9 +26,7 @@ void shutdownOpenGL();
 
 #ifdef __APPLE__
 void renderMetal(
-    const std::vector<Vertex>& wireframe,
-    std::uint64_t wireframe_revision,
-    const std::vector<Vertex>& dynamic,
+    const std::vector<Vertex>& lines,
     const Math::Mat4& projection,
     const Math::Mat4& view,
     Renderer::Internal::FrameOutput& output
