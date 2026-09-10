@@ -11,9 +11,9 @@ namespace {
 
 bool usesAlphaTexture(const RenderItem& item)
 {
-    if (!item.material || item.material->diffuse_texture == Models::INVALID_TEXTURE) {
-        return false;
-    }
+    if (!item.material) return false;
+    if (item.material->opacity_texture != Models::INVALID_TEXTURE) return true;
+    if (item.material->diffuse_texture == Models::INVALID_TEXTURE) return false;
     const Models::TextureAsset* texture = Models::texture(item.material->diffuse_texture);
     return texture && texture->image.meaningful_alpha;
 }
