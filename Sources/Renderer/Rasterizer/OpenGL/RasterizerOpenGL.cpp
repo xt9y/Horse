@@ -254,6 +254,7 @@ struct Rasterizer::Impl {
     Upscale::OpenGLPass upscaler;
     Systems::OpenGL::RenderSurface scene_surface;
     Systems::OpenGL::RenderSurface full_depth_surface;
+    RasterizerStatistics runtime_stats{};
     MainUniforms main_uniforms{};
     ShadowUniforms shadow_uniforms{};
 
@@ -1111,16 +1112,30 @@ struct Rasterizer::Impl {
             settings.lighting
         );
         glViewport(0, 0, width, height);
+        if (upscale_ok) {
+            runtime_stats.scaled_pipeline_active = true;
+            runtime_stats.lighting_width = lighting_extent.width;
+            runtime_stats.lighting_height = lighting_extent.height;
+            runtime_stats.depth_prepass_items = depth_prepass.statistics().drawn_items;
+        }
         return upscale_ok;
     }
 
     void draw(const Ecs::World& world, const GlobalIllumination::Field *gi)
     {
+        runtime_stats = {};
+        runtime_stats.output_width = width;
+        runtime_stats.output_height = height;
+        runtime_stats.lighting_width = width;
+        runtime_stats.lighting_height = height;
+
         Systems::Scene::collectRenderItems(world, render_items);
         updateViewportVisibility(world);
 
         const Systems::Scene::LightState light = Systems::Scene::lightState(world);
         renderPointShadowMaps(light);
+        runtime_stats.shadow_active = shadow_valid;
+        runtime_stats.shadow_resolution = shadow_valid ? shadow_size : 0;
 
         const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
         if (!camera.valid) {
@@ -1254,6 +1269,7 @@ void Rasterizer::shutdown()
     impl_->visible_render_items.clear();
     impl_->viewport_visible.clear();
     impl_->viewport_filter_valid = false;
+    impl_->runtime_stats = {};
     impl_->initialized = false;
 }
 
@@ -1508,6 +1524,11 @@ HorizonGI::Statistics Rasterizer::horizonGiStatistics() const
 Upscale::Statistics Rasterizer::upscaleStatistics() const
 {
     return impl_ ? impl_->upscaler.statistics() : Upscale::Statistics{};
+}
+
+RasterizerStatistics Rasterizer::statistics() const
+{
+    return impl_ ? impl_->runtime_stats : RasterizerStatistics{};
 }
 
 Vec4 Rasterizer::clearColor() const

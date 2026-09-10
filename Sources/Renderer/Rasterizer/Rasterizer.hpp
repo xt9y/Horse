@@ -7,6 +7,8 @@
 #include "Renderer/Renderer.hpp"
 #include "Renderer/Upscale/Upscale.hpp"
 
+#include <cstddef>
+
 namespace Renderer {
 
 struct RasterizerSettings {
@@ -21,6 +23,17 @@ struct RasterizerSettings {
     Quality::ScaledPassSettings lighting{};
     HorizonGI::Settings horizon_gi{};
     Vec4 clear_color{};
+};
+
+struct RasterizerStatistics {
+    bool scaled_pipeline_active = false;
+    bool shadow_active = false;
+    int output_width = 0;
+    int output_height = 0;
+    int lighting_width = 0;
+    int lighting_height = 0;
+    int shadow_resolution = 0;
+    std::size_t depth_prepass_items = 0u;
 };
 
 class Rasterizer final : public IRenderer {
@@ -81,6 +94,7 @@ public:
     const HorizonGI::Settings& horizonGiSettings() const;
     HorizonGI::Statistics horizonGiStatistics() const;
     Upscale::Statistics upscaleStatistics() const;
+    RasterizerStatistics statistics() const;
     Vec4 clearColor() const;
 
     RasterizerSettings& settings();
