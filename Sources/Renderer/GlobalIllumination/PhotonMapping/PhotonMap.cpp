@@ -361,6 +361,11 @@ std::size_t PhotonMap::photonCount() const
     return storage_ ? storage_->photons.size() : 0u;
 }
 
+const Photon *PhotonMap::photonData() const
+{
+    return storage_ && !storage_->photons.empty() ? storage_->photons.data() : nullptr;
+}
+
 float PhotonMap::radius() const
 {
     return storage_ ? storage_->radius : 0.0f;
