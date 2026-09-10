@@ -3,10 +3,15 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/Renderer.hpp"
 
 #include <cstddef>
 
 namespace Renderer::Debug {
+
+namespace Internal {
+void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output);
+}
 
 struct SnapshotInfo {
     bool frozen = false;
@@ -53,10 +58,9 @@ private:
     struct Impl;
     Impl *impl_ = nullptr;
 
-    friend void renderInspector(
-        Inspector& inspector,
+    friend void Internal::render(
         const Ecs::World& world,
-        void *frame_output
+        Renderer::Internal::FrameOutput& output
     );
 };
 
