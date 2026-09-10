@@ -18,6 +18,7 @@ Mat4 rotationY(float degrees);
 Mat4 rotationZ(float degrees);
 Mat4 modelMatrix(const Transform& transform);
 Mat4 inverseModelMatrix(const Transform& transform);
+Mat4 perspective(float fov_degrees, float aspect, float near_plane, float far_plane);
 Mat4 viewMatrix(
     const Vec3& position,
     const Vec3& forward,
