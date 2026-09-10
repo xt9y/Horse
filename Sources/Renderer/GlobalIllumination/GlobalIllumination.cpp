@@ -1,5 +1,6 @@
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
 
+#include "Renderer/GlobalIllumination/Debug.hpp"
 #include "Renderer/GlobalIllumination/PhotonMapping/PhotonMap.hpp"
 #include "Renderer/GlobalIllumination/TraceScene.hpp"
 #include "Renderer/Scenes/Scene.hpp"
@@ -7,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +26,8 @@ constexpr float kY1 = 0.48860251190291992f;
 constexpr float kRayEpsilon = 0.0025f;
 constexpr std::size_t kRaysPerProbe = 48u;
 constexpr std::size_t kProbeBudgetPerFrame = 16u;
+
+using Clock = std::chrono::steady_clock;
 
 Vec3 add(Vec3 a, Vec3 b)
 {
@@ -76,6 +80,19 @@ Vec3 clampPositive(Vec3 value)
     };
 }
 
+double elapsedMilliseconds(Clock::time_point start)
+{
+    return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+}
+
+std::uint32_t treeDepth(const std::vector<Scenes::GpuNode>& nodes, std::uint32_t index)
+{
+    if (index >= nodes.size()) return 0u;
+    const Scenes::GpuNode& node = nodes[index];
+    if ((node.meta & Scenes::LeafBit) != 0u) return 1u;
+    return 1u + std::max(treeDepth(nodes, node.first), treeDepth(nodes, node.meta));
+}
+
 struct SettingsState {
     bool valid = false;
     GlobalIlluminationComponent component{};
@@ -100,6 +117,9 @@ struct State {
     Field source{};
     std::size_t probe_cursor = 0u;
     std::uint8_t bounce_index = 0u;
+    std::uint32_t bvh_depth = 0u;
+    double scene_build_ms = 0.0;
+    double photon_build_ms = 0.0;
     bool calculating = false;
 };
 
@@ -408,11 +428,16 @@ const Field *update(const Ecs::World& world)
         state.light = light;
 
         if (geometry_changed) {
+            const Clock::time_point started = Clock::now();
             std::string error;
             if (!state.trace_scene.build(world, state.render_items, &error)) {
                 std::fprintf(stderr, "[GlobalIllumination]: scene build failed: %s\n", error.c_str());
                 state.trace_scene.clear();
             }
+            state.scene_build_ms = elapsedMilliseconds(started);
+            state.bvh_depth = state.trace_scene.cache().nodes().empty()
+                ? 0u
+                : treeDepth(state.trace_scene.cache().nodes(), 0u);
             state.geometry_signature = geometry_signature;
         }
         if (light_changed) state.light_signature = light_signature;
@@ -424,11 +449,13 @@ const Field *update(const Ecs::World& world)
 
     if (geometry_changed || light_changed || bounce_changed || photon_changed) {
         state.photon_settings = photon_settings;
+        const Clock::time_point started = Clock::now();
         if (photon_settings.enabled) {
             state.photon_map.rebuild(state.trace_scene, state.light, photon_settings);
         } else {
             state.photon_map.clear();
         }
+        state.photon_build_ms = elapsedMilliseconds(started);
     }
 
     if (geometry_changed || light_changed || bounce_changed || photon_changed || !state.published.valid()) {
@@ -449,5 +476,59 @@ void reset()
 {
     state = State{};
 }
+
+namespace Debug {
+
+Statistics statistics()
+{
+    Statistics result;
+    const Scenes::SceneCache& cache = state.trace_scene.cache();
+    result.photons = state.photon_map.photonCount();
+    result.probes = state.published.valid() ? state.published.probeCount() : 0u;
+    result.triangles = cache.triangles().size();
+    result.materials = cache.materials().size();
+    result.bvh_nodes = cache.nodes().size();
+    result.bvh_depth = state.bvh_depth;
+    result.requested_photons = state.photon_settings.photon_count;
+    result.bounces = state.bounces;
+    result.bounce = state.bounces == 0u
+        ? 0u
+        : std::min<std::uint8_t>(static_cast<std::uint8_t>(state.bounce_index + 1u), state.bounces);
+    result.photon_radius = state.photon_map.radius();
+    result.scene_build_ms = state.scene_build_ms;
+    result.photon_build_ms = state.photon_build_ms;
+    result.calculating = state.calculating;
+
+    const std::size_t probe_count = state.working.probes.size();
+    const float pass_progress = probe_count == 0u
+        ? 0.0f
+        : static_cast<float>(state.probe_cursor) / static_cast<float>(probe_count);
+    const std::uint8_t passes = state.photon_map.valid() ? 1u : std::max<std::uint8_t>(state.bounces, 1u);
+    result.progress = state.published.valid() && !state.calculating
+        ? 1.0f
+        : std::clamp(
+            (static_cast<float>(state.bounce_index) + pass_progress) / static_cast<float>(passes),
+            0.0f,
+            1.0f
+        );
+    return result;
+}
+
+const TraceScene& traceScene()
+{
+    return state.trace_scene;
+}
+
+const PhotonMapping::PhotonMap& photonMap()
+{
+    return state.photon_map;
+}
+
+const Field *field()
+{
+    return state.published.valid() ? &state.published : nullptr;
+}
+
+} // namespace Debug
 
 } // namespace Renderer::GlobalIllumination
