@@ -41,6 +41,7 @@ struct TraceUniforms {
     float4 resolution_aspect;
     int4 counts;
     uint4 frame;
+    uint4 path_policy;
 };
 
 struct PresentUniforms {
@@ -69,10 +70,6 @@ constant float INF = 1.0e30f;
 constant float SH_Y00 = 0.2820947918f;
 constant float SH_Y1 = 0.4886025119f;
 constant int MAX_CLOSEST_STEPS = 8192;
-constant uint STATIONARY_PHASE_GRID = 2u;
-constant uint RESET_PHASE_GRID = 1u;
-constant uint MOVING_PHASE_GRID = 4u;
-constant uint MOVING_DEPTH_BLOCK = 2u;
 constant int GI_HEADER_VEC4S = 4;
 
 uint hashUint(uint value)
@@ -537,9 +534,10 @@ kernel void trace_kernel(
     if (reset) accumulation.write(float4(0.0f), pixel);
 
     if (camera_moving) {
-        if ((pixel.x % MOVING_DEPTH_BLOCK) == 0u && (pixel.y % MOVING_DEPTH_BLOCK) == 0u) {
+        const uint moving_depth_block = max(uniforms.path_policy.w, 1u);
+        if ((pixel.x % moving_depth_block) == 0u && (pixel.y % moving_depth_block) == 0u) {
             float2 sample_pixel = min(
-                float2(pixel) + float2(float(MOVING_DEPTH_BLOCK) * 0.5f),
+                float2(pixel) + float2(float(moving_depth_block) * 0.5f),
                 float2(size) - float2(0.5f)
             );
             float depth_value = deterministicDepthAlpha(
@@ -552,7 +550,7 @@ kernel void trace_kernel(
                 textures,
                 material_sampler
             );
-            uint2 block_end = min(pixel + uint2(MOVING_DEPTH_BLOCK), size);
+            uint2 block_end = min(pixel + uint2(moving_depth_block), size);
             for (uint y = pixel.y; y < block_end.y; ++y) {
                 for (uint x = pixel.x; x < block_end.x; ++x) {
                     uint2 target = uint2(x, y);
@@ -574,8 +572,8 @@ kernel void trace_kernel(
         primary_depth.write(float4(depth_value, 0.0f, 0.0f, 1.0f), pixel);
     }
 
-    uint phase_grid = camera_moving ? MOVING_PHASE_GRID :
-        (reset ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID);
+    uint phase_grid = camera_moving ? max(uniforms.path_policy.z, 1u) :
+        (reset ? max(uniforms.path_policy.y, 1u) : max(uniforms.path_policy.x, 1u));
     uint phase_count = phase_grid * phase_grid;
     uint phase = uniforms.frame.x % phase_count;
     uint phase_x = phase % phase_grid;

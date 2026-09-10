@@ -35,6 +35,7 @@ struct TraceUniforms {
     float4 resolution_aspect;
     int4 counts;
     uint4 frame;
+    uint4 path_policy;
 };
 
 struct PresentUniforms {

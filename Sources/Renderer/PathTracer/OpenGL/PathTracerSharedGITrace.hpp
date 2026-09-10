@@ -70,6 +70,10 @@ uniform int uSampleBase;
 uniform int uFrameIndex;
 uniform int uResetAccumulation;
 uniform int uCameraMoving;
+uniform int uStationaryPhaseGrid;
+uniform int uResetPhaseGrid;
+uniform int uMovingPhaseGrid;
+uniform int uMovingDepthBlock;
 
 uniform int uHasLight;
 uniform vec3 uLightPosition;
@@ -85,10 +89,6 @@ const float SH_Y00 = 0.2820947918;
 const float SH_Y1 = 0.4886025119;
 const int MAX_CLOSEST_STEPS = 8192;
 const int MAX_SHADOW_STEPS = 4096;
-const int STATIONARY_PHASE_GRID = 2;
-const int RESET_PHASE_GRID = 1;
-const int MOVING_PHASE_GRID = 4;
-const int MOVING_DEPTH_BLOCK = 2;
 const int GI_HEADER_VEC4S = 4;
 
 struct Hit {
@@ -433,13 +433,14 @@ void main()
     }
 
     if (uCameraMoving != 0) {
-        if ((pixel.x % MOVING_DEPTH_BLOCK) == 0 && (pixel.y % MOVING_DEPTH_BLOCK) == 0) {
+        int moving_depth_block = max(uMovingDepthBlock, 1);
+        if ((pixel.x % moving_depth_block) == 0 && (pixel.y % moving_depth_block) == 0) {
             vec2 sample_pixel = min(
-                vec2(pixel) + vec2(float(MOVING_DEPTH_BLOCK) * 0.5),
+                vec2(pixel) + vec2(float(moving_depth_block) * 0.5),
                 uResolution - vec2(0.5)
             );
             float depth_value = deterministicDepth(sample_pixel);
-            ivec2 block_end = min(pixel + ivec2(MOVING_DEPTH_BLOCK), size);
+            ivec2 block_end = min(pixel + ivec2(moving_depth_block), size);
             for (int y = pixel.y; y < block_end.y; ++y) {
                 for (int x = pixel.x; x < block_end.x; ++x) {
                     ivec2 target = ivec2(x, y);
@@ -452,8 +453,8 @@ void main()
         imageStore(uPrimaryDepth, pixel, vec4(depth_value, 0.0, 0.0, 1.0));
     }
 
-    int phase_grid = uCameraMoving != 0 ? MOVING_PHASE_GRID :
-        (uResetAccumulation != 0 ? RESET_PHASE_GRID : STATIONARY_PHASE_GRID);
+    int phase_grid = uCameraMoving != 0 ? max(uMovingPhaseGrid, 1) :
+        (uResetAccumulation != 0 ? max(uResetPhaseGrid, 1) : max(uStationaryPhaseGrid, 1));
     int phase_count = phase_grid * phase_grid;
     int phase = max(uFrameIndex, 0) % phase_count;
     int phase_x = phase % phase_grid;

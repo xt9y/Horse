@@ -19,6 +19,7 @@ struct alignas(16) MetalTraceUniforms {
     std::array<float, 4> resolution_aspect{};
     std::array<std::int32_t, 4> counts{};
     std::array<std::uint32_t, 4> frame{};
+    std::array<std::uint32_t, 4> path_policy{};
 };
 
 struct alignas(16) MetalPresentUniforms {
@@ -41,7 +42,7 @@ MetalTraceUniforms makeMetalTraceUniforms(
     bool camera_moving
 );
 
-static_assert(sizeof(MetalTraceUniforms) == 144u);
+static_assert(sizeof(MetalTraceUniforms) == 160u);
 static_assert(sizeof(MetalPresentUniforms) == 16u);
 
 } // namespace Renderer::Systems

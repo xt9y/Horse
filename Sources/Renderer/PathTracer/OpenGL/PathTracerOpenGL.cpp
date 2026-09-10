@@ -97,6 +97,10 @@ struct PathTracer::Impl {
         GLint frame_index = -1;
         GLint reset_accumulation = -1;
         GLint camera_moving = -1;
+        GLint stationary_phase_grid = -1;
+        GLint reset_phase_grid = -1;
+        GLint moving_phase_grid = -1;
+        GLint moving_depth_block = -1;
         GLint has_light = -1;
         GLint light_position = -1;
         GLint light_color = -1;
@@ -140,7 +144,12 @@ struct PathTracer::Impl {
 
     bool configured() const
     {
-        return settings.resolution_divisor > 0 && settings.samples_per_frame > 0;
+        return settings.resolution_divisor > 0 &&
+            settings.samples_per_frame > 0 &&
+            settings.stationary_phase_grid > 0 &&
+            settings.reset_phase_grid > 0 &&
+            settings.moving_phase_grid > 0 &&
+            settings.moving_depth_block > 0;
     }
 
     void updateTraceResolution()
@@ -219,6 +228,10 @@ struct PathTracer::Impl {
         trace_uniforms.frame_index = trace_program.uniform("uFrameIndex");
         trace_uniforms.reset_accumulation = trace_program.uniform("uResetAccumulation");
         trace_uniforms.camera_moving = trace_program.uniform("uCameraMoving");
+        trace_uniforms.stationary_phase_grid = trace_program.uniform("uStationaryPhaseGrid");
+        trace_uniforms.reset_phase_grid = trace_program.uniform("uResetPhaseGrid");
+        trace_uniforms.moving_phase_grid = trace_program.uniform("uMovingPhaseGrid");
+        trace_uniforms.moving_depth_block = trace_program.uniform("uMovingDepthBlock");
         trace_uniforms.has_light = trace_program.uniform("uHasLight");
         trace_uniforms.light_position = trace_program.uniform("uLightPosition");
         trace_uniforms.light_color = trace_program.uniform("uLightColor");
@@ -318,6 +331,10 @@ struct PathTracer::Impl {
         setInt(trace_uniforms.frame_index, static_cast<int>(progressive.frameIndex()));
         setInt(trace_uniforms.reset_accumulation, progressive.resetPending() ? 1 : 0);
         setInt(trace_uniforms.camera_moving, progressive.cameraMoving() ? 1 : 0);
+        setInt(trace_uniforms.stationary_phase_grid, settings.stationary_phase_grid);
+        setInt(trace_uniforms.reset_phase_grid, settings.reset_phase_grid);
+        setInt(trace_uniforms.moving_phase_grid, settings.moving_phase_grid);
+        setInt(trace_uniforms.moving_depth_block, settings.moving_depth_block);
         setInt(trace_uniforms.has_light, light.valid && light.type == LightType::Point ? 1 : 0);
         setVec3(trace_uniforms.light_position, light.position);
         setVec3(trace_uniforms.light_color, light.color);

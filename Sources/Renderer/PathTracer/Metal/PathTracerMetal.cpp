@@ -85,7 +85,12 @@ struct PathTracer::Impl {
 
     bool configured() const
     {
-        return settings.resolution_divisor > 0 && settings.samples_per_frame > 0;
+        return settings.resolution_divisor > 0 &&
+            settings.samples_per_frame > 0 &&
+            settings.stationary_phase_grid > 0 &&
+            settings.reset_phase_grid > 0 &&
+            settings.moving_phase_grid > 0 &&
+            settings.moving_depth_block > 0;
     }
 
     void updateTraceResolution()
@@ -289,7 +294,7 @@ struct PathTracer::Impl {
         out_command = nullptr;
         if (!resources.ready() || !accumulation || !primary_depth) return false;
 
-        const Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
+        Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
             camera,
             light,
             trace_width,
@@ -304,6 +309,12 @@ struct PathTracer::Impl {
             progressive.resetPending(),
             progressive.cameraMoving()
         );
+        trace.path_policy = {
+            static_cast<std::uint32_t>(settings.stationary_phase_grid),
+            static_cast<std::uint32_t>(settings.reset_phase_grid),
+            static_cast<std::uint32_t>(settings.moving_phase_grid),
+            static_cast<std::uint32_t>(settings.moving_depth_block),
+        };
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
         Systems::MetalPresentUniforms present{};
