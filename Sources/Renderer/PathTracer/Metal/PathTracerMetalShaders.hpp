@@ -499,38 +499,43 @@ kernel void trace_kernel(
     uint pixel_phase = (pixel.x % phase_grid) + (pixel.y % phase_grid) * phase_grid;
     if (pixel_phase != phase) return;
 
-    uint state = hashUint(
-        pixel.x * 1973u ^
-        pixel.y * 9277u ^
-        uniforms.frame.x * 26699u ^
-        (phase_x + phase_y * phase_grid) * 104729u ^
-        0x68bc21ebu
-    );
+    uint sample_count = uint(max(uniforms.counts.x, 1));
+    float3 sample_radiance = float3(0.0f);
+    for (uint sample = 0u; sample < sample_count; ++sample) {
+        uint state = hashUint(
+            pixel.x * 1973u ^
+            pixel.y * 9277u ^
+            uniforms.frame.x * 26699u ^
+            sample * 31847u ^
+            (phase_x + phase_y * phase_grid) * 104729u ^
+            0x68bc21ebu
+        );
 
-    float2 jitter = float2(randomFloat(state), randomFloat(state)) - 0.5f;
-    float2 uv = (float2(pixel) + float2(0.5f) + jitter) / float2(size);
-    float2 ndc = uv * 2.0f - 1.0f;
-    ndc.y = -ndc.y;
-    float3 direction = normalize(
-        uniforms.camera_forward.xyz +
-        uniforms.camera_right.xyz * (ndc.x * uniforms.resolution_aspect.z * uniforms.light_color_tan_half_fov.w) +
-        uniforms.camera_up.xyz * (ndc.y * uniforms.light_color_tan_half_fov.w)
-    );
+        float2 jitter = float2(randomFloat(state), randomFloat(state)) - 0.5f;
+        float2 uv = (float2(pixel) + float2(0.5f) + jitter) / float2(size);
+        float2 ndc = uv * 2.0f - 1.0f;
+        ndc.y = -ndc.y;
+        float3 direction = normalize(
+            uniforms.camera_forward.xyz +
+            uniforms.camera_right.xyz * (ndc.x * uniforms.resolution_aspect.z * uniforms.light_color_tan_half_fov.w) +
+            uniforms.camera_up.xyz * (ndc.y * uniforms.light_color_tan_half_fov.w)
+        );
 
-    float3 sample_radiance = tracePath(
-        uniforms.camera_position.xyz,
-        direction,
-        acceleration_structure,
-        triangles,
-        materials,
-        gi_data,
-        uniforms,
-        textures,
-        material_sampler
-    );
+        sample_radiance += tracePath(
+            uniforms.camera_position.xyz,
+            direction,
+            acceleration_structure,
+            triangles,
+            materials,
+            gi_data,
+            uniforms,
+            textures,
+            material_sampler
+        );
+    }
 
     float4 previous = reset ? float4(0.0f) : accumulation.read(pixel);
-    accumulation.write(float4(previous.rgb + sample_radiance, previous.a + 1.0f), pixel);
+    accumulation.write(float4(previous.rgb + sample_radiance, previous.a + float(sample_count)), pixel);
 }
 
 vertex PresentOut present_vertex(uint id [[vertex_id]])

@@ -462,27 +462,31 @@ void main()
     int pixel_phase = (pixel.x % phase_grid) + (pixel.y % phase_grid) * phase_grid;
     if (pixel_phase != phase) return;
 
-    uint absolute_sample = uint(max(uFrameIndex, 0));
-    uint state = hashUint(
-        uint(pixel.x) * 1973u ^
-        uint(pixel.y) * 9277u ^
-        absolute_sample * 26699u ^
-        uint(phase_x + phase_y * phase_grid) * 104729u ^
-        0x68bc21ebu
-    );
+    int samples = max(uSamplesThisFrame, 1);
+    vec3 sample_radiance = vec3(0.0);
+    for (int sample = 0; sample < samples; ++sample) {
+        uint absolute_sample = uint(max(uSampleBase + sample, 0));
+        uint state = hashUint(
+            uint(pixel.x) * 1973u ^
+            uint(pixel.y) * 9277u ^
+            absolute_sample * 26699u ^
+            uint(phase_x + phase_y * phase_grid) * 104729u ^
+            0x68bc21ebu
+        );
 
-    vec2 jitter = vec2(randomFloat(state), randomFloat(state)) - 0.5;
-    vec2 uv = (vec2(pixel) + vec2(0.5) + jitter) / uResolution;
-    vec2 ndc = uv * 2.0 - 1.0;
-    vec3 direction = normalize(
-        uCameraForward +
-        uCameraRight * (ndc.x * uAspect * uTanHalfFov) +
-        uCameraUp * (ndc.y * uTanHalfFov)
-    );
+        vec2 jitter = vec2(randomFloat(state), randomFloat(state)) - 0.5;
+        vec2 uv = (vec2(pixel) + vec2(0.5) + jitter) / uResolution;
+        vec2 ndc = uv * 2.0 - 1.0;
+        vec3 direction = normalize(
+            uCameraForward +
+            uCameraRight * (ndc.x * uAspect * uTanHalfFov) +
+            uCameraUp * (ndc.y * uTanHalfFov)
+        );
 
-    vec3 sample_radiance = tracePath(uCameraPosition, direction);
+        sample_radiance += tracePath(uCameraPosition, direction);
+    }
     vec4 previous = uResetAccumulation != 0 ? vec4(0.0) : imageLoad(uAccumulation, pixel);
-    imageStore(uAccumulation, pixel, vec4(previous.rgb + sample_radiance, previous.a + 1.0));
+    imageStore(uAccumulation, pixel, vec4(previous.rgb + sample_radiance, previous.a + float(samples)));
 }
 )GLSL";
 

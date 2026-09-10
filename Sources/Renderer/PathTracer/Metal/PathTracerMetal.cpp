@@ -413,6 +413,7 @@ struct PathTracer::Impl {
             static_cast<std::uint32_t>(settings.moving_phase_grid),
             static_cast<std::uint32_t>(settings.moving_depth_block),
         };
+        trace.counts[0] = settings.samples_per_frame;
         trace.counts[3] = has_alpha_cutouts ? 1 : 0;
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
