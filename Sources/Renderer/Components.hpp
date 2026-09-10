@@ -1,6 +1,8 @@
 #ifndef RW_ENGINE_RENDERER_COMPONENTS_HPP
 #define RW_ENGINE_RENDERER_COMPONENTS_HPP
 
+#include "Ecs/Ecs.hpp"
+
 #include <cstdint>
 
 namespace Renderer {
@@ -27,6 +29,10 @@ struct Transform {
     Vec3 position {0.0f, 0.0f, 0.0f};
     Vec3 rotation {0.0f, 0.0f, 0.0f};
     Vec3 scale {1.0f, 1.0f, 1.0f};
+};
+
+struct Parent {
+    Ecs::Entity entity = Ecs::INVALID_ENTITY;
 };
 
 struct MeshComponent {

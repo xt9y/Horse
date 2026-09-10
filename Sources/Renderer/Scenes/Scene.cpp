@@ -2,6 +2,7 @@
 
 #include "Camera.hpp"
 #include "Models/Core/Texture.hpp"
+#include "Renderer/Hierarchy.hpp"
 
 #include <algorithm>
 
@@ -17,6 +18,12 @@ bool usesAlphaTexture(const RenderItem& item)
     return texture && texture->image.meaningful_alpha;
 }
 
+Transform resolvedTransform(const Ecs::World& world, Ecs::Entity entity, const Transform& local)
+{
+    Transform result{};
+    return Hierarchy::worldTransform(world, entity, &result) ? result : local;
+}
+
 } // namespace
 
 CameraState cameraState(const Ecs::World& world)
@@ -30,7 +37,7 @@ CameraState cameraState(const Ecs::World& world)
     if (!transform || !camera) return out;
 
     out.entity = entity;
-    out.transform = *transform;
+    out.transform = resolvedTransform(world, entity, *transform);
     out.fov_degrees = camera->fov_degrees;
     out.near_plane = camera->near_plane;
     out.valid = true;
@@ -46,7 +53,7 @@ LightState lightState(const Ecs::World& world)
         if (!light || !transform) continue;
 
         out.entity = entity;
-        out.transform = *transform;
+        out.transform = resolvedTransform(world, entity, *transform);
         out.light = *light;
         out.valid = true;
         break;
@@ -71,7 +78,7 @@ void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
 
         out.push_back(RenderItem{
             .entity = entity,
-            .transform = transform,
+            .transform = TransformState{resolvedTransform(world, entity, *transform), true},
             .mesh_component = mesh_component,
             .mesh = mesh,
             .material = Models::material(mesh_component->material),

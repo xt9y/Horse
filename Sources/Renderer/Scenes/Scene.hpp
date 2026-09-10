@@ -24,9 +24,18 @@ struct LightState {
     bool valid = false;
 };
 
+struct TransformState {
+    Transform value{};
+    bool valid = false;
+
+    explicit operator bool() const { return valid; }
+    const Transform& operator*() const { return value; }
+    const Transform* operator->() const { return valid ? &value : nullptr; }
+};
+
 struct RenderItem {
     Ecs::Entity entity = Ecs::INVALID_ENTITY;
-    const Transform* transform = nullptr;
+    TransformState transform{};
     const MeshComponent* mesh_component = nullptr;
     const Models::MeshData* mesh = nullptr;
     const Models::MaterialData* material = nullptr;
