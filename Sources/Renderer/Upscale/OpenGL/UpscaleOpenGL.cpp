@@ -165,7 +165,7 @@ bool OpenGLPass::render(const OpenGLInput& input, const Quality::ScaledPassSetti
     glLoadIdentity();
 
     glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
+    glDepthMask(input.full_depth_texture != 0u ? GL_TRUE : GL_FALSE);
     glDisable(GL_BLEND);
     glDisable(GL_CULL_FACE);
     impl_->program.use();

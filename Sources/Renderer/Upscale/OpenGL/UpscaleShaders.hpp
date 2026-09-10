@@ -97,6 +97,7 @@ void main()
         current_value = mix(current_value, history_value, clamp(uTemporalWeight, 0.0, 1.0));
     }
     gl_FragColor = current_value;
+    gl_FragDepth = full_depth;
 }
 )GLSL";
 
