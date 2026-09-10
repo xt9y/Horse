@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace Renderer::Math {
 namespace {
@@ -155,6 +156,52 @@ Mat4 inverseModelMatrix(const Transform& transform)
     );
 }
 
+bool inverseMatrix(const Mat4& matrix, Mat4 *out)
+{
+    if (!out) return false;
+
+    float augmented[4][8]{};
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column)
+            augmented[row][column] = matrix[column * 4 + row];
+        augmented[row][4 + row] = 1.0f;
+    }
+
+    for (int pivot_column = 0; pivot_column < 4; ++pivot_column) {
+        int pivot_row = pivot_column;
+        float pivot_size = std::abs(augmented[pivot_row][pivot_column]);
+        for (int row = pivot_column + 1; row < 4; ++row) {
+            const float candidate = std::abs(augmented[row][pivot_column]);
+            if (candidate <= pivot_size) continue;
+            pivot_row = row;
+            pivot_size = candidate;
+        }
+        if (pivot_size <= 1.0e-10f) return false;
+        if (pivot_row != pivot_column) {
+            for (int column = 0; column < 8; ++column)
+                std::swap(augmented[pivot_row][column], augmented[pivot_column][column]);
+        }
+
+        const float inverse_pivot = 1.0f / augmented[pivot_column][pivot_column];
+        for (int column = 0; column < 8; ++column)
+            augmented[pivot_column][column] *= inverse_pivot;
+
+        for (int row = 0; row < 4; ++row) {
+            if (row == pivot_column) continue;
+            const float factor = augmented[row][pivot_column];
+            if (std::abs(factor) <= 1.0e-20f) continue;
+            for (int column = 0; column < 8; ++column)
+                augmented[row][column] -= factor * augmented[pivot_column][column];
+        }
+    }
+
+    for (int row = 0; row < 4; ++row) {
+        for (int column = 0; column < 4; ++column)
+            (*out)[column * 4 + row] = augmented[row][4 + column];
+    }
+    return true;
+}
+
 Mat4 perspective(float fov_degrees, float aspect, float near_plane, float far_plane)
 {
     const float clamped_fov = std::clamp(fov_degrees, 1.0f, 179.0f);
@@ -199,6 +246,15 @@ Vec3 transformPoint(const Mat4& matrix, const Vec3& point)
         matrix[0] * point.x + matrix[4] * point.y + matrix[8] * point.z + matrix[12],
         matrix[1] * point.x + matrix[5] * point.y + matrix[9] * point.z + matrix[13],
         matrix[2] * point.x + matrix[6] * point.y + matrix[10] * point.z + matrix[14],
+    };
+}
+
+Vec3 transformVector(const Mat4& matrix, const Vec3& vector)
+{
+    return {
+        matrix[0] * vector.x + matrix[4] * vector.y + matrix[8] * vector.z,
+        matrix[1] * vector.x + matrix[5] * vector.y + matrix[9] * vector.z,
+        matrix[2] * vector.x + matrix[6] * vector.y + matrix[10] * vector.z,
     };
 }
 

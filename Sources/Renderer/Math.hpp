@@ -18,6 +18,7 @@ Mat4 rotationY(float degrees);
 Mat4 rotationZ(float degrees);
 Mat4 modelMatrix(const Transform& transform);
 Mat4 inverseModelMatrix(const Transform& transform);
+bool inverseMatrix(const Mat4& matrix, Mat4 *out);
 Mat4 perspective(float fov_degrees, float aspect, float near_plane, float far_plane);
 Mat4 viewMatrix(
     const Vec3& position,
@@ -27,6 +28,7 @@ Mat4 viewMatrix(
 );
 
 Vec3 transformPoint(const Mat4& matrix, const Vec3& point);
+Vec3 transformVector(const Mat4& matrix, const Vec3& vector);
 Vec3 transformNormal(const Mat4& world_to_object, const Vec3& normal);
 
 float dot(const Vec3& a, const Vec3& b);
