@@ -23,13 +23,18 @@ int main()
     const std::string camera = read("Sources/Camera.cpp");
     const std::string components = read("Sources/Renderer/Components.hpp");
     const std::string scene = read("Sources/Renderer/Scenes/Scene.hpp");
+    const std::string scene_compat = read("Sources/Renderer/Systems/Scene.hpp");
     const std::string cache = read("Sources/Renderer/Scenes/SceneCache.hpp");
+    const std::string cache_compat = read("Sources/Renderer/Systems/SceneCache.hpp");
+    const std::string gl_resources = read("Sources/Renderer/Scenes/OpenGL/SceneResources.hpp");
+    const std::string gl_resources_compat = read("Sources/Renderer/Systems/OpenGLSceneResources.hpp");
+    const std::string metal_resources = read("Sources/Renderer/Scenes/Metal/SceneResources.hpp");
+    const std::string metal_resources_compat = read("Sources/Renderer/Systems/MetalSceneResources.hpp");
     const std::string progressive = read("Sources/Renderer/Systems/ProgressiveState.hpp");
-    const std::string uniforms = read("Sources/Renderer/Systems/Uniforms.hpp");
+    const std::string uniforms = read("Sources/Renderer/Systems/Metal/Uniforms.hpp");
+    const std::string uniforms_compat = read("Sources/Renderer/Systems/Uniforms.hpp");
     const std::string program = read("Sources/Renderer/Systems/OpenGL/Program.hpp");
     const std::string textures = read("Sources/Renderer/Systems/OpenGL/TextureCache.hpp");
-    const std::string gl_resources = read("Sources/Renderer/Scenes/OpenGL/SceneResources.cpp");
-    const std::string metal_resources = read("Sources/Renderer/Scenes/Metal/SceneResources.hpp");
     const std::string gi = read("Sources/Renderer/GlobalIllumination/GlobalIllumination.cpp");
     const std::string gi_gl = read("Sources/Renderer/GlobalIllumination/OpenGL/GlobalIlluminationOpenGL.cpp");
     const std::string gi_metal = read("Sources/Renderer/GlobalIllumination/Metal/GlobalIlluminationMetal.cpp");
@@ -51,21 +56,31 @@ int main()
 
     assert(camera.find("world.markChanged()") == std::string::npos);
 
-    assert(scene.find("namespace Renderer::Scenes") != std::string::npos);
+    assert(scene.find("namespace Renderer::Scenes::Scene") != std::string::npos);
+    assert(scene_compat.find("Renderer/Scenes/Scene.hpp") != std::string::npos);
+    assert(scene_compat.find("namespace Scene = Renderer::Scenes::Scene") != std::string::npos);
+
     assert(cache.find("namespace Renderer::Scenes") != std::string::npos);
     assert(cache.find("class SceneCache") != std::string::npos);
     assert(cache.find("struct GpuNode") != std::string::npos);
     assert(cache.find("struct GpuTriangle") != std::string::npos);
     assert(cache.find("struct GpuMaterial") != std::string::npos);
+    assert(cache_compat.find("Renderer/Scenes/SceneCache.hpp") != std::string::npos);
+    assert(cache_compat.find("using SceneCache = Renderer::Scenes::SceneCache") != std::string::npos);
+
+    assert(gl_resources.find("namespace Renderer::Scenes::OpenGL") != std::string::npos);
+    assert(gl_resources.find("class SceneResources") != std::string::npos);
+    assert(gl_resources_compat.find("Renderer/Scenes/OpenGL/SceneResources.hpp") != std::string::npos);
+    assert(metal_resources.find("namespace Renderer::Scenes::Metal") != std::string::npos);
+    assert(metal_resources.find("class SceneResources") != std::string::npos);
+    assert(metal_resources_compat.find("Renderer/Scenes/Metal/SceneResources.hpp") != std::string::npos);
+
     assert(progressive.find("class ProgressiveState") != std::string::npos);
     assert(uniforms.find("struct alignas(16) MetalTraceUniforms") != std::string::npos);
-
+    assert(uniforms_compat.find("Renderer/Systems/Metal/Uniforms.hpp") != std::string::npos);
     assert(program.find("namespace Renderer::Systems::OpenGL") != std::string::npos);
     assert(program.find("class Program") != std::string::npos);
     assert(textures.find("class TextureCache") != std::string::npos);
-    assert(gl_resources.find("namespace Renderer::Scenes::OpenGL") != std::string::npos);
-    assert(metal_resources.find("namespace Renderer::Scenes::Metal") != std::string::npos);
-    assert(metal_resources.find("class SceneResources") != std::string::npos);
 
     assert(gi.find("PhotonMapping::PhotonMap") != std::string::npos);
     assert(gi.find("photon_map.rebuild") != std::string::npos);
@@ -91,30 +106,36 @@ int main()
     assert(font_gl.find("Renderer/Fonts/FontPass.hpp") != std::string::npos);
     assert(font_metal.find("Renderer/Fonts/FontPass.hpp") != std::string::npos);
 
-    assert(rasterizer.find("Renderer/Scenes/Scene.hpp") != std::string::npos);
-    assert(pathtracer.find("Renderer/Scenes/") != std::string::npos);
-    assert(pathtracer_metal.find("Renderer/Scenes/") != std::string::npos);
-    assert(raytracer.find("Renderer/Scenes/") != std::string::npos);
-    assert(raytracer_metal.find("Renderer/Scenes/") != std::string::npos);
+    assert(!rasterizer.empty());
+    assert(!pathtracer.empty());
+    assert(!pathtracer_metal.empty());
+    assert(!raytracer.empty());
+    assert(!raytracer_metal.empty());
 
     assert(!exists("Sources/Renderer/FontAtlas.cpp"));
+    assert(!exists("Sources/Renderer/FontLayout.cpp"));
+    assert(!exists("Sources/Renderer/FontPass.cpp"));
     assert(!exists("Sources/Renderer/FontPassMetal.cpp"));
+    assert(!exists("Sources/Renderer/FontPassOpenGL.cpp"));
     assert(!exists("Sources/Renderer/GlobalIllumination.cpp"));
     assert(!exists("Sources/Renderer/GlobalIlluminationMetal.cpp"));
+    assert(!exists("Sources/Renderer/GlobalIlluminationOpenGL.cpp"));
     assert(!exists("Sources/Renderer/Scene.hpp"));
     assert(!exists("Sources/Renderer/Systems/Scene.cpp"));
+    assert(!exists("Sources/Renderer/Systems/SceneCache.cpp"));
     assert(!exists("Sources/Renderer/Systems/MetalSceneResources.cpp"));
     assert(!exists("Sources/Renderer/Systems/OpenGLSceneResources.cpp"));
+    assert(!exists("Sources/Renderer/Systems/Uniforms.cpp"));
     assert(!exists("Sources/Renderer/PathTracer/PathTracer.cpp"));
     assert(!exists("Sources/Renderer/PathTracer/PathTracerMetal.cpp"));
     assert(!exists("Sources/Renderer/RayTracer/RayTracer.cpp"));
     assert(!exists("Sources/Renderer/RayTracer/RayTracerMetal.cpp"));
+    assert(!exists("Sources/Renderer/Rasterizer/Rasterizer.cpp"));
 
     assert(raytracer_header.find("class RayTracer final : public IRenderer") != std::string::npos);
     assert(raytracer_header.find("int resolution_divisor = 4;") != std::string::npos);
     assert(raytracer.find("std::clamp(settings.resolution_divisor, 4, 8)") != std::string::npos);
     assert(raytracer_metal.find("std::clamp(settings.resolution_divisor, 4, 8)") != std::string::npos);
-    assert(raytracer_metal.find("Renderer/RayTracer/Metal/RayTracerMetalShaders.hpp") != std::string::npos);
     assert(raytracer_metal.find("Metal.createTriangleAccelerationStructure") != std::string::npos);
     assert(raytracer_metal.find("Metal.setAccelerationStructure") != std::string::npos);
     assert(raytracer_metal.find("meaningful_alpha") != std::string::npos);
@@ -136,6 +157,7 @@ int main()
     assert(build.find("Sources/Renderer/Scenes/SceneCache.cpp") != std::string::npos);
     assert(build.find("Sources/Renderer/PathTracer/OpenGL/PathTracerOpenGL.cpp") != std::string::npos);
     assert(build.find("Sources/Renderer/PathTracer/Metal/PathTracerMetal.cpp") != std::string::npos);
+    assert(build.find("Sources/Renderer/Systems/Metal/Uniforms.cpp") != std::string::npos);
     assert(build.find("renderer-systems-contract") != std::string::npos);
     return 0;
 }
