@@ -923,20 +923,20 @@ struct Rasterizer::Impl {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
+        if (!camera.valid) return;
+
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
         applyInfinitePerspective(
-            camera.valid ? camera.fov_degrees : 60.0f,
+            camera.fov_degrees,
             static_cast<float>(width) / static_cast<float>(height),
-            camera.valid ? camera.near_plane : 0.1f
+            camera.near_plane
         );
 
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
-        if (camera.valid) {
-            const Math::Mat4 view = cameraView(camera);
-            glMultMatrixf(view.data());
-        }
+        const Math::Mat4 view = cameraView(camera);
+        glMultMatrixf(view.data());
 
         glDisable(GL_LIGHTING);
         glEnable(GL_DEPTH_TEST);
