@@ -137,15 +137,26 @@ struct PathTracer::Impl {
         return initialized && settings.enabled;
     }
 
+    bool configured() const
+    {
+        return settings.resolution_divisor > 0 && settings.samples_per_frame > 0;
+    }
+
     void updateTraceResolution()
     {
-        const int divisor = std::clamp(settings.resolution_divisor, 1, 4);
+        const int divisor = settings.resolution_divisor;
+        if (divisor <= 0) {
+            trace_width = 0;
+            trace_height = 0;
+            return;
+        }
         trace_width = std::max(width / divisor, 1);
         trace_height = std::max(height / divisor, 1);
     }
 
     bool createFloatTexture(GLuint& target, GLint filter)
     {
+        if (trace_width <= 0 || trace_height <= 0) return false;
         GLuint texture = 0u;
         glGenTextures(1, &texture);
         if (texture == 0u) return false;
@@ -288,7 +299,7 @@ struct PathTracer::Impl {
 
     void dispatch(const Systems::CameraState& camera, const Systems::LightState& light)
     {
-        const int samples = std::clamp(settings.samples_per_frame, 1, 4);
+        const int samples = settings.samples_per_frame;
         trace_program.use();
         setVec2(trace_uniforms.resolution, static_cast<float>(trace_width), static_cast<float>(trace_height));
         setVec3(trace_uniforms.camera_position, camera.position);
@@ -357,6 +368,10 @@ PathTracer::~PathTracer()
 bool PathTracer::init()
 {
     if (impl_->initialized) return true;
+    if (!impl_->configured()) {
+        std::fprintf(stderr, "[PathTracer]: configure the renderer before init\n");
+        return false;
+    }
     if (!lwcglModernGLAvailable() && lwcglLoadModernGL() != 0) {
         std::fprintf(stderr, "[PathTracer]: modern OpenGL unavailable\n");
         return false;
@@ -376,6 +391,8 @@ bool PathTracer::init()
         return false;
     }
 
+    impl_->width = std::max(Display.getWidth(), 1);
+    impl_->height = std::max(Display.getHeight(), 1);
     impl_->updateTraceResolution();
     if (!impl_->createPrograms() || !impl_->createTraceTargets()) {
         shutdown();
@@ -399,6 +416,15 @@ bool PathTracer::init()
         impl_->trace_height
     );
     return true;
+}
+
+bool PathTracer::activate()
+{
+    return impl_ && impl_->initialized;
+}
+
+void PathTracer::deactivate()
+{
 }
 
 void PathTracer::resize(int width, int height)
