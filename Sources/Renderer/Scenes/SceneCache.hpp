@@ -66,8 +66,13 @@ class SceneCache {
 public:
     static void setLeafSize(std::uint32_t value) { leaf_size_ = value; }
     static void setMaximumTriangles(std::size_t value) { maximum_triangles_ = value; }
+    static void setOpacityCutoff(float value) { opacity_cutoff_ = value; }
+    static void setAlphaThreshold(std::uint8_t value) { alpha_threshold_ = value; }
+
     static std::uint32_t leafSize() { return leaf_size_; }
     static std::size_t maximumTriangles() { return maximum_triangles_; }
+    static float opacityCutoff() { return opacity_cutoff_; }
+    static std::uint8_t alphaThreshold() { return alpha_threshold_; }
 
     bool sync(
         const Ecs::World& world,
@@ -100,6 +105,8 @@ private:
 
     inline static std::uint32_t leaf_size_ = 0u;
     inline static std::size_t maximum_triangles_ = 0u;
+    inline static float opacity_cutoff_ = 0.0f;
+    inline static std::uint8_t alpha_threshold_ = 0u;
 
     std::vector<GpuNode> nodes_;
     std::vector<GpuTriangle> triangles_;
