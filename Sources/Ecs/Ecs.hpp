@@ -1,6 +1,7 @@
 #ifndef RW_ENGINE_ECS_HPP
 #define RW_ENGINE_ECS_HPP
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -17,6 +18,16 @@ namespace Ecs {
 
 using Entity = std::uint32_t;
 constexpr Entity INVALID_ENTITY = UINT32_MAX;
+
+enum class ChangeKind : std::uint8_t {
+    Structure,
+    Transform,
+    Resource,
+    Camera,
+    Lighting,
+    Animation,
+    Count,
+};
 
 class World {
 private:
@@ -117,7 +128,7 @@ public:
     {
         requireAlive(entity);
         T& component = storage<T>().add(entity, std::forward<Args>(args)...);
-        touch();
+        touch(ChangeKind::Structure);
         return component;
     }
 
@@ -148,7 +159,7 @@ public:
         Storage<T> *value = findStorage<T>();
         if (!value || !value->has(entity)) return false;
         value->remove(entity);
-        touch();
+        touch(ChangeKind::Structure);
         return true;
     }
 
@@ -220,7 +231,14 @@ public:
     std::size_t size() const { return entities_.size(); }
 
     std::uint64_t changeRevision() const { return change_revision_; }
-    void markChanged() { touch(); }
+    std::uint64_t changeRevision(ChangeKind kind) const
+    {
+        const std::size_t index = static_cast<std::size_t>(kind);
+        return index < change_revisions_.size() ? change_revisions_[index] : change_revision_;
+    }
+
+    void markChanged() { touchAll(); }
+    void markChanged(ChangeKind kind) { touch(kind); }
 
 private:
     template <typename T>
@@ -255,13 +273,15 @@ private:
         if (!alive(entity)) throw std::out_of_range("ECS entity is not alive");
     }
 
-    void touch();
+    void touch(ChangeKind kind);
+    void touchAll();
 
     Entity next_entity_ = 0u;
     std::vector<Entity> entities_;
     std::vector<std::size_t> entity_sparse_;
     std::unordered_map<std::type_index, std::unique_ptr<StorageBase>> storages_;
     std::uint64_t change_revision_ = 0u;
+    std::array<std::uint64_t, static_cast<std::size_t>(ChangeKind::Count)> change_revisions_{};
 };
 
 } // namespace Ecs

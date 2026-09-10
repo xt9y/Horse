@@ -16,13 +16,25 @@ std::uint64_t nextRevision()
 } // namespace
 
 World::World()
-    : change_revision_(nextRevision())
 {
+    const std::uint64_t revision = nextRevision();
+    change_revision_ = revision;
+    change_revisions_.fill(revision);
 }
 
-void World::touch()
+void World::touch(ChangeKind kind)
 {
-    change_revision_ = nextRevision();
+    const std::uint64_t revision = nextRevision();
+    change_revision_ = revision;
+    const std::size_t index = static_cast<std::size_t>(kind);
+    if (index < change_revisions_.size()) change_revisions_[index] = revision;
+}
+
+void World::touchAll()
+{
+    const std::uint64_t revision = nextRevision();
+    change_revision_ = revision;
+    change_revisions_.fill(revision);
 }
 
 Entity World::createEntity()
@@ -41,7 +53,7 @@ Entity World::createEntity()
     }
     entity_sparse_[entity] = position;
 
-    touch();
+    touch(ChangeKind::Structure);
     return entity;
 }
 
@@ -64,7 +76,7 @@ bool World::destroyEntity(Entity entity)
 
     entities_.pop_back();
     entity_sparse_[entity] = missing_entity;
-    touch();
+    touch(ChangeKind::Structure);
     return true;
 }
 
