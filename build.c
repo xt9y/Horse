@@ -81,6 +81,7 @@ void build(C_Build *b)
     c_dep_sources(imgui, "backends/imgui_impl_metal.mm");
     c_dep_flag(imgui, "-I/opt/homebrew/include");
     c_dep_flag(imgui, "-DGL_SILENCE_DEPRECATION");
+    c_dep_flag(imgui, "-fobjc-arc");
 #else
     c_dep_sources(imgui, "backends/imgui_impl_opengl3.cpp");
 #endif
@@ -115,6 +116,7 @@ void build(C_Build *b)
     c_sources(library, "Sources/Renderer/PathTracer/Metal/PathTracerMetal.cpp");
     c_sources(library, "Sources/Renderer/RayTracer/Metal/RayTracerMetal.cpp");
     c_sources(library, "Sources/UI/Metal/UIMetal.mm");
+    c_flag(library, "-fobjc-arc");
 #else
     c_sources(library, "Sources/Renderer/GlobalIllumination/OpenGL/GlobalIlluminationOpenGL.cpp");
     c_sources(library, "Sources/Renderer/Scenes/OpenGL/SceneResources.cpp");
