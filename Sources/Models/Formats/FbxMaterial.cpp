@@ -360,6 +360,22 @@ bool convertMaterial(
         }
     }
 
+    if (out->diffuse_texture != INVALID_TEXTURE && out->opacity_texture != INVALID_TEXTURE) {
+        std::string combine_error;
+        const TextureHandle combined = combineTextureOpacity(
+            out->diffuse_texture,
+            out->opacity_texture,
+            &combine_error
+        );
+        if (combined == INVALID_TEXTURE) {
+            return fail(
+                error,
+                "FBX material `" + material->name + "` opacity composition failed: " + combine_error
+            );
+        }
+        out->diffuse_texture = combined;
+    }
+
     return true;
 }
 
