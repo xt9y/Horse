@@ -153,14 +153,30 @@ Classification System::classify(
 
 Result System::evaluate(const Ecs::World& world, int width, int height) const
 {
+    std::vector<Scenes::Scene::RenderItem> visible_items;
+    return collectVisibleRenderItems(world, width, height, visible_items);
+}
+
+Result System::collectVisibleRenderItems(
+    const Ecs::World& world,
+    int width,
+    int height,
+    std::vector<Scenes::Scene::RenderItem>& out) const
+{
     Result result;
     result.frustum = makeFrustum(world, width, height);
-    if (!result.frustum.valid) return result;
-
     std::vector<Scenes::Scene::RenderItem> items;
     Scenes::Scene::collectRenderItems(world, items);
+    out.clear();
+
+    if (!result.frustum.valid) {
+        out = std::move(items);
+        return result;
+    }
+
     result.visible.reserve(items.size());
     result.culled.reserve(items.size());
+    out.reserve(items.size());
 
     for (const Scenes::Scene::RenderItem& item : items) {
         if (classify(result.frustum, item) == Classification::Outside) {
@@ -169,6 +185,7 @@ Result System::evaluate(const Ecs::World& world, int width, int height) const
         } else {
             result.visible.push_back(item.entity);
             result.visible_triangles += triangleCount(item);
+            out.push_back(item);
         }
     }
     return result;

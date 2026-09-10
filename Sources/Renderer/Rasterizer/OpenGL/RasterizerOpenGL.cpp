@@ -684,7 +684,8 @@ struct Rasterizer::Impl {
 
     bool itemVisible(const Systems::Scene::RenderItem& item, bool shadow_pass) const
     {
-        if (shadow_pass || !settings.viewport_culling || !viewport_filter_valid) return true;
+        (void)shadow_pass;
+        if (!settings.viewport_culling || !viewport_filter_valid) return true;
         return viewport_visible.find(item.entity) != viewport_visible.end();
     }
 

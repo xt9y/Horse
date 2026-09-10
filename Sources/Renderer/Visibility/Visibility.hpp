@@ -45,6 +45,11 @@ public:
     Frustum makeFrustum(const Ecs::World& world, int width, int height) const;
     Classification classify(const Frustum& frustum, const Scenes::Scene::RenderItem& item) const;
     Result evaluate(const Ecs::World& world, int width, int height) const;
+    Result collectVisibleRenderItems(
+        const Ecs::World& world,
+        int width,
+        int height,
+        std::vector<Scenes::Scene::RenderItem>& out) const;
     std::array<Vec3, 8> corners(const Frustum& frustum) const;
 
 private:

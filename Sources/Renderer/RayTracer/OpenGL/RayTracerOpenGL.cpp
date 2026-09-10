@@ -9,6 +9,7 @@
 #include "Renderer/Systems/OpenGLSceneResources.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
+#include "Renderer/Visibility/Visibility.hpp"
 
 #include <lwcgl/glmodern.h>
 #include <lwcgl/lwcgl.h>
@@ -241,7 +242,7 @@ struct RayTracer::Impl {
         const std::uint64_t revision = world.changeRevision();
         if (revision == world_revision && resources.ready()) return true;
 
-        Systems::Scene::collectRenderItems(world, render_items);
+        Visibility::system().collectVisibleRenderItems(world, width, height, render_items);
         const std::uint64_t signature = scene.signature(world, render_items);
         if (signature != scene_signature || !resources.ready()) {
             std::string error;

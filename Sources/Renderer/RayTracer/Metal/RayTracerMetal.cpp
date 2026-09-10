@@ -9,6 +9,7 @@
 #include "Renderer/Systems/MetalSceneResources.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
+#include "Renderer/Visibility/Visibility.hpp"
 #include "Renderer/Systems/Uniforms.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -285,7 +286,7 @@ struct RayTracer::Impl {
             return true;
         }
 
-        Systems::Scene::collectRenderItems(world, render_items);
+        Visibility::system().collectVisibleRenderItems(world, width, height, render_items);
         updateAlphaCutoutState();
         const std::uint64_t signature = scene.signature(world, render_items);
         if (signature != scene_signature || !resources.ready() ||
