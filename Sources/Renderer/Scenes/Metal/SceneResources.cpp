@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <unordered_map>
 
 namespace Renderer::Scenes::Metal {
@@ -22,6 +23,10 @@ struct SceneResources::Impl {
     LWMGLTexture white_texture = nullptr;
     std::unordered_map<Models::TextureHandle, LWMGLTexture> texture_cache;
     std::array<LWMGLTexture, MaximumTextureSlots> texture_slots{};
+    std::uint64_t geometry_revision = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t resource_revision = std::numeric_limits<std::uint64_t>::max();
+    bool geometry_ready = false;
+    bool resources_ready = false;
     bool ready = false;
 
     bool replaceBuffer(LWMGLBuffer& target, const void *data, std::size_t bytes)
@@ -42,9 +47,8 @@ struct SceneResources::Impl {
         if (found != texture_cache.end()) return found->second;
 
         const Models::TextureAsset *asset = Models::texture(handle);
-        if (!asset || asset->image.width <= 0 || asset->image.height <= 0 || asset->image.rgba.empty()) {
+        if (!asset || asset->image.width <= 0 || asset->image.height <= 0 || asset->image.rgba.empty())
             return nullptr;
-        }
 
         const LWMGLTextureDesc desc = {
             static_cast<std::uint32_t>(asset->image.width),
@@ -84,6 +88,10 @@ struct SceneResources::Impl {
 
         if (white_texture) ::Metal.destroyTexture(white_texture);
         white_texture = nullptr;
+        geometry_revision = std::numeric_limits<std::uint64_t>::max();
+        resource_revision = std::numeric_limits<std::uint64_t>::max();
+        geometry_ready = false;
+        resources_ready = false;
         ready = false;
     }
 };
@@ -128,34 +136,61 @@ bool SceneResources::init(std::string *error)
 bool SceneResources::sync(const Renderer::Scenes::SceneCache& scene, std::string *error)
 {
     if (!impl_ || !init(error)) return false;
+    if (error) error->clear();
     if (scene.textureHandles().size() > MaximumTextureSlots) {
         if (error) *error = "Metal scene texture slot capacity exceeded";
         return false;
     }
 
-    if (
-        !impl_->replaceBuffer(impl_->node_buffer, scene.nodes().data(), scene.nodes().size() * sizeof(GpuNode)) ||
-        !impl_->replaceBuffer(impl_->triangle_buffer, scene.triangles().data(), scene.triangles().size() * sizeof(GpuTriangle)) ||
-        !impl_->replaceBuffer(impl_->material_buffer, scene.materials().data(), scene.materials().size() * sizeof(GpuMaterial)))
-    {
-        if (error) *error = "failed to upload Metal scene buffers";
-        impl_->ready = false;
-        return false;
-    }
-
-    impl_->texture_slots.fill(impl_->white_texture);
-    for (std::size_t slot = 0u; slot < scene.textureHandles().size(); ++slot) {
-        LWMGLTexture texture = impl_->textureFor(scene.textureHandles()[slot]);
-        if (!texture) {
-            if (error) *error = "failed to upload Metal scene texture";
+    if (!impl_->geometry_ready || impl_->geometry_revision != scene.geometryRevision()) {
+        if (
+            !impl_->replaceBuffer(
+                impl_->node_buffer,
+                scene.nodes().data(),
+                scene.nodes().size() * sizeof(GpuNode)) ||
+            !impl_->replaceBuffer(
+                impl_->triangle_buffer,
+                scene.triangles().data(),
+                scene.triangles().size() * sizeof(GpuTriangle)))
+        {
+            if (error) *error = "failed to upload Metal scene geometry buffers";
+            impl_->geometry_ready = false;
             impl_->ready = false;
             return false;
         }
-        impl_->texture_slots[slot] = texture;
+        impl_->geometry_revision = scene.geometryRevision();
+        impl_->geometry_ready = true;
     }
 
-    impl_->ready = true;
-    return true;
+    if (!impl_->resources_ready || impl_->resource_revision != scene.resourceRevision()) {
+        if (!impl_->replaceBuffer(
+                impl_->material_buffer,
+                scene.materials().data(),
+                scene.materials().size() * sizeof(GpuMaterial)))
+        {
+            if (error) *error = "failed to upload Metal scene material buffer";
+            impl_->resources_ready = false;
+            impl_->ready = false;
+            return false;
+        }
+
+        impl_->texture_slots.fill(impl_->white_texture);
+        for (std::size_t slot = 0u; slot < scene.textureHandles().size(); ++slot) {
+            LWMGLTexture texture = impl_->textureFor(scene.textureHandles()[slot]);
+            if (!texture) {
+                if (error) *error = "failed to upload Metal scene texture";
+                impl_->resources_ready = false;
+                impl_->ready = false;
+                return false;
+            }
+            impl_->texture_slots[slot] = texture;
+        }
+        impl_->resource_revision = scene.resourceRevision();
+        impl_->resources_ready = true;
+    }
+
+    impl_->ready = impl_->geometry_ready && impl_->resources_ready;
+    return impl_->ready;
 }
 
 bool SceneResources::syncVisibility(

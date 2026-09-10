@@ -23,6 +23,14 @@ std::vector<Model>& models() { static std::vector<Model> values; return values; 
 std::vector<MeshData>& meshes() { static std::vector<MeshData> values; return values; }
 std::vector<MaterialData>& materials() { static std::vector<MaterialData> values; return values; }
 std::unordered_map<std::string, ModelHandle>& cache() { static std::unordered_map<std::string, ModelHandle> values; return values; }
+std::uint64_t& resourceRevisionStorage() { static std::uint64_t value = 1u; return value; }
+
+void touchResources()
+{
+    std::uint64_t& value = resourceRevisionStorage();
+    ++value;
+    if (value == 0u) value = 1u;
+}
 
 std::string normalizedPath(const std::string& path)
 {
@@ -100,6 +108,7 @@ MeshHandle registerMesh(MeshData mesh)
     if (meshes().size() >= static_cast<std::size_t>(INVALID_MESH)) return INVALID_MESH;
     const MeshHandle handle = static_cast<MeshHandle>(meshes().size());
     meshes().push_back(std::move(mesh));
+    touchResources();
     return handle;
 }
 
@@ -108,6 +117,7 @@ MaterialHandle registerMaterial(MaterialData material)
     if (materials().size() >= static_cast<std::size_t>(INVALID_MATERIAL)) return INVALID_MATERIAL;
     const MaterialHandle handle = static_cast<MaterialHandle>(materials().size());
     materials().push_back(std::move(material));
+    touchResources();
     return handle;
 }
 
@@ -132,6 +142,7 @@ bool updateMaterial(MaterialHandle handle, const MaterialData& replacement)
 {
     if (handle >= materials().size()) return false;
     materials()[handle] = replacement;
+    touchResources();
     return true;
 }
 
@@ -179,6 +190,11 @@ bool animated(ModelHandle handle)
         && animationCount(handle) != 0u;
 }
 
+std::uint64_t resourceRevision()
+{
+    return resourceRevisionStorage();
+}
+
 void clearCache()
 {
     cache().clear();
@@ -187,6 +203,7 @@ void clearCache()
     materials().clear();
     clearTextureCache();
     Animation::clearAssets();
+    touchResources();
 }
 
 } // namespace Models

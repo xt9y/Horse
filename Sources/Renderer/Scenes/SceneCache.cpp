@@ -6,6 +6,7 @@
 #include "Renderer/Math.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <limits>
@@ -20,6 +21,9 @@ using Math::modelMatrix;
 using Math::normalize;
 using Math::transformNormal;
 using Math::transformPoint;
+
+constexpr std::uint32_t PackedTextureNone = 31u;
+constexpr float MaximumPackedEmissiveStrength = 16.0f;
 
 Vec3 subtract(const Vec3& a, const Vec3& b)
 {
@@ -92,6 +96,70 @@ bool textureHasTransparency(Models::TextureHandle handle)
     return false;
 }
 
+std::uint32_t unorm8(float value)
+{
+    return static_cast<std::uint32_t>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
+}
+
+std::uint32_t packedTextureSlot(int slot)
+{
+    return slot >= 0 && slot < static_cast<int>(PackedTextureNone)
+        ? static_cast<std::uint32_t>(slot)
+        : PackedTextureNone;
+}
+
+std::uint32_t packTextureSlots(const std::array<int, 6>& slots)
+{
+    std::uint32_t result = 0u;
+    for (std::size_t index = 0u; index < slots.size(); ++index) {
+        result |= packedTextureSlot(slots[index]) << static_cast<std::uint32_t>(index * 5u);
+    }
+    return result;
+}
+
+std::uint32_t packMaterialParameters(const Models::MaterialData& material)
+{
+    return
+        (unorm8(material.roughness) << 0u) |
+        (unorm8(material.metallic) << 8u) |
+        (unorm8(material.ambient_occlusion) << 16u) |
+        (unorm8(material.clearcoat) << 24u);
+}
+
+std::uint32_t packEmissive(const Models::MaterialData& material)
+{
+    const std::uint32_t strength = unorm8(
+        std::clamp(material.emissive_strength, 0.0f, MaximumPackedEmissiveStrength) /
+        MaximumPackedEmissiveStrength
+    );
+    return
+        (unorm8(material.emissive_color.x) << 0u) |
+        (unorm8(material.emissive_color.y) << 8u) |
+        (unorm8(material.emissive_color.z) << 16u) |
+        (strength << 24u);
+}
+
+void appendMaterialTextures(
+    const Models::MaterialData& material,
+    std::vector<Models::TextureHandle>& out,
+    std::unordered_set<Models::TextureHandle>& seen)
+{
+    const std::array<Models::TextureHandle, 7> handles {{
+        material.diffuse_texture,
+        material.normal_texture,
+        material.roughness_texture,
+        material.metallic_texture,
+        material.ambient_occlusion_texture,
+        material.emissive_texture,
+        material.opacity_texture,
+    }};
+
+    for (const Models::TextureHandle handle : handles) {
+        if (handle == Models::INVALID_TEXTURE || !seen.insert(handle).second) continue;
+        out.push_back(handle);
+    }
+}
+
 } // namespace
 
 std::uint64_t SceneCache::signature(
@@ -99,6 +167,7 @@ std::uint64_t SceneCache::signature(
     const std::vector<Scene::RenderItem>& items) const
 {
     std::uint64_t hash = 1469598103934665603ull;
+    hashValue(hash, config_revision_);
     for (const Scene::RenderItem& item : items) {
         if (!item.mesh_component || !item.transform) continue;
         hashValue(hash, item.entity);
@@ -116,6 +185,19 @@ std::uint64_t SceneCache::signature(
                 hashValue(hash, animator->pose.revision);
             }
         }
+    }
+    return hash;
+}
+
+std::uint64_t SceneCache::resourceSignature(
+    const std::vector<Scene::RenderItem>& items) const
+{
+    std::uint64_t hash = 1469598103934665603ull;
+    hashValue(hash, config_revision_);
+    hashValue(hash, Models::resourceRevision());
+    for (const Scene::RenderItem& item : items) {
+        if (!item.mesh_component) continue;
+        hashValue(hash, item.mesh_component->material);
     }
     return hash;
 }
@@ -195,7 +277,7 @@ bool SceneCache::sync(
     std::size_t maximum_texture_slots,
     std::string *error)
 {
-    clear();
+    if (error) error->clear();
     render_items_ = items;
 
     if (maximum_triangles_ == 0u) {
@@ -203,63 +285,134 @@ bool SceneCache::sync(
         return false;
     }
 
+    const std::uint64_t current_resource_signature = resourceSignature(items);
+    if (!resources_initialized_ || current_resource_signature != resource_signature_) {
+        if (!rebuildResources(items, maximum_texture_slots, error)) {
+            clear();
+            return false;
+        }
+        resource_signature_ = current_resource_signature;
+        resources_initialized_ = true;
+        ++resource_revision_;
+        ++resource_updates_;
+    }
+
+    const std::uint64_t current_geometry_signature = signature(world, items);
+    if (!geometry_initialized_ || current_geometry_signature != geometry_signature_) {
+        if (!rebuildGeometry(world, items, error)) {
+            clear();
+            return false;
+        }
+        geometry_signature_ = current_geometry_signature;
+        geometry_initialized_ = true;
+        ++geometry_revision_;
+        ++geometry_updates_;
+    }
+
+    return true;
+}
+
+bool SceneCache::rebuildResources(
+    const std::vector<Scene::RenderItem>& items,
+    std::size_t maximum_texture_slots,
+    std::string *error)
+{
+    materials_.clear();
+    texture_handles_.clear();
+    material_indices_.clear();
+
     std::vector<Models::TextureHandle> requested_textures;
     std::unordered_set<Models::TextureHandle> seen_textures;
+    std::vector<Models::MaterialHandle> requested_materials;
+    std::unordered_set<Models::MaterialHandle> seen_materials;
+
     for (const Scene::RenderItem& item : items) {
-        if (!item.material || item.material->opacity < opacity_cutoff_) continue;
-        const Models::TextureHandle handle = item.material->diffuse_texture;
-        if (handle == Models::INVALID_TEXTURE) continue;
-        if (seen_textures.insert(handle).second) requested_textures.push_back(handle);
+        if (!item.mesh_component || !item.material || item.material->opacity < opacity_cutoff_) continue;
+        appendMaterialTextures(*item.material, requested_textures, seen_textures);
+        const Models::MaterialHandle handle = item.mesh_component->material;
+        if (handle != Models::INVALID_MATERIAL && seen_materials.insert(handle).second)
+            requested_materials.push_back(handle);
     }
 
     std::stable_sort(
         requested_textures.begin(),
         requested_textures.end(),
         [](Models::TextureHandle a, Models::TextureHandle b) {
-            return textureHasTransparency(a) && !textureHasTransparency(b);
+            const bool alpha_a = textureHasTransparency(a);
+            const bool alpha_b = textureHasTransparency(b);
+            if (alpha_a != alpha_b) return alpha_a && !alpha_b;
+            return a < b;
         }
     );
 
-    if (requested_textures.size() > maximum_texture_slots) {
+    const std::size_t packed_limit = std::min<std::size_t>(maximum_texture_slots, PackedTextureNone);
+    if (requested_textures.size() > packed_limit) {
         if (error) {
             *error = "ray scene requires " + std::to_string(requested_textures.size()) +
-                " diffuse textures but backend supports " + std::to_string(maximum_texture_slots);
+                " material textures but backend supports " + std::to_string(packed_limit);
         }
-        clear();
         return false;
     }
 
     texture_handles_ = requested_textures;
     std::unordered_map<Models::TextureHandle, int> texture_indices;
-    for (std::size_t index = 0u; index < texture_handles_.size(); ++index) {
+    texture_indices.reserve(texture_handles_.size());
+    for (std::size_t index = 0u; index < texture_handles_.size(); ++index)
         texture_indices.emplace(texture_handles_[index], static_cast<int>(index));
-    }
 
-    std::unordered_map<Models::MaterialHandle, std::uint32_t> material_indices;
-    auto materialIndex = [&](Models::MaterialHandle handle) -> std::uint32_t {
-        const auto found = material_indices.find(handle);
-        if (found != material_indices.end()) return found->second;
+    auto textureSlot = [&](Models::TextureHandle handle) -> int {
+        if (handle == Models::INVALID_TEXTURE) return -1;
+        const auto found = texture_indices.find(handle);
+        return found == texture_indices.end() ? -1 : found->second;
+    };
+
+    std::sort(requested_materials.begin(), requested_materials.end());
+    materials_.push_back(GpuMaterial{});
+    material_indices_.reserve(requested_materials.size());
+
+    for (const Models::MaterialHandle handle : requested_materials) {
+        const Models::MaterialData *material = Models::material(handle);
+        if (!material) continue;
 
         GpuMaterial gpu_material;
-        const Models::MaterialData *material = Models::material(handle);
-        if (material) {
-            gpu_material.base_color = {
-                material->color.x,
-                material->color.y,
-                material->color.z,
-                std::clamp(material->opacity, 0.0f, 1.0f),
-            };
-            if (material->diffuse_texture != Models::INVALID_TEXTURE) {
-                const auto texture = texture_indices.find(material->diffuse_texture);
-                if (texture != texture_indices.end()) gpu_material.data[0] = texture->second;
-            }
-        }
+        gpu_material.base_color = {
+            material->color.x,
+            material->color.y,
+            material->color.z,
+            std::clamp(material->opacity, 0.0f, 1.0f),
+        };
+        gpu_material.data[0] = textureSlot(material->diffuse_texture);
+        const std::array<int, 6> slots {{
+            textureSlot(material->normal_texture),
+            textureSlot(material->roughness_texture),
+            textureSlot(material->metallic_texture),
+            textureSlot(material->ambient_occlusion_texture),
+            textureSlot(material->emissive_texture),
+            textureSlot(material->opacity_texture),
+        }};
+        gpu_material.data[1] = std::bit_cast<std::int32_t>(packTextureSlots(slots));
+        gpu_material.data[2] = std::bit_cast<std::int32_t>(packMaterialParameters(*material));
+        gpu_material.data[3] = std::bit_cast<std::int32_t>(packEmissive(*material));
 
         const std::uint32_t index = static_cast<std::uint32_t>(materials_.size());
         materials_.push_back(gpu_material);
-        material_indices.emplace(handle, index);
-        return index;
-    };
+        material_indices_.emplace(handle, index);
+    }
+
+    return true;
+}
+
+bool SceneCache::rebuildGeometry(
+    const Ecs::World& world,
+    const std::vector<Scene::RenderItem>& items,
+    std::string *error)
+{
+    (void)error;
+    nodes_.clear();
+    triangles_.clear();
+
+    std::vector<Vec3> positions;
+    std::vector<Vec3> normals;
 
     for (const Scene::RenderItem& item : items) {
         if (triangles_.size() >= maximum_triangles_) break;
@@ -269,7 +422,10 @@ bool SceneCache::sync(
         if (mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
         if (item.material && item.material->opacity < opacity_cutoff_) continue;
 
-        const std::uint32_t material_index = materialIndex(item.mesh_component->material);
+        std::uint32_t material_index = 0u;
+        const auto material = material_indices_.find(item.mesh_component->material);
+        if (material != material_indices_.end()) material_index = material->second;
+
         const Math::Mat4 model = modelMatrix(*item.transform);
         const Math::Mat4 world_to_object = inverseModelMatrix(*item.transform);
 
@@ -282,8 +438,8 @@ bool SceneCache::sync(
             if (animator && !animator->pose.skin.empty()) pose = &animator->pose;
         }
 
-        std::vector<Vec3> positions(mesh->vertices.size());
-        std::vector<Vec3> normals(mesh->vertices.size());
+        positions.resize(mesh->vertices.size());
+        normals.resize(mesh->vertices.size());
         for (std::size_t index = 0u; index < mesh->vertices.size(); ++index) {
             const Models::Vertex& vertex = mesh->vertices[index];
             Vec3 local_position{vertex.position.x, vertex.position.y, vertex.position.z};
@@ -315,7 +471,8 @@ bool SceneCache::sync(
             const std::uint32_t i0 = mesh->indices[offset + 0u];
             const std::uint32_t i1 = mesh->indices[offset + 1u];
             const std::uint32_t i2 = mesh->indices[offset + 2u];
-            if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size()) continue;
+            if (i0 >= mesh->vertices.size() || i1 >= mesh->vertices.size() || i2 >= mesh->vertices.size())
+                continue;
 
             const Models::Vertex& v0 = mesh->vertices[i0];
             const Models::Vertex& v1 = mesh->vertices[i1];
@@ -340,21 +497,36 @@ bool SceneCache::sync(
         }
     }
 
-    if (materials_.empty()) materials_.push_back(GpuMaterial{});
     if (!triangles_.empty()) {
-        nodes_.reserve(triangles_.size() * 2u);
+        if (nodes_.capacity() < triangles_.size() * 2u)
+            nodes_.reserve(triangles_.size() * 2u);
         buildNode(0u, static_cast<std::uint32_t>(triangles_.size()));
     }
     return true;
 }
 
-void SceneCache::clear()
+void SceneCache::clearGeometry()
 {
     nodes_.clear();
     triangles_.clear();
+    geometry_initialized_ = false;
+}
+
+void SceneCache::clearResources()
+{
     materials_.clear();
     texture_handles_.clear();
+    material_indices_.clear();
+    resources_initialized_ = false;
+}
+
+void SceneCache::clear()
+{
+    clearGeometry();
+    clearResources();
     render_items_.clear();
+    geometry_signature_ = std::numeric_limits<std::uint64_t>::max();
+    resource_signature_ = std::numeric_limits<std::uint64_t>::max();
 }
 
 CameraState cameraState(const Scene::CameraState& source)

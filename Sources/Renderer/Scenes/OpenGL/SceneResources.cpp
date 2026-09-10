@@ -9,6 +9,11 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
+
+#ifndef GL_DYNAMIC_DRAW
+#define GL_DYNAMIC_DRAW 0x88E8
+#endif
 
 namespace Renderer::Scenes::OpenGL {
 
@@ -19,6 +24,10 @@ struct SceneResources::Impl {
     GLuint visibility_buffer = 0u;
     Systems::OpenGL::TextureCache textures;
     std::array<GLuint, MaximumTextureSlots> texture_slots{};
+    std::uint64_t geometry_revision = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t resource_revision = std::numeric_limits<std::uint64_t>::max();
+    bool geometry_ready = false;
+    bool resources_ready = false;
     bool ready = false;
 
     bool ensureBuffer(GLuint& buffer)
@@ -28,7 +37,7 @@ struct SceneResources::Impl {
         return buffer != 0u;
     }
 
-    bool uploadBuffer(GLuint& buffer, const void *data, std::size_t bytes)
+    bool uploadBuffer(GLuint& buffer, const void *data, std::size_t bytes, GLenum usage)
     {
         if (!ensureBuffer(buffer)) return false;
         GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer);
@@ -37,7 +46,7 @@ struct SceneResources::Impl {
             GL_SHADER_STORAGE_BUFFER,
             static_cast<LWCGLsizeiptr>(safe_bytes),
             bytes == 0u ? nullptr : data,
-            GL_STATIC_DRAW
+            usage
         );
         GL15.glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0u);
         return true;
@@ -57,6 +66,10 @@ struct SceneResources::Impl {
         visibility_buffer = 0u;
         textures.clear();
         texture_slots.fill(0u);
+        geometry_revision = std::numeric_limits<std::uint64_t>::max();
+        resource_revision = std::numeric_limits<std::uint64_t>::max();
+        geometry_ready = false;
+        resources_ready = false;
         ready = false;
     }
 };
@@ -73,34 +86,67 @@ SceneResources::~SceneResources()
 bool SceneResources::sync(const Renderer::Scenes::SceneCache& scene, std::string *error)
 {
     if (!impl_) return false;
+    if (error) error->clear();
+
     if (scene.textureHandles().size() > MaximumTextureSlots) {
         if (error) *error = "OpenGL scene texture slot capacity exceeded";
         return false;
     }
 
-    if (
-        !impl_->uploadBuffer(impl_->node_buffer, scene.nodes().data(), scene.nodes().size() * sizeof(GpuNode)) ||
-        !impl_->uploadBuffer(impl_->triangle_buffer, scene.triangles().data(), scene.triangles().size() * sizeof(GpuTriangle)) ||
-        !impl_->uploadBuffer(impl_->material_buffer, scene.materials().data(), scene.materials().size() * sizeof(GpuMaterial)))
-    {
-        if (error) *error = "failed to upload OpenGL scene buffers";
-        impl_->ready = false;
-        return false;
-    }
-
-    impl_->texture_slots.fill(0u);
-    for (std::size_t slot = 0u; slot < scene.textureHandles().size(); ++slot) {
-        const GLuint texture = static_cast<GLuint>(impl_->textures.texture(scene.textureHandles()[slot]));
-        if (texture == 0u) {
-            if (error) *error = "failed to upload OpenGL scene texture";
+    if (!impl_->geometry_ready || impl_->geometry_revision != scene.geometryRevision()) {
+        if (
+            !impl_->uploadBuffer(
+                impl_->node_buffer,
+                scene.nodes().data(),
+                scene.nodes().size() * sizeof(GpuNode),
+                GL_DYNAMIC_DRAW
+            ) ||
+            !impl_->uploadBuffer(
+                impl_->triangle_buffer,
+                scene.triangles().data(),
+                scene.triangles().size() * sizeof(GpuTriangle),
+                GL_DYNAMIC_DRAW
+            ))
+        {
+            if (error) *error = "failed to upload OpenGL scene geometry buffers";
+            impl_->geometry_ready = false;
             impl_->ready = false;
             return false;
         }
-        impl_->texture_slots[slot] = texture;
+        impl_->geometry_revision = scene.geometryRevision();
+        impl_->geometry_ready = true;
     }
 
-    impl_->ready = true;
-    return true;
+    if (!impl_->resources_ready || impl_->resource_revision != scene.resourceRevision()) {
+        if (!impl_->uploadBuffer(
+                impl_->material_buffer,
+                scene.materials().data(),
+                scene.materials().size() * sizeof(GpuMaterial),
+                GL_STATIC_DRAW))
+        {
+            if (error) *error = "failed to upload OpenGL scene material buffer";
+            impl_->resources_ready = false;
+            impl_->ready = false;
+            return false;
+        }
+
+        impl_->texture_slots.fill(0u);
+        for (std::size_t slot = 0u; slot < scene.textureHandles().size(); ++slot) {
+            const GLuint texture = static_cast<GLuint>(impl_->textures.texture(scene.textureHandles()[slot]));
+            if (texture == 0u) {
+                if (error) *error = "failed to upload OpenGL scene texture";
+                impl_->resources_ready = false;
+                impl_->ready = false;
+                return false;
+            }
+            impl_->texture_slots[slot] = texture;
+        }
+        impl_->resource_revision = scene.resourceRevision();
+        impl_->resources_ready = true;
+    }
+
+    impl_->ready = impl_->geometry_ready && impl_->resources_ready;
+    return impl_->ready;
 }
 
 bool SceneResources::syncVisibility(
@@ -113,7 +159,8 @@ bool SceneResources::syncVisibility(
     if (!impl_->uploadBuffer(
             impl_->visibility_buffer,
             padded.data(),
-            padded.size() * sizeof(std::uint32_t)))
+            padded.size() * sizeof(std::uint32_t),
+            GL_DYNAMIC_DRAW))
     {
         if (error) *error = "failed to upload OpenGL visibility buffer";
         return false;

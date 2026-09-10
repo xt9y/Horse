@@ -9,7 +9,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Renderer::Scenes {
@@ -41,6 +43,10 @@ struct alignas(16) GpuTriangle {
 
 struct alignas(16) GpuMaterial {
     std::array<float, 4> base_color {1.0f, 1.0f, 1.0f, 1.0f};
+    // data.x: base-color texture slot (-1 if absent)
+    // data.y: six packed 5-bit slots: normal, roughness, metallic, AO, emissive, opacity
+    // data.z: four packed UNORM8 values: roughness, metallic, AO, clearcoat
+    // data.w: emissive RGB UNORM8 plus emissive strength in the high byte (0..16 range)
     std::array<std::int32_t, 4> data {-1, 0, 0, 0};
 };
 
@@ -64,10 +70,33 @@ struct LightState {
 
 class SceneCache {
 public:
-    static void setLeafSize(std::uint32_t value) { leaf_size_ = value; }
-    static void setMaximumTriangles(std::size_t value) { maximum_triangles_ = value; }
-    static void setOpacityCutoff(float value) { opacity_cutoff_ = value; }
-    static void setAlphaThreshold(std::uint8_t value) { alpha_threshold_ = value; }
+    static void setLeafSize(std::uint32_t value)
+    {
+        if (leaf_size_ == value) return;
+        leaf_size_ = value;
+        ++config_revision_;
+    }
+
+    static void setMaximumTriangles(std::size_t value)
+    {
+        if (maximum_triangles_ == value) return;
+        maximum_triangles_ = value;
+        ++config_revision_;
+    }
+
+    static void setOpacityCutoff(float value)
+    {
+        if (opacity_cutoff_ == value) return;
+        opacity_cutoff_ = value;
+        ++config_revision_;
+    }
+
+    static void setAlphaThreshold(std::uint8_t value)
+    {
+        if (alpha_threshold_ == value) return;
+        alpha_threshold_ = value;
+        ++config_revision_;
+    }
 
     static std::uint32_t leafSize() { return leaf_size_; }
     static std::size_t maximumTriangles() { return maximum_triangles_; }
@@ -92,6 +121,10 @@ public:
         const std::vector<Scene::RenderItem>& items
     ) const;
 
+    std::uint64_t resourceSignature(
+        const std::vector<Scene::RenderItem>& items
+    ) const;
+
     void clear();
 
     const std::vector<GpuNode>& nodes() const { return nodes_; }
@@ -100,19 +133,47 @@ public:
     const std::vector<Models::TextureHandle>& textureHandles() const { return texture_handles_; }
     const std::vector<Scene::RenderItem>& renderItems() const { return render_items_; }
 
+    std::uint64_t geometryRevision() const { return geometry_revision_; }
+    std::uint64_t resourceRevision() const { return resource_revision_; }
+    std::uint64_t geometryUpdates() const { return geometry_updates_; }
+    std::uint64_t resourceUpdates() const { return resource_updates_; }
+
 private:
+    bool rebuildResources(
+        const std::vector<Scene::RenderItem>& items,
+        std::size_t maximum_texture_slots,
+        std::string *error
+    );
+    bool rebuildGeometry(
+        const Ecs::World& world,
+        const std::vector<Scene::RenderItem>& items,
+        std::string *error
+    );
     std::uint32_t buildNode(std::uint32_t start, std::uint32_t count);
+    void clearGeometry();
+    void clearResources();
 
     inline static std::uint32_t leaf_size_ = 0u;
     inline static std::size_t maximum_triangles_ = 0u;
     inline static float opacity_cutoff_ = 0.0f;
     inline static std::uint8_t alpha_threshold_ = 0u;
+    inline static std::uint64_t config_revision_ = 1u;
 
     std::vector<GpuNode> nodes_;
     std::vector<GpuTriangle> triangles_;
     std::vector<GpuMaterial> materials_;
     std::vector<Models::TextureHandle> texture_handles_;
     std::vector<Scene::RenderItem> render_items_;
+    std::unordered_map<Models::MaterialHandle, std::uint32_t> material_indices_;
+
+    std::uint64_t geometry_signature_ = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t resource_signature_ = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t geometry_revision_ = 0u;
+    std::uint64_t resource_revision_ = 0u;
+    std::uint64_t geometry_updates_ = 0u;
+    std::uint64_t resource_updates_ = 0u;
+    bool geometry_initialized_ = false;
+    bool resources_initialized_ = false;
 };
 
 CameraState cameraState(const Scene::CameraState& source);
