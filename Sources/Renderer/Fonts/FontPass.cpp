@@ -29,10 +29,18 @@ void appendQuad(
 
 std::array<float, 4> glyphUv(std::uint8_t codepoint)
 {
-    constexpr float cell = 1.0f / 16.0f;
-    const float u0 = static_cast<float>(codepoint & 15u) * cell;
-    const float v0 = static_cast<float>(codepoint >> 4u) * cell;
-    return {u0, v0, u0 + cell, v0 + cell};
+    const Font::AtlasSettings& atlas = Font::atlas();
+    const std::uint32_t columns = std::max<std::uint32_t>(atlas.columns, 1u);
+    const std::uint32_t rows = std::max<std::uint32_t>(atlas.rows, 1u);
+    const std::uint32_t glyph_count = columns * rows;
+    const std::uint32_t glyph = glyph_count > 0u
+        ? static_cast<std::uint32_t>(codepoint) % glyph_count
+        : 0u;
+    const float cell_u = 1.0f / static_cast<float>(columns);
+    const float cell_v = 1.0f / static_cast<float>(rows);
+    const float u0 = static_cast<float>(glyph % columns) * cell_u;
+    const float v0 = static_cast<float>(glyph / columns) * cell_v;
+    return {u0, v0, u0 + cell_u, v0 + cell_v};
 }
 
 FontVertex vertex(
