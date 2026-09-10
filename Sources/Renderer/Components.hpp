@@ -54,6 +54,9 @@ struct LightComponent {
     LightType type = LightType::Directional;
     Vec3 color{};
     float intensity = 0.0f;
+    float range = 0.0f;
+    float inner_cone_degrees = 20.0f;
+    float outer_cone_degrees = 30.0f;
 };
 
 struct GlobalIlluminationComponent {

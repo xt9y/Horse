@@ -1,4 +1,4 @@
-#ifndef RW_ENGINE_RENDERER_RASTERIZER_SHADERS_COMPAT_HPP
-#define RW_ENGINE_RENDERER_RASTERIZER_SHADERS_COMPAT_HPP
-#include "Renderer/Rasterizer/OpenGL/RasterizerShaders.hpp"
+#ifndef RW_ENGINE_RENDERER_RASTERIZER_SHADERS_HPP
+#define RW_ENGINE_RENDERER_RASTERIZER_SHADERS_HPP
+#include "Renderer/Rasterizer/OpenGL/PbrRasterizerShaders.hpp"
 #endif

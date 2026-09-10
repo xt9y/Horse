@@ -2,6 +2,7 @@
 
 #include "Camera.hpp"
 #include "Models/Models.hpp"
+#include "Renderer/Environment.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/Math.hpp"
@@ -24,6 +25,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -57,6 +59,9 @@
 #ifndef GL_DEPTH_COMPONENT24
 #define GL_DEPTH_COMPONENT24 0x81A6
 #endif
+#ifndef GL_MAX_TEXTURE_IMAGE_UNITS
+#define GL_MAX_TEXTURE_IMAGE_UNITS 0x8872
+#endif
 
 namespace Renderer {
 namespace {
@@ -64,6 +69,12 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr int kGiTextureUnit = 1;
 constexpr int kShadowTextureUnit = 5;
+constexpr int kNormalTextureUnit = 11;
+constexpr int kRoughnessTextureUnit = 12;
+constexpr int kMetallicTextureUnit = 13;
+constexpr int kAoTextureUnit = 14;
+constexpr int kEmissiveTextureUnit = 15;
+constexpr int kEnvironmentTextureUnit = 16;
 
 Vec3 subtract(Vec3 a, Vec3 b)
 {
@@ -129,6 +140,15 @@ Math::Mat4 cameraView(const Systems::Scene::CameraState& camera)
     const Vec3 right = Math::normalize(Camera::strafeDirection(camera.transform.rotation.y));
     const Vec3 up = Math::normalize(Math::cross(right, forward));
     return Math::viewMatrix(camera.transform.position, forward, right, up);
+}
+
+Vec3 lightDirection(const Systems::Scene::LightState& light)
+{
+    if (!light.valid) return {0.0f, -1.0f, 0.0f};
+    return Math::normalize(Math::transformNormal(
+        Math::modelMatrix(light.transform),
+        {0.0f, 0.0f, -1.0f}
+    ));
 }
 
 void hashValue(std::uint64_t& hash, std::uint32_t value)
@@ -197,16 +217,48 @@ struct Rasterizer::Impl {
 
     struct MainUniforms {
         GLint diffuse = -1;
+        GLint normal_map = -1;
+        GLint roughness_map = -1;
+        GLint metallic_map = -1;
+        GLint ao_map = -1;
+        GLint emissive_map = -1;
+        GLint environment = -1;
         GLint gi[4] {-1, -1, -1, -1};
         GLint shadow[6] {-1, -1, -1, -1, -1, -1};
         GLint has_texture = -1;
+        GLint has_normal_map = -1;
+        GLint has_roughness_map = -1;
+        GLint has_metallic_map = -1;
+        GLint has_ao_map = -1;
+        GLint has_emissive_map = -1;
+        GLint has_environment_texture = -1;
         GLint has_gi = -1;
         GLint light_type = -1;
         GLint has_shadow = -1;
+        GLint fog_mode = -1;
         GLint base_color = -1;
+        GLint roughness = -1;
+        GLint metallic = -1;
+        GLint ao = -1;
+        GLint emissive_color = -1;
+        GLint emissive_strength = -1;
+        GLint camera_position = -1;
         GLint light_position = -1;
+        GLint light_direction = -1;
         GLint light_color = -1;
         GLint light_intensity = -1;
+        GLint light_range = -1;
+        GLint spot_inner_cos = -1;
+        GLint spot_outer_cos = -1;
+        GLint environment_average = -1;
+        GLint environment_intensity = -1;
+        GLint environment_rotation = -1;
+        GLint ambient_color = -1;
+        GLint ambient_intensity = -1;
+        GLint fog_color = -1;
+        GLint fog_density = -1;
+        GLint fog_start = -1;
+        GLint fog_end = -1;
         GLint gi_minimum = -1;
         GLint gi_maximum = -1;
         GLint gi_intensity = -1;
@@ -216,6 +268,19 @@ struct Rasterizer::Impl {
         GLint model = -1;
         GLint normal_matrix = -1;
         GLint shadow_matrix[6] {-1, -1, -1, -1, -1, -1};
+    };
+
+    struct SkyUniforms {
+        GLint environment = -1;
+        GLint has_environment_texture = -1;
+        GLint sky_color = -1;
+        GLint environment_intensity = -1;
+        GLint environment_rotation = -1;
+        GLint camera_forward = -1;
+        GLint camera_right = -1;
+        GLint camera_up = -1;
+        GLint tan_half_fov = -1;
+        GLint aspect = -1;
     };
 
     struct ShadowUniforms {
@@ -232,14 +297,17 @@ struct Rasterizer::Impl {
     bool initialized = false;
     int width = 1;
     int height = 1;
+    bool environment_specular_texture_supported = false;
     Systems::OpenGL::TextureCache textures;
     std::vector<Systems::Scene::RenderItem> render_items;
     std::unordered_set<Ecs::Entity> viewport_visible;
     bool viewport_filter_valid = false;
 
     Systems::OpenGL::Program main_program;
+    Systems::OpenGL::Program sky_program;
     Systems::OpenGL::Program shadow_program;
     MainUniforms main_uniforms{};
+    SkyUniforms sky_uniforms{};
     ShadowUniforms shadow_uniforms{};
 
     std::array<GLuint, 4> gi_textures{};
@@ -330,9 +398,9 @@ struct Rasterizer::Impl {
         return textures.white();
     }
 
-    unsigned int textureFor(std::uint32_t handle)
+    unsigned int textureFor(Models::TextureHandle handle)
     {
-        return textures.texture(handle);
+        return handle == Models::INVALID_TEXTURE ? 0u : textures.texture(handle);
     }
 
     void clearTextures()
@@ -346,37 +414,78 @@ struct Rasterizer::Impl {
                 RasterizerShaders::main_vertex,
                 RasterizerShaders::main_fragment,
                 "Rasterizer"))
-        {
             return false;
-        }
-        if (!shadow_program.createGraphics(
-                RasterizerShaders::shadow_vertex,
-                RasterizerShaders::shadow_fragment,
-                "Rasterizer Shadow"))
+
+        if (!sky_program.createGraphics(
+                RasterizerShaders::sky_vertex,
+                RasterizerShaders::sky_fragment,
+                "Rasterizer Sky"))
         {
             main_program.destroy();
             return false;
         }
 
+        if (!shadow_program.createGraphics(
+                RasterizerShaders::shadow_vertex,
+                RasterizerShaders::shadow_fragment,
+                "Rasterizer Shadow"))
+        {
+            sky_program.destroy();
+            main_program.destroy();
+            return false;
+        }
+
         main_uniforms.diffuse = main_program.uniform("uDiffuse");
-        main_uniforms.gi[0] = main_program.uniform("uGi0");
-        main_uniforms.gi[1] = main_program.uniform("uGi1");
-        main_uniforms.gi[2] = main_program.uniform("uGi2");
-        main_uniforms.gi[3] = main_program.uniform("uGi3");
-        main_uniforms.shadow[0] = main_program.uniform("uShadow0");
-        main_uniforms.shadow[1] = main_program.uniform("uShadow1");
-        main_uniforms.shadow[2] = main_program.uniform("uShadow2");
-        main_uniforms.shadow[3] = main_program.uniform("uShadow3");
-        main_uniforms.shadow[4] = main_program.uniform("uShadow4");
-        main_uniforms.shadow[5] = main_program.uniform("uShadow5");
+        main_uniforms.normal_map = main_program.uniform("uNormalMap");
+        main_uniforms.roughness_map = main_program.uniform("uRoughnessMap");
+        main_uniforms.metallic_map = main_program.uniform("uMetallicMap");
+        main_uniforms.ao_map = main_program.uniform("uAoMap");
+        main_uniforms.emissive_map = main_program.uniform("uEmissiveMap");
+        main_uniforms.environment = main_program.uniform("uEnvironment");
+        for (int i = 0; i < 4; ++i) {
+            char name[16]{};
+            std::snprintf(name, sizeof(name), "uGi%d", i);
+            main_uniforms.gi[i] = main_program.uniform(name);
+        }
+        for (int i = 0; i < 6; ++i) {
+            char name[24]{};
+            std::snprintf(name, sizeof(name), "uShadow%d", i);
+            main_uniforms.shadow[i] = main_program.uniform(name);
+        }
         main_uniforms.has_texture = main_program.uniform("uHasTexture");
+        main_uniforms.has_normal_map = main_program.uniform("uHasNormalMap");
+        main_uniforms.has_roughness_map = main_program.uniform("uHasRoughnessMap");
+        main_uniforms.has_metallic_map = main_program.uniform("uHasMetallicMap");
+        main_uniforms.has_ao_map = main_program.uniform("uHasAoMap");
+        main_uniforms.has_emissive_map = main_program.uniform("uHasEmissiveMap");
+        main_uniforms.has_environment_texture = main_program.uniform("uHasEnvironmentTexture");
         main_uniforms.has_gi = main_program.uniform("uHasGi");
         main_uniforms.light_type = main_program.uniform("uLightType");
         main_uniforms.has_shadow = main_program.uniform("uHasShadow");
+        main_uniforms.fog_mode = main_program.uniform("uFogMode");
         main_uniforms.base_color = main_program.uniform("uBaseColor");
+        main_uniforms.roughness = main_program.uniform("uRoughness");
+        main_uniforms.metallic = main_program.uniform("uMetallic");
+        main_uniforms.ao = main_program.uniform("uAo");
+        main_uniforms.emissive_color = main_program.uniform("uEmissiveColor");
+        main_uniforms.emissive_strength = main_program.uniform("uEmissiveStrength");
+        main_uniforms.camera_position = main_program.uniform("uCameraPosition");
         main_uniforms.light_position = main_program.uniform("uLightPosition");
+        main_uniforms.light_direction = main_program.uniform("uLightDirection");
         main_uniforms.light_color = main_program.uniform("uLightColor");
         main_uniforms.light_intensity = main_program.uniform("uLightIntensity");
+        main_uniforms.light_range = main_program.uniform("uLightRange");
+        main_uniforms.spot_inner_cos = main_program.uniform("uSpotInnerCos");
+        main_uniforms.spot_outer_cos = main_program.uniform("uSpotOuterCos");
+        main_uniforms.environment_average = main_program.uniform("uEnvironmentAverage");
+        main_uniforms.environment_intensity = main_program.uniform("uEnvironmentIntensity");
+        main_uniforms.environment_rotation = main_program.uniform("uEnvironmentRotation");
+        main_uniforms.ambient_color = main_program.uniform("uAmbientColor");
+        main_uniforms.ambient_intensity = main_program.uniform("uAmbientIntensity");
+        main_uniforms.fog_color = main_program.uniform("uFogColor");
+        main_uniforms.fog_density = main_program.uniform("uFogDensity");
+        main_uniforms.fog_start = main_program.uniform("uFogStart");
+        main_uniforms.fog_end = main_program.uniform("uFogEnd");
         main_uniforms.gi_minimum = main_program.uniform("uGiMinimum");
         main_uniforms.gi_maximum = main_program.uniform("uGiMaximum");
         main_uniforms.gi_intensity = main_program.uniform("uGiIntensity");
@@ -385,12 +494,22 @@ struct Rasterizer::Impl {
         main_uniforms.alpha_cutoff = main_program.uniform("uAlphaCutoff");
         main_uniforms.model = main_program.uniform("uModel");
         main_uniforms.normal_matrix = main_program.uniform("uNormalMatrix");
-        main_uniforms.shadow_matrix[0] = main_program.uniform("uShadowMatrix0");
-        main_uniforms.shadow_matrix[1] = main_program.uniform("uShadowMatrix1");
-        main_uniforms.shadow_matrix[2] = main_program.uniform("uShadowMatrix2");
-        main_uniforms.shadow_matrix[3] = main_program.uniform("uShadowMatrix3");
-        main_uniforms.shadow_matrix[4] = main_program.uniform("uShadowMatrix4");
-        main_uniforms.shadow_matrix[5] = main_program.uniform("uShadowMatrix5");
+        for (int i = 0; i < 6; ++i) {
+            char name[32]{};
+            std::snprintf(name, sizeof(name), "uShadowMatrix%d", i);
+            main_uniforms.shadow_matrix[i] = main_program.uniform(name);
+        }
+
+        sky_uniforms.environment = sky_program.uniform("uEnvironment");
+        sky_uniforms.has_environment_texture = sky_program.uniform("uHasEnvironmentTexture");
+        sky_uniforms.sky_color = sky_program.uniform("uSkyColor");
+        sky_uniforms.environment_intensity = sky_program.uniform("uEnvironmentIntensity");
+        sky_uniforms.environment_rotation = sky_program.uniform("uEnvironmentRotation");
+        sky_uniforms.camera_forward = sky_program.uniform("uCameraForward");
+        sky_uniforms.camera_right = sky_program.uniform("uCameraRight");
+        sky_uniforms.camera_up = sky_program.uniform("uCameraUp");
+        sky_uniforms.tan_half_fov = sky_program.uniform("uTanHalfFov");
+        sky_uniforms.aspect = sky_program.uniform("uAspect");
 
         shadow_uniforms.diffuse = shadow_program.uniform("uDiffuse");
         shadow_uniforms.has_texture = shadow_program.uniform("uHasTexture");
@@ -402,8 +521,18 @@ struct Rasterizer::Impl {
 
         main_program.use();
         setInt(main_uniforms.diffuse, 0);
+        setInt(main_uniforms.normal_map, kNormalTextureUnit);
+        setInt(main_uniforms.roughness_map, kRoughnessTextureUnit);
+        setInt(main_uniforms.metallic_map, kMetallicTextureUnit);
+        setInt(main_uniforms.ao_map, kAoTextureUnit);
+        setInt(main_uniforms.emissive_map, kEmissiveTextureUnit);
+        if (environment_specular_texture_supported)
+            setInt(main_uniforms.environment, kEnvironmentTextureUnit);
         for (int i = 0; i < 4; ++i) setInt(main_uniforms.gi[i], kGiTextureUnit + i);
         for (int i = 0; i < 6; ++i) setInt(main_uniforms.shadow[i], kShadowTextureUnit + i);
+
+        sky_program.use();
+        setInt(sky_uniforms.environment, 0);
         shadow_program.use();
         setInt(shadow_uniforms.diffuse, 0);
         Systems::OpenGL::unbindProgram();
@@ -413,8 +542,10 @@ struct Rasterizer::Impl {
     void destroyPrograms()
     {
         main_program.destroy();
+        sky_program.destroy();
         shadow_program.destroy();
         main_uniforms = {};
+        sky_uniforms = {};
         shadow_uniforms = {};
     }
 
@@ -422,9 +553,7 @@ struct Rasterizer::Impl {
     {
         if (gi_textures[0] != 0u) return true;
         glGenTextures(static_cast<GLsizei>(gi_textures.size()), gi_textures.data());
-        for (GLuint texture : gi_textures) {
-            if (texture == 0u) return false;
-        }
+        for (GLuint texture : gi_textures) if (texture == 0u) return false;
         return true;
     }
 
@@ -493,6 +622,9 @@ struct Rasterizer::Impl {
             hashValue(hash, static_cast<std::uint32_t>(light.light.type));
             hashVec3(hash, light.light.color);
             hashFloat(hash, light.light.intensity);
+            hashFloat(hash, light.light.range);
+            hashFloat(hash, light.light.inner_cone_degrees);
+            hashFloat(hash, light.light.outer_cone_degrees);
             hashTransform(hash, light.transform);
         }
         hashValue(hash, static_cast<std::uint32_t>(render_items.size()));
@@ -507,8 +639,9 @@ struct Rasterizer::Impl {
         return hash;
     }
 
-    float calculateShadowFar(Vec3 light_position) const
+    float calculateShadowFar(Vec3 light_position, float configured_range) const
     {
+        if (configured_range > 0.0f) return configured_range;
         float far_distance_squared = 1.0f;
         for (const Systems::Scene::RenderItem& item : render_items) {
             if (!item.mesh || !item.transform) continue;
@@ -540,12 +673,10 @@ struct Rasterizer::Impl {
 
     void clearShadowFramebuffer()
     {
-        if (shadow_depth_renderbuffer != 0u && glDeleteRenderbuffers) {
+        if (shadow_depth_renderbuffer != 0u && glDeleteRenderbuffers)
             glDeleteRenderbuffers(1, &shadow_depth_renderbuffer);
-        }
-        if (shadow_framebuffer != 0u && glDeleteFramebuffers) {
+        if (shadow_framebuffer != 0u && glDeleteFramebuffers)
             glDeleteFramebuffers(1, &shadow_framebuffer);
-        }
         shadow_depth_renderbuffer = 0u;
         shadow_framebuffer = 0u;
     }
@@ -567,7 +698,6 @@ struct Rasterizer::Impl {
     bool createShadowFramebuffer()
     {
         if (!shadow_framebuffer_available) return false;
-
         glGenFramebuffers(1, &shadow_framebuffer);
         glGenRenderbuffers(1, &shadow_depth_renderbuffer);
         if (shadow_framebuffer == 0u || shadow_depth_renderbuffer == 0u) {
@@ -577,12 +707,7 @@ struct Rasterizer::Impl {
 
         glBindFramebuffer(GL_FRAMEBUFFER_EXT, shadow_framebuffer);
         glBindRenderbuffer(GL_RENDERBUFFER_EXT, shadow_depth_renderbuffer);
-        glRenderbufferStorage(
-            GL_RENDERBUFFER_EXT,
-            GL_DEPTH_COMPONENT24,
-            shadow_size,
-            shadow_size
-        );
+        glRenderbufferStorage(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT24, shadow_size, shadow_size);
         glFramebufferRenderbuffer(
             GL_FRAMEBUFFER_EXT,
             GL_DEPTH_ATTACHMENT_EXT,
@@ -602,7 +727,6 @@ struct Rasterizer::Impl {
         glBindRenderbuffer(GL_RENDERBUFFER_EXT, 0u);
         glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0u);
         glDrawBuffer(GL_BACK);
-
         if (status != GL_FRAMEBUFFER_COMPLETE_EXT) {
             std::fprintf(
                 stderr,
@@ -646,7 +770,6 @@ struct Rasterizer::Impl {
                 nullptr
             );
         }
-
         if (shadow_framebuffer_available && !createShadowFramebuffer()) return false;
         shadow_valid = false;
         return true;
@@ -689,6 +812,74 @@ struct Rasterizer::Impl {
         return viewport_visible.find(item.entity) != viewport_visible.end();
     }
 
+    Models::TextureHandle baseTexture(const Models::MaterialData *material, bool *opacity_only)
+    {
+        if (opacity_only) *opacity_only = false;
+        if (!material) return Models::INVALID_TEXTURE;
+        if (material->opacity_texture == Models::INVALID_TEXTURE) return material->diffuse_texture;
+        if (material->diffuse_texture == Models::INVALID_TEXTURE) {
+            if (opacity_only) *opacity_only = true;
+            return material->opacity_texture;
+        }
+        std::string error;
+        const Models::TextureHandle combined = Models::combineTextureOpacity(
+            material->diffuse_texture,
+            material->opacity_texture,
+            &error
+        );
+        return combined != Models::INVALID_TEXTURE ? combined : material->diffuse_texture;
+    }
+
+    void bindMaterialMap(int unit, Models::TextureHandle handle, GLint has_uniform)
+    {
+        const GLuint texture = static_cast<GLuint>(textureFor(handle));
+        setInt(has_uniform, texture != 0u ? 1 : 0);
+        GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + unit));
+        glBindTexture(GL_TEXTURE_2D, texture);
+    }
+
+    void bindMaterial(const Models::MaterialData *material)
+    {
+        const float roughness = material ? std::clamp(material->roughness, 0.04f, 1.0f) : 0.8f;
+        const float metallic = material ? std::clamp(material->metallic, 0.0f, 1.0f) : 0.0f;
+        const float ao = material ? std::clamp(material->ambient_occlusion, 0.0f, 1.0f) : 1.0f;
+        const Vec3 emissive = material
+            ? Vec3{material->emissive_color.x, material->emissive_color.y, material->emissive_color.z}
+            : Vec3{};
+        setFloat(main_uniforms.roughness, roughness);
+        setFloat(main_uniforms.metallic, metallic);
+        setFloat(main_uniforms.ao, ao);
+        setVec3(main_uniforms.emissive_color, emissive);
+        setFloat(main_uniforms.emissive_strength, material ? std::max(material->emissive_strength, 0.0f) : 0.0f);
+
+        bindMaterialMap(
+            kNormalTextureUnit,
+            material ? material->normal_texture : Models::INVALID_TEXTURE,
+            main_uniforms.has_normal_map
+        );
+        bindMaterialMap(
+            kRoughnessTextureUnit,
+            material ? material->roughness_texture : Models::INVALID_TEXTURE,
+            main_uniforms.has_roughness_map
+        );
+        bindMaterialMap(
+            kMetallicTextureUnit,
+            material ? material->metallic_texture : Models::INVALID_TEXTURE,
+            main_uniforms.has_metallic_map
+        );
+        bindMaterialMap(
+            kAoTextureUnit,
+            material ? material->ambient_occlusion_texture : Models::INVALID_TEXTURE,
+            main_uniforms.has_ao_map
+        );
+        bindMaterialMap(
+            kEmissiveTextureUnit,
+            material ? material->emissive_texture : Models::INVALID_TEXTURE,
+            main_uniforms.has_emissive_map
+        );
+        GLModern.glActiveTexture(GL_TEXTURE0);
+    }
+
     void drawGeometry(bool shadow_pass)
     {
         const float alpha_cutoff = std::clamp(Systems::SceneCache::opacityCutoff(), 0.0f, 1.0f);
@@ -697,7 +888,6 @@ struct Rasterizer::Impl {
 
         for (const Systems::Scene::RenderItem& item : render_items) {
             if (!itemVisible(item, shadow_pass)) continue;
-
             const Models::MeshData* mesh = item.mesh;
             if (!mesh || mesh->indices.empty() || !item.transform) continue;
 
@@ -705,10 +895,11 @@ struct Rasterizer::Impl {
             const float opacity = material ? std::clamp(material->opacity, 0.0f, 1.0f) : 1.0f;
             if (opacity < alpha_cutoff) continue;
 
-            const bool requested_texture = material && material->diffuse_texture != Models::INVALID_TEXTURE;
-            const unsigned int texture_id = requested_texture ? textureFor(material->diffuse_texture) : 0u;
-            const bool has_texture = requested_texture && texture_id != 0u;
-            const unsigned int bound_texture = texture_id != 0u ? texture_id : fallbackTexture();
+            bool opacity_only = false;
+            const Models::TextureHandle base_handle = baseTexture(material, &opacity_only);
+            const unsigned int texture_id = textureFor(base_handle);
+            const bool has_texture = texture_id != 0u;
+            const unsigned int bound_texture = has_texture ? texture_id : fallbackTexture();
             if (bound_texture == 0u) continue;
 
             GLModern.glActiveTexture(GL_TEXTURE0);
@@ -727,6 +918,7 @@ struct Rasterizer::Impl {
                 setVec4(main_uniforms.base_color, base_color.x, base_color.y, base_color.z, opacity);
                 setMatrix(main_uniforms.model, model);
                 setMatrix(main_uniforms.normal_matrix, transpose(Math::inverseModelMatrix(*item.transform)));
+                bindMaterial(material);
 
                 if (opacity < 0.999f) {
                     glEnable(GL_BLEND);
@@ -734,6 +926,13 @@ struct Rasterizer::Impl {
                 } else {
                     glDisable(GL_BLEND);
                 }
+            }
+
+            if (opacity_only) {
+                // An opacity-only texture has no base-color information. Preserve white albedo by
+                // using its alpha-like grayscale through fixed texture alpha only when imports did
+                // not already combine it with a diffuse map.
+                glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
             }
 
             glPushMatrix();
@@ -751,9 +950,12 @@ struct Rasterizer::Impl {
         }
     }
 
-    bool renderPointShadowMaps(const Systems::Scene::LightState& light)
+    bool renderLocalShadowMaps(const Systems::Scene::LightState& light)
     {
-        if (!light.valid || light.light.type != LightType::Point || light.light.intensity <= 0.0f) {
+        if (!light.valid ||
+            (light.light.type != LightType::Point && light.light.type != LightType::Spot) ||
+            light.light.intensity <= 0.0f)
+        {
             shadow_valid = false;
             return false;
         }
@@ -777,7 +979,7 @@ struct Rasterizer::Impl {
         const std::uint64_t signature = currentShadowSignature(light);
         if (shadow_valid && shadow_signature == signature) return true;
 
-        shadow_far = calculateShadowFar(light.transform.position);
+        shadow_far = calculateShadowFar(light.transform.position, std::max(light.light.range, 0.0f));
         const Math::Mat4 projection = perspectiveMatrix(
             90.0f,
             1.0f,
@@ -794,7 +996,6 @@ struct Rasterizer::Impl {
         const bool offscreen =
             shadow_framebuffer_available && shadow_framebuffer != 0u &&
             shadow_depth_renderbuffer != 0u;
-
         if (offscreen) {
             glBindFramebuffer(GL_FRAMEBUFFER_EXT, shadow_framebuffer);
             glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
@@ -815,7 +1016,6 @@ struct Rasterizer::Impl {
         for (int face = 0; face < 6; ++face) {
             const Math::Mat4 view = shadowView(light.transform.position, face);
             shadow_matrices[static_cast<std::size_t>(face)] = Math::multiply(projection, view);
-
             if (offscreen) {
                 glFramebufferTexture2D(
                     GL_FRAMEBUFFER_EXT,
@@ -831,7 +1031,6 @@ struct Rasterizer::Impl {
             glMatrixMode(GL_MODELVIEW);
             glLoadMatrixf(view.data());
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
             drawGeometry(true);
 
             if (!offscreen) {
@@ -855,7 +1054,6 @@ struct Rasterizer::Impl {
             glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0u);
             glDrawBuffer(GL_BACK);
         }
-
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, width, height);
@@ -865,19 +1063,63 @@ struct Rasterizer::Impl {
         return true;
     }
 
+    void bindEnvironment(const EnvironmentState& environment)
+    {
+        const bool valid = environment.valid;
+        setVec3(main_uniforms.environment_average, valid ? environment.average_color : Vec3{});
+        setFloat(main_uniforms.environment_intensity, valid ? environment.intensity : 0.0f);
+        setFloat(main_uniforms.environment_rotation, environment.rotation_degrees * (kPi / 180.0f));
+        setVec3(main_uniforms.ambient_color, valid ? environment.ambient_color : Vec3{});
+        setFloat(main_uniforms.ambient_intensity, valid ? environment.ambient_intensity : 0.0f);
+        setInt(main_uniforms.fog_mode, valid ? static_cast<int>(environment.fog) : 0);
+        setVec3(main_uniforms.fog_color, valid ? environment.fog_color : Vec3{});
+        setFloat(main_uniforms.fog_density, valid ? environment.fog_density : 0.0f);
+        setFloat(main_uniforms.fog_start, valid ? environment.fog_start : 0.0f);
+        setFloat(main_uniforms.fog_end, valid ? environment.fog_end : 1.0f);
+
+        bool has_environment_texture = false;
+        if (valid && environment_specular_texture_supported &&
+            environment.texture != Models::INVALID_TEXTURE)
+        {
+            const GLuint texture = static_cast<GLuint>(textureFor(environment.texture));
+            if (texture != 0u) {
+                GLModern.glActiveTexture(GL_TEXTURE0 + kEnvironmentTextureUnit);
+                glBindTexture(GL_TEXTURE_2D, texture);
+                has_environment_texture = true;
+            }
+        }
+        setInt(main_uniforms.has_environment_texture, has_environment_texture ? 1 : 0);
+        GLModern.glActiveTexture(GL_TEXTURE0);
+    }
+
     void bindGlobalState(
         const Systems::Scene::LightState& light,
-        const GlobalIllumination::Field *gi)
+        const GlobalIllumination::Field *gi,
+        const Systems::Scene::CameraState& camera,
+        const EnvironmentState& environment)
     {
         int light_type = 0;
         if (light.valid) {
             if (light.light.type == LightType::Point) light_type = 1;
             else if (light.light.type == LightType::Directional) light_type = 2;
+            else if (light.light.type == LightType::Spot) light_type = 3;
         }
         setInt(main_uniforms.light_type, light_type);
+        setVec3(main_uniforms.camera_position, camera.transform.position);
         setVec3(main_uniforms.light_position, light.valid ? light.transform.position : Vec3{});
+        setVec3(main_uniforms.light_direction, lightDirection(light));
         setVec3(main_uniforms.light_color, light.valid ? light.light.color : Vec3{});
         setFloat(main_uniforms.light_intensity, light.valid ? std::max(light.light.intensity, 0.0f) : 0.0f);
+        setFloat(main_uniforms.light_range, light.valid ? std::max(light.light.range, 0.0f) : 0.0f);
+
+        const float inner = light.valid
+            ? std::clamp(light.light.inner_cone_degrees, 0.0f, 89.9f)
+            : 0.0f;
+        const float outer = light.valid
+            ? std::clamp(std::max(light.light.outer_cone_degrees, inner), inner, 89.9f)
+            : 0.0f;
+        setFloat(main_uniforms.spot_inner_cos, std::cos(inner * (kPi / 180.0f)));
+        setFloat(main_uniforms.spot_outer_cos, std::cos(outer * (kPi / 180.0f)));
 
         const bool has_gi = uploadGlobalIllumination(gi);
         setInt(main_uniforms.has_gi, has_gi ? 1 : 0);
@@ -893,7 +1135,7 @@ struct Rasterizer::Impl {
             setFloat(main_uniforms.gi_intensity, 0.0f);
         }
 
-        const bool has_shadow = shadow_valid && light_type == 1;
+        const bool has_shadow = shadow_valid && (light_type == 1 || light_type == 3);
         setInt(main_uniforms.has_shadow, has_shadow ? 1 : 0);
         setFloat(main_uniforms.shadow_far, has_shadow ? shadow_far : 1.0f);
         setFloat(main_uniforms.shadow_texel, has_shadow ? 1.0f / static_cast<float>(shadow_size) : 0.0f);
@@ -904,7 +1146,41 @@ struct Rasterizer::Impl {
                 setMatrix(main_uniforms.shadow_matrix[i], shadow_matrices[static_cast<std::size_t>(i)]);
             }
         }
+
+        bindEnvironment(environment);
         GLModern.glActiveTexture(GL_TEXTURE0);
+    }
+
+    void renderSky(const Systems::Scene::CameraState& camera, const EnvironmentState& environment)
+    {
+        if (!environment.valid || !camera.valid) return;
+        const Systems::CameraState camera_state = Systems::cameraState(camera);
+        if (!camera_state.valid) return;
+
+        const GLuint environment_texture = static_cast<GLuint>(textureFor(environment.texture));
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        sky_program.use();
+        setInt(sky_uniforms.has_environment_texture, environment_texture != 0u ? 1 : 0);
+        setVec3(sky_uniforms.sky_color, environment.sky_color);
+        setFloat(sky_uniforms.environment_intensity, environment.intensity);
+        setFloat(sky_uniforms.environment_rotation, environment.rotation_degrees * (kPi / 180.0f));
+        setVec3(sky_uniforms.camera_forward, camera_state.forward);
+        setVec3(sky_uniforms.camera_right, camera_state.right);
+        setVec3(sky_uniforms.camera_up, camera_state.up);
+        setFloat(sky_uniforms.tan_half_fov, std::tan(camera_state.fov_degrees * (kPi / 360.0f)));
+        setFloat(sky_uniforms.aspect, static_cast<float>(width) / static_cast<float>(height));
+        GLModern.glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, environment_texture != 0u ? environment_texture : fallbackTexture());
+        glBegin(GL_TRIANGLES);
+        glVertex2f(-1.0f, -1.0f);
+        glVertex2f(3.0f, -1.0f);
+        glVertex2f(-1.0f, 3.0f);
+        glEnd();
+        Systems::OpenGL::unbindProgram();
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
     }
 
     void updateViewportVisibility(const Ecs::World& world)
@@ -912,10 +1188,8 @@ struct Rasterizer::Impl {
         viewport_visible.clear();
         viewport_filter_valid = false;
         if (!settings.viewport_culling) return;
-
         const Visibility::Result visibility = Visibility::system().evaluate(world, width, height);
         if (!visibility.frustum.valid) return;
-
         viewport_visible.insert(visibility.visible.begin(), visibility.visible.end());
         viewport_filter_valid = true;
     }
@@ -926,7 +1200,7 @@ struct Rasterizer::Impl {
         updateViewportVisibility(world);
 
         const Systems::Scene::LightState light = Systems::Scene::lightState(world);
-        renderPointShadowMaps(light);
+        renderLocalShadowMaps(light);
 
         glViewport(0, 0, width, height);
         applyClearColor();
@@ -934,6 +1208,8 @@ struct Rasterizer::Impl {
 
         const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
         if (!camera.valid) return;
+        const EnvironmentState environment = environmentState(world);
+        renderSky(camera, environment);
 
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
@@ -952,7 +1228,7 @@ struct Rasterizer::Impl {
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
         main_program.use();
-        bindGlobalState(light, gi);
+        bindGlobalState(light, gi, camera, environment);
         drawGeometry(false);
         Systems::OpenGL::unbindProgram();
 
@@ -962,10 +1238,7 @@ struct Rasterizer::Impl {
     }
 };
 
-Rasterizer::Rasterizer()
-    : impl_(new Impl())
-{
-}
+Rasterizer::Rasterizer() : impl_(new Impl()) {}
 
 Rasterizer::~Rasterizer()
 {
@@ -976,7 +1249,6 @@ Rasterizer::~Rasterizer()
 bool Rasterizer::init()
 {
     if (impl_->initialized) return true;
-
     if (glGetString(GL_VERSION) == nullptr) {
         std::fprintf(stderr, "[Rasterizer]: OpenGL initialization failed: no current context\n");
         return false;
@@ -989,6 +1261,15 @@ bool Rasterizer::init()
         );
         return false;
     }
+
+    GLint texture_units = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &texture_units);
+    if (texture_units < 16) {
+        std::fprintf(stderr, "[Rasterizer]: at least 16 fragment texture units are required\n");
+        return false;
+    }
+    impl_->environment_specular_texture_supported = texture_units > kEnvironmentTextureUnit;
+
     if (!impl_->createPrograms()) {
         impl_->destroyPrograms();
         return false;
@@ -998,7 +1279,6 @@ bool Rasterizer::init()
         impl_->destroyPrograms();
         return false;
     }
-
     if (!impl_->loadShadowFramebufferApi()) {
         std::fprintf(
             stderr,
@@ -1015,8 +1295,7 @@ bool Rasterizer::init()
     impl_->applyClearColor();
     glViewport(0, 0, impl_->width, impl_->height);
     impl_->initialized = true;
-
-    std::fprintf(stderr, "[Rasterizer]: OpenGL shader backend active\n");
+    std::fprintf(stderr, "[Rasterizer]: OpenGL shader backend active, PBR enabled\n");
     return true;
 }
 
@@ -1030,7 +1309,6 @@ void Rasterizer::resize(int width, int height)
 bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
     if (!impl_->initialized) return false;
-
     if (!impl_->settings.enabled) {
         impl_->applyClearColor();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
