@@ -10,8 +10,6 @@ using GpuMaterial = Renderer::Scenes::GpuMaterial;
 using CameraState = Renderer::Scenes::CameraState;
 using LightState = Renderer::Scenes::LightState;
 inline constexpr std::uint32_t LeafBit = Renderer::Scenes::LeafBit;
-inline constexpr std::uint32_t LeafSize = Renderer::Scenes::LeafSize;
-inline constexpr std::size_t MaximumTriangles = Renderer::Scenes::MaximumTriangles;
 using Renderer::Scenes::cameraState;
 using Renderer::Scenes::lightState;
 using Renderer::Scenes::cameraSignature;
