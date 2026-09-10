@@ -11,6 +11,8 @@ static void configurePlatform(C_Target *target)
     c_framework(target, "Cocoa");
     c_framework(target, "IOKit");
     c_framework(target, "CoreVideo");
+    c_framework(target, "Metal");
+    c_framework(target, "QuartzCore");
     c_link_system(target, "c++");
 #else
     c_link_system(target, "GL");
@@ -60,6 +62,29 @@ static void configureContract(C_Target *target)
 
 void build(C_Build *b)
 {
+    C_Dependency *imgui = c_git(
+        b,
+        "imgui",
+        "https://github.com/ocornut/imgui.git",
+        "v1.92.9b"
+    );
+    c_dep_source(imgui);
+    c_dep_include(imgui, ".");
+    c_dep_include(imgui, "backends");
+    c_dep_sources(imgui, "imgui.cpp");
+    c_dep_sources(imgui, "imgui_draw.cpp");
+    c_dep_sources(imgui, "imgui_tables.cpp");
+    c_dep_sources(imgui, "imgui_widgets.cpp");
+    c_dep_sources(imgui, "backends/imgui_impl_glfw.cpp");
+#ifdef __APPLE__
+    c_dep_sources(imgui, "backends/imgui_impl_opengl2.cpp");
+    c_dep_sources(imgui, "backends/imgui_impl_metal.mm");
+    c_dep_flag(imgui, "-I/opt/homebrew/include");
+    c_dep_flag(imgui, "-DGL_SILENCE_DEPRECATION");
+#else
+    c_dep_sources(imgui, "backends/imgui_impl_opengl3.cpp");
+#endif
+
     C_Target *library = c_shared_library(b, "Horse");
 
     c_sources(library, "Sources/*.cpp");
@@ -80,6 +105,7 @@ void build(C_Build *b)
     c_sources(library, "Sources/Renderer/Systems/OpenGL/Program.cpp");
     c_sources(library, "Sources/Renderer/Systems/OpenGL/TextureCache.cpp");
     c_sources(library, "Sources/Renderer/Rasterizer/OpenGL/RasterizerOpenGL.cpp");
+    c_sources(library, "Sources/UI/OpenGL/UIOpenGL.cpp");
 
 #ifdef __APPLE__
     c_sources(library, "Sources/Renderer/Fonts/Metal/FontPassMetal.cpp");
@@ -88,6 +114,7 @@ void build(C_Build *b)
     c_sources(library, "Sources/Renderer/Systems/Metal/Uniforms.cpp");
     c_sources(library, "Sources/Renderer/PathTracer/Metal/PathTracerMetal.cpp");
     c_sources(library, "Sources/Renderer/RayTracer/Metal/RayTracerMetal.cpp");
+    c_sources(library, "Sources/UI/Metal/UIMetal.mm");
 #else
     c_sources(library, "Sources/Renderer/GlobalIllumination/OpenGL/GlobalIlluminationOpenGL.cpp");
     c_sources(library, "Sources/Renderer/Scenes/OpenGL/SceneResources.cpp");
@@ -97,6 +124,7 @@ void build(C_Build *b)
 
     c_flag(library, "-std=c++20");
     configureLibrary(library);
+    c_use(library, imgui);
 
     C_Target *renderer_systems_contract = c_test(b, "renderer-systems-contract");
     c_sources(renderer_systems_contract, "tests/renderer_systems_contract.cpp");
