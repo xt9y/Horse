@@ -1,8 +1,5 @@
-HORSE - ENGINE
+Horse
 
-C++ ECS, Model loader and Path Tracer using lwcgl v2.9.3.
-Build on top of: https://github.com/xt9y-org/lwcgl/tree/v2.9.3
+C++ rendering/game engine framework.
 
-EXAMPLE: https://github.com/xt9y-org/GAME.git
-
-build --> c build
+Runtime systems only. Application behavior, renderer selection, scene setup and UI composition belong to the game.
