@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 namespace UI {
 namespace {
@@ -94,16 +95,35 @@ void disabledSliderFloat(const char *label, float value, float minimum, float ma
     ImGui::EndDisabled();
 }
 
-void dataStructureCombo()
+bool dataStructureCombo(bool *enabled)
 {
-    if (!ImGui::BeginCombo("Data Structure", "Uniform Grid")) return;
+    const char *preview = enabled && !*enabled ? "Disabled" : "Uniform Grid";
+    bool changed = false;
+    if (!ImGui::BeginCombo("Data Structure", preview)) return false;
 
-    ImGui::Selectable("Uniform Grid", true);
-    ImGui::SetItemDefaultFocus();
+    if (enabled) {
+        if (ImGui::Selectable("Disabled", !*enabled)) {
+            *enabled = false;
+            changed = true;
+        }
+    } else {
+        ImGui::BeginDisabled();
+        ImGui::Selectable("Disabled", false);
+        ImGui::EndDisabled();
+    }
+
+    const bool uniform_selected = !enabled || *enabled;
+    if (ImGui::Selectable("Uniform Grid", uniform_selected) && enabled) {
+        *enabled = true;
+        changed = true;
+    }
+    if (uniform_selected) ImGui::SetItemDefaultFocus();
+
     ImGui::BeginDisabled();
     ImGui::Selectable("KD-Tree", false);
     ImGui::EndDisabled();
     ImGui::EndCombo();
+    return changed;
 }
 
 void toneMapperCombo(bool enabled)
@@ -534,6 +554,10 @@ void approximationWindow(
         disabledSliderFloat("GI Intensity", 0.0f, 0.0f, 4.0f);
     }
 
+    int ray_divisor = std::clamp(ray_tracer.settings().resolution_divisor, 4, 8);
+    if (ImGui::SliderInt("Ray Trace Divisor", &ray_divisor, 4, 8))
+        ray_tracer.settings().resolution_divisor = ray_divisor;
+
     disabledSliderFloat("Cosine Weight", 1.0f, 0.0f, 3.0f);
     disabledSliderFloat("Scale dist. on dir. light", 1.0f, 0.0f, 2.0f);
     disabledSliderFloat("Lower Limit", 0.0f, 0.0f, 1.0f);
@@ -544,7 +568,10 @@ void approximationWindow(
     disabledCheckbox("Sampling", false);
     ImGui::Checkbox("Show Photon Map (Points)", &debug_settings.show_photons);
     if (gi) {
-        if (ImGui::Checkbox("Show Global Illumination", &gi->enabled)) world_changed = true;
+        if (ImGui::Checkbox("Show Global Illumination", &gi->enabled)) {
+            world_changed = true;
+            if (!gi->enabled) reset_requested = true;
+        }
     } else {
         disabledCheckbox("Show Global Illumination", false);
     }
@@ -553,11 +580,12 @@ void approximationWindow(
     disabledCheckbox("Show Full Render", true);
 
     section("Datastructure");
-    disabledCheckbox("Build KD-Tree", false);
     if (gi) {
-        if (ImGui::Checkbox("Build Uniform Grid", &gi->photon_mapping)) world_changed = true;
+        if (dataStructureCombo(&gi->photon_mapping)) world_changed = true;
     } else {
-        disabledCheckbox("Build Uniform Grid", false);
+        ImGui::BeginDisabled();
+        dataStructureCombo(nullptr);
+        ImGui::EndDisabled();
     }
     disabledInputInt("Grid Size", 0);
     disabledInputInt("Neighbor", 1);
@@ -579,7 +607,6 @@ void approximationWindow(
         disabledSliderFloat("Search Radius GI", 0.0f, 0.0f, 1.0f);
     }
     disabledSliderFloat("Search Radius Ca", 0.0f, 0.0f, 1.0f);
-    dataStructureCombo();
     disabledCheckbox("Use Cone Filter", false);
     disabledSliderFloat("Filter Constant", 1.0f, 0.0f, 2.0f);
 
@@ -618,14 +645,18 @@ void fullRenderingWindow(
     Renderer::GlobalIlluminationComponent *gi = globalIllumination(world);
 
     ImGui::SetNextWindowPos(ImVec2(450.0f, 8.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(330.0f, 332.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(330.0f, 350.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Full Rendering")) {
         ImGui::End();
         return;
     }
 
     ImGui::PushItemWidth(190.0f);
-    int samples = path_tracer.settings().samples_per_frame;
+    int divisor = std::clamp(path_tracer.settings().resolution_divisor, 1, 4);
+    if (ImGui::SliderInt("Resolution Divisor", &divisor, 1, 4))
+        path_tracer.settings().resolution_divisor = divisor;
+
+    int samples = std::clamp(path_tracer.settings().samples_per_frame, 1, 4);
     if (ImGui::SliderInt("Samples / Frame", &samples, 1, 4))
         path_tracer.settings().samples_per_frame = samples;
 
@@ -651,7 +682,13 @@ void fullRenderingWindow(
     disabledSliderFloat("Search Radius Ca", 0.0f, 0.0f, 1.0f);
 
     section("Which Datastructure");
-    dataStructureCombo();
+    if (gi) {
+        if (dataStructureCombo(&gi->photon_mapping)) world_changed = true;
+    } else {
+        ImGui::BeginDisabled();
+        dataStructureCombo(nullptr);
+        ImGui::EndDisabled();
+    }
 
     ImGui::BeginDisabled();
     ImGui::Button("RENDER");
@@ -673,7 +710,7 @@ void sceneManagerWindow(
     const char *scene_name)
 {
     const char *name = scene_name && scene_name[0] != '\0' ? scene_name : "Scene";
-    ImGui::SetNextWindowPos(ImVec2(450.0f, 350.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(450.0f, 368.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(250.0f, 142.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Scene Manager")) {
         ImGui::End();
@@ -700,7 +737,7 @@ void informationWindow()
     const Renderer::GlobalIllumination::Debug::Statistics statistics =
         Renderer::GlobalIllumination::Debug::statistics();
 
-    ImGui::SetNextWindowPos(ImVec2(450.0f, 500.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(450.0f, 518.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(330.0f, 190.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Informations")) {
         ImGui::End();
@@ -784,11 +821,8 @@ void enginePanels(
     informationWindow();
     debugWindow();
 
-    if (world_changed) world.markChanged();
-    if (reset_requested) {
-        Renderer::GlobalIllumination::reset();
-        world.markChanged();
-    }
+    if (reset_requested) Renderer::GlobalIllumination::reset();
+    if (world_changed || reset_requested) world.markChanged();
 
     drawOverlays(world);
 }
