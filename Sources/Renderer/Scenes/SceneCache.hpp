@@ -66,6 +66,9 @@ struct LightState {
     Vec3 direction {0.0f, -1.0f, 0.0f};
     Vec3 color {1.0f, 1.0f, 1.0f};
     float intensity = 0.0f;
+    float range = 0.0f;
+    float inner_cone_degrees = 20.0f;
+    float outer_cone_degrees = 30.0f;
 };
 
 class SceneCache {
@@ -76,21 +79,18 @@ public:
         leaf_size_ = value;
         ++config_revision_;
     }
-
     static void setMaximumTriangles(std::size_t value)
     {
         if (maximum_triangles_ == value) return;
         maximum_triangles_ = value;
         ++config_revision_;
     }
-
     static void setOpacityCutoff(float value)
     {
         if (opacity_cutoff_ == value) return;
         opacity_cutoff_ = value;
         ++config_revision_;
     }
-
     static void setAlphaThreshold(std::uint8_t value)
     {
         if (alpha_threshold_ == value) return;
@@ -109,7 +109,6 @@ public:
         std::size_t maximum_texture_slots,
         std::string *error = nullptr
     );
-
     bool sync(
         const Ecs::World& world,
         std::size_t maximum_texture_slots,
@@ -120,10 +119,7 @@ public:
         const Ecs::World& world,
         const std::vector<Scene::RenderItem>& items
     ) const;
-
-    std::uint64_t resourceSignature(
-        const std::vector<Scene::RenderItem>& items
-    ) const;
+    std::uint64_t resourceSignature(const std::vector<Scene::RenderItem>& items) const;
 
     void clear();
 
@@ -165,6 +161,7 @@ private:
     std::vector<Models::TextureHandle> texture_handles_;
     std::vector<Scene::RenderItem> render_items_;
     std::unordered_map<Models::MaterialHandle, std::uint32_t> material_indices_;
+    Models::TextureHandle environment_texture_ = Models::INVALID_TEXTURE;
 
     std::uint64_t geometry_signature_ = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t resource_signature_ = std::numeric_limits<std::uint64_t>::max();

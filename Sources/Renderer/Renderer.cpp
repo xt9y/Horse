@@ -3,6 +3,7 @@
 #include "Renderer/Debug/Internal.hpp"
 #include "Renderer/Fonts/FontPass.hpp"
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
+#include "Renderer/ShadingState.hpp"
 #include "UI/Internal.hpp"
 
 #include <lwcgl/lwcgl.h>
@@ -11,6 +12,7 @@ namespace Renderer {
 
 void IRenderer::render(const Ecs::World& world)
 {
+    Internal::updateShadingState(world);
     Internal::FrameOutput output;
     output.global_illumination = GlobalIllumination::update(world);
     if (!renderScene(world, output)) return;

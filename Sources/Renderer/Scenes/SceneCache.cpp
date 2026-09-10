@@ -3,6 +3,7 @@
 #include "Animation/Animation.hpp"
 #include "Camera.hpp"
 #include "Models/Core/Texture.hpp"
+#include "Renderer/Environment.hpp"
 #include "Renderer/Math.hpp"
 
 #include <algorithm>
@@ -111,9 +112,8 @@ std::uint32_t packedTextureSlot(int slot)
 std::uint32_t packTextureSlots(const std::array<int, 6>& slots)
 {
     std::uint32_t result = 0u;
-    for (std::size_t index = 0u; index < slots.size(); ++index) {
+    for (std::size_t index = 0u; index < slots.size(); ++index)
         result |= packedTextureSlot(slots[index]) << static_cast<std::uint32_t>(index * 5u);
-    }
     return result;
 }
 
@@ -285,7 +285,11 @@ bool SceneCache::sync(
         return false;
     }
 
-    const std::uint64_t current_resource_signature = resourceSignature(items);
+    const EnvironmentState environment = environmentState(world);
+    environment_texture_ = environment.valid ? environment.texture : Models::INVALID_TEXTURE;
+
+    std::uint64_t current_resource_signature = resourceSignature(items);
+    hashValue(current_resource_signature, environmentSignature(environment));
     if (!resources_initialized_ || current_resource_signature != resource_signature_) {
         if (!rebuildResources(items, maximum_texture_slots, error)) {
             clear();
@@ -326,6 +330,11 @@ bool SceneCache::rebuildResources(
     std::vector<Models::MaterialHandle> requested_materials;
     std::unordered_set<Models::MaterialHandle> seen_materials;
 
+    if (environment_texture_ != Models::INVALID_TEXTURE) {
+        requested_textures.push_back(environment_texture_);
+        seen_textures.insert(environment_texture_);
+    }
+
     for (const Scene::RenderItem& item : items) {
         if (!item.mesh_component || !item.material || item.material->opacity < opacity_cutoff_) continue;
         appendMaterialTextures(*item.material, requested_textures, seen_textures);
@@ -334,8 +343,11 @@ bool SceneCache::rebuildResources(
             requested_materials.push_back(handle);
     }
 
+    auto material_texture_begin = requested_textures.begin();
+    if (environment_texture_ != Models::INVALID_TEXTURE && material_texture_begin != requested_textures.end())
+        ++material_texture_begin;
     std::stable_sort(
-        requested_textures.begin(),
+        material_texture_begin,
         requested_textures.end(),
         [](Models::TextureHandle a, Models::TextureHandle b) {
             const bool alpha_a = textureHasTransparency(a);
@@ -349,7 +361,8 @@ bool SceneCache::rebuildResources(
     if (requested_textures.size() > packed_limit) {
         if (error) {
             *error = "ray scene requires " + std::to_string(requested_textures.size()) +
-                " material textures but backend supports " + std::to_string(packed_limit);
+                " shared environment/material textures but backend supports " +
+                std::to_string(packed_limit);
         }
         return false;
     }
@@ -517,6 +530,7 @@ void SceneCache::clearResources()
     materials_.clear();
     texture_handles_.clear();
     material_indices_.clear();
+    environment_texture_ = Models::INVALID_TEXTURE;
     resources_initialized_ = false;
 }
 
@@ -561,6 +575,13 @@ LightState lightState(const Scene::LightState& source)
     ));
     state.color = source.light.color;
     state.intensity = std::max(source.light.intensity, 0.0f);
+    state.range = std::max(source.light.range, 0.0f);
+    state.inner_cone_degrees = std::clamp(source.light.inner_cone_degrees, 0.0f, 89.9f);
+    state.outer_cone_degrees = std::clamp(
+        std::max(source.light.outer_cone_degrees, state.inner_cone_degrees),
+        state.inner_cone_degrees,
+        89.9f
+    );
     return state;
 }
 
@@ -583,6 +604,9 @@ std::uint64_t lightSignature(const LightState& light)
     hashVec3(hash, light.direction);
     hashVec3(hash, light.color);
     hashFloat(hash, light.intensity);
+    hashFloat(hash, light.range);
+    hashFloat(hash, light.inner_cone_degrees);
+    hashFloat(hash, light.outer_cone_degrees);
     return hash;
 }
 
