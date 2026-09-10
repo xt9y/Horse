@@ -85,8 +85,9 @@ bool textureHasTransparency(Models::TextureHandle handle)
 {
     const Models::TextureAsset *asset = Models::texture(handle);
     if (!asset || asset->image.rgba.size() < 4u) return false;
+    const std::uint8_t threshold = SceneCache::alphaThreshold();
     for (std::size_t index = 3u; index < asset->image.rgba.size(); index += 4u) {
-        if (asset->image.rgba[index] < 250u) return true;
+        if (asset->image.rgba[index] < threshold) return true;
     }
     return false;
 }
@@ -153,7 +154,7 @@ std::uint32_t SceneCache::buildNode(std::uint32_t start, std::uint32_t count)
     int axis = extent.y > extent.x ? 1 : 0;
     if (extent.z > component(extent, axis)) axis = 2;
 
-    if (count <= LeafSize || component(extent, axis) <= 1.0e-6f) {
+    if (count <= std::max(leaf_size_, 1u) || component(extent, axis) <= 1.0e-6f) {
         nodes_[node_index].first = start;
         nodes_[node_index].meta = LeafBit | count;
         nodes_[node_index].extra[0] = static_cast<std::uint32_t>(nodes_.size());
@@ -197,10 +198,15 @@ bool SceneCache::sync(
     clear();
     render_items_ = items;
 
+    if (maximum_triangles_ == 0u) {
+        if (error) *error = "SceneCache maximum triangle count was not configured";
+        return false;
+    }
+
     std::vector<Models::TextureHandle> requested_textures;
     std::unordered_set<Models::TextureHandle> seen_textures;
     for (const Scene::RenderItem& item : items) {
-        if (!item.material || item.material->opacity < 0.5f) continue;
+        if (!item.material || item.material->opacity < opacity_cutoff_) continue;
         const Models::TextureHandle handle = item.material->diffuse_texture;
         if (handle == Models::INVALID_TEXTURE) continue;
         if (seen_textures.insert(handle).second) requested_textures.push_back(handle);
@@ -255,15 +261,13 @@ bool SceneCache::sync(
         return index;
     };
 
-    triangles_.reserve(std::min<std::size_t>(262144u, MaximumTriangles));
-
     for (const Scene::RenderItem& item : items) {
-        if (triangles_.size() >= MaximumTriangles) break;
+        if (triangles_.size() >= maximum_triangles_) break;
         if (!item.mesh_component || !item.transform || !item.mesh) continue;
 
         const Models::MeshData *mesh = item.mesh;
         if (mesh->indices.size() < 3u || mesh->vertices.empty()) continue;
-        if (item.material && item.material->opacity < 0.5f) continue;
+        if (item.material && item.material->opacity < opacity_cutoff_) continue;
 
         const std::uint32_t material_index = materialIndex(item.mesh_component->material);
         const Math::Mat4 model = modelMatrix(*item.transform);
@@ -306,7 +310,7 @@ bool SceneCache::sync(
 
         const std::size_t triangle_count = mesh->indices.size() / 3u;
         for (std::size_t triangle_index = 0u; triangle_index < triangle_count; ++triangle_index) {
-            if (triangles_.size() >= MaximumTriangles) break;
+            if (triangles_.size() >= maximum_triangles_) break;
             const std::size_t offset = triangle_index * 3u;
             const std::uint32_t i0 = mesh->indices[offset + 0u];
             const std::uint32_t i1 = mesh->indices[offset + 1u];
