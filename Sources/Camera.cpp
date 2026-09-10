@@ -47,6 +47,8 @@ void Controller::update(Ecs::World& world, float delta_seconds)
     Renderer::Transform *transform = world.get<Renderer::Transform>(camera_entity);
     if (!transform) return;
 
+    const Renderer::Transform previous = *transform;
+
     if (!mouse_initialized_) {
         Mouse.setGrabbed(LWCGL_TRUE);
         Mouse.getDX();
@@ -85,6 +87,16 @@ void Controller::update(Ecs::World& world, float delta_seconds)
     if (Keyboard.isKeyDown(Keyboard.KEY_S)) move(forward, -speed);
     if (Keyboard.isKeyDown(Keyboard.KEY_D)) move(right, speed);
     if (Keyboard.isKeyDown(Keyboard.KEY_A)) move(right, -speed);
+
+    if (transform->position.x != previous.position.x ||
+        transform->position.y != previous.position.y ||
+        transform->position.z != previous.position.z ||
+        transform->rotation.x != previous.rotation.x ||
+        transform->rotation.y != previous.rotation.y ||
+        transform->rotation.z != previous.rotation.z)
+    {
+        world.markChanged();
+    }
 }
 
 } // namespace Camera

@@ -97,6 +97,7 @@ struct RayTracer::Impl {
     int trace_height = 1;
     std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t scene_signature = 0u;
+    std::uint64_t visibility_signature = 0u;
 
     Systems::SceneCache scene;
     Systems::OpenGLSceneResources resources;
@@ -240,7 +241,17 @@ struct RayTracer::Impl {
     bool syncSceneIfNeeded(const Ecs::World& world)
     {
         const std::uint64_t revision = world.changeRevision();
-        if (revision == world_revision && resources.ready()) return true;
+        const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
+        const std::uint64_t current_visibility_signature =
+            Systems::cameraSignature(camera) ^
+            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
+            static_cast<std::uint32_t>(height);
+        if (revision == world_revision &&
+            current_visibility_signature == visibility_signature &&
+            resources.ready())
+        {
+            return true;
+        }
 
         Visibility::system().collectVisibleRenderItems(world, width, height, render_items);
         const std::uint64_t signature = scene.signature(world, render_items);
@@ -269,6 +280,7 @@ struct RayTracer::Impl {
             );
         }
         world_revision = revision;
+        visibility_signature = current_visibility_signature;
         return true;
     }
 
@@ -478,6 +490,7 @@ void RayTracer::shutdown()
     impl_->render_items.clear();
     impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
     impl_->scene_signature = 0u;
+    impl_->visibility_signature = 0u;
     impl_->initialized = false;
 }
 
