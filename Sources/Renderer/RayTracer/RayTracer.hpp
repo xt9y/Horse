@@ -20,18 +20,17 @@ public:
     RayTracer& operator=(const RayTracer&) = delete;
 
     bool init() override;
-    bool activate() override;
-    void deactivate() override;
     void resize(int width, int height) override;
     void shutdown() override;
 
     bool initialized() const override;
     bool enabled() const override;
     void setEnabled(bool enabled) override;
-    void setResolutionDivisor(int divisor);
-    void setExposure(float exposure);
-    int resolutionDivisor() const;
-    float exposure() const;
+
+    void setResolutionDivisor(int divisor) { settings().resolution_divisor = divisor; }
+    void setExposure(float exposure) { settings().exposure = exposure; }
+    int resolutionDivisor() const { return settings().resolution_divisor; }
+    float exposure() const { return settings().exposure; }
 
     RayTracerSettings& settings();
     const RayTracerSettings& settings() const;
