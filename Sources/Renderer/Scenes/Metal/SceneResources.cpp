@@ -27,9 +27,9 @@ struct SceneResources::Impl {
         std::array<std::uint8_t, 16> zero{};
         const std::size_t safe_bytes = std::max<std::size_t>(bytes, zero.size());
         const LWMGLBufferDesc desc = {safe_bytes, LWMGL_STORAGE_SHARED};
-        LWMGLBuffer replacement = Metal.createBuffer(&desc, bytes == 0u ? zero.data() : data);
+        LWMGLBuffer replacement = ::Metal.createBuffer(&desc, bytes == 0u ? zero.data() : data);
         if (!replacement) return false;
-        if (target) Metal.destroyBuffer(target);
+        if (target) ::Metal.destroyBuffer(target);
         target = replacement;
         return true;
     }
@@ -51,11 +51,11 @@ struct SceneResources::Impl {
             LWMGL_TEXTURE_SAMPLED,
             LWMGL_STORAGE_SHARED
         };
-        LWMGLTexture texture = Metal.createTexture(&desc);
+        LWMGLTexture texture = ::Metal.createTexture(&desc);
         if (!texture) return nullptr;
         const std::size_t bytes_per_row = static_cast<std::size_t>(asset->image.width) * 4u;
-        if (Metal.uploadTexture2D(texture, asset->image.rgba.data(), bytes_per_row) != 0) {
-            Metal.destroyTexture(texture);
+        if (::Metal.uploadTexture2D(texture, asset->image.rgba.data(), bytes_per_row) != 0) {
+            ::Metal.destroyTexture(texture);
             return nullptr;
         }
         texture_cache.emplace(handle, texture);
@@ -64,20 +64,20 @@ struct SceneResources::Impl {
 
     void clear()
     {
-        if (node_buffer) Metal.destroyBuffer(node_buffer);
-        if (triangle_buffer) Metal.destroyBuffer(triangle_buffer);
-        if (material_buffer) Metal.destroyBuffer(material_buffer);
+        if (node_buffer) ::Metal.destroyBuffer(node_buffer);
+        if (triangle_buffer) ::Metal.destroyBuffer(triangle_buffer);
+        if (material_buffer) ::Metal.destroyBuffer(material_buffer);
         node_buffer = nullptr;
         triangle_buffer = nullptr;
         material_buffer = nullptr;
 
         for (const auto& entry : texture_cache) {
-            if (entry.second) Metal.destroyTexture(entry.second);
+            if (entry.second) ::Metal.destroyTexture(entry.second);
         }
         texture_cache.clear();
         texture_slots.fill(nullptr);
 
-        if (white_texture) Metal.destroyTexture(white_texture);
+        if (white_texture) ::Metal.destroyTexture(white_texture);
         white_texture = nullptr;
         ready = false;
     }
@@ -104,15 +104,15 @@ bool SceneResources::init(std::string *error)
         LWMGL_TEXTURE_SAMPLED,
         LWMGL_STORAGE_SHARED
     };
-    impl_->white_texture = Metal.createTexture(&desc);
+    impl_->white_texture = ::Metal.createTexture(&desc);
     if (!impl_->white_texture) {
         if (error) *error = "failed to create Metal scene fallback texture";
         return false;
     }
     const std::uint8_t white[4] = {255u, 255u, 255u, 255u};
-    if (Metal.uploadTexture2D(impl_->white_texture, white, 4u) != 0) {
+    if (::Metal.uploadTexture2D(impl_->white_texture, white, 4u) != 0) {
         if (error) *error = "failed to upload Metal scene fallback texture";
-        Metal.destroyTexture(impl_->white_texture);
+        ::Metal.destroyTexture(impl_->white_texture);
         impl_->white_texture = nullptr;
         return false;
     }
@@ -156,11 +156,11 @@ bool SceneResources::sync(const Renderer::Scenes::SceneCache& scene, std::string
 bool SceneResources::bind(LWMGLCommand command, std::uint32_t first_texture_binding) const
 {
     if (!impl_ || !impl_->ready || !command) return false;
-    bool ok = Metal.setBuffer(command, impl_->node_buffer, 0u, 0u) == 0;
-    if (ok) ok = Metal.setBuffer(command, impl_->triangle_buffer, 0u, 1u) == 0;
-    if (ok) ok = Metal.setBuffer(command, impl_->material_buffer, 0u, 2u) == 0;
+    bool ok = ::Metal.setBuffer(command, impl_->node_buffer, 0u, 0u) == 0;
+    if (ok) ok = ::Metal.setBuffer(command, impl_->triangle_buffer, 0u, 1u) == 0;
+    if (ok) ok = ::Metal.setBuffer(command, impl_->material_buffer, 0u, 2u) == 0;
     for (std::size_t slot = 0u; ok && slot < impl_->texture_slots.size(); ++slot) {
-        ok = Metal.setTexture(
+        ok = ::Metal.setTexture(
             command,
             impl_->texture_slots[slot] ? impl_->texture_slots[slot] : impl_->white_texture,
             first_texture_binding + static_cast<std::uint32_t>(slot)
