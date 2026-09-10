@@ -52,6 +52,14 @@ bool inside(Vec3 point, Vec3 minimum, Vec3 maximum)
         point.z >= minimum.z && point.z <= maximum.z;
 }
 
+double volume(Vec3 minimum, Vec3 maximum)
+{
+    const double x = std::max(static_cast<double>(maximum.x - minimum.x), 0.0);
+    const double y = std::max(static_cast<double>(maximum.y - minimum.y), 0.0);
+    const double z = std::max(static_cast<double>(maximum.z - minimum.z), 0.0);
+    return x * y * z;
+}
+
 } // namespace
 
 struct Inspector::Impl {
@@ -80,12 +88,14 @@ struct Inspector::Impl {
     Scenes::SceneCache live_cache;
     const Scenes::SceneCache *bvh_cache = nullptr;
     std::vector<std::vector<std::uint32_t>> bvh_levels;
+    BvhInfo bvh_info{};
     std::vector<Internal::Vertex> lines;
 
     void invalidateBvhMetadata()
     {
         bvh_cache = nullptr;
         bvh_levels.clear();
+        bvh_info = {};
     }
 
     void prepareBvhMetadata(const Scenes::SceneCache& cache)
@@ -241,12 +251,31 @@ struct Inspector::Impl {
         const std::vector<std::uint32_t>& level = bvh_levels[static_cast<std::size_t>(level_index)];
 
         std::uint32_t selected = std::numeric_limits<std::uint32_t>::max();
+        double selected_volume = std::numeric_limits<double>::infinity();
+        std::size_t containing_nodes = 0u;
         for (const std::uint32_t index : level) {
-            if (inside(camera_position, nodeMinimum(nodes[index]), nodeMaximum(nodes[index]))) {
+            const Vec3 minimum = nodeMinimum(nodes[index]);
+            const Vec3 maximum = nodeMaximum(nodes[index]);
+            if (!inside(camera_position, minimum, maximum)) continue;
+
+            ++containing_nodes;
+            const double candidate_volume = volume(minimum, maximum);
+            if (candidate_volume < selected_volume ||
+                (candidate_volume == selected_volume && index < selected))
+            {
                 selected = index;
-                break;
+                selected_volume = candidate_volume;
             }
         }
+
+        bvh_info.available = true;
+        bvh_info.selected = selected != std::numeric_limits<std::uint32_t>::max();
+        bvh_info.level = level_index;
+        bvh_info.maximum_level = maximum_level;
+        bvh_info.total_nodes = nodes.size();
+        bvh_info.level_nodes = level.size();
+        bvh_info.containing_nodes = containing_nodes;
+        bvh_info.selected_node = bvh_info.selected ? static_cast<std::size_t>(selected) : 0u;
 
         for (const std::uint32_t index : level) {
             addAabb(
@@ -394,6 +423,11 @@ SnapshotInfo Inspector::snapshotInfo() const
     result.player_camera = impl_->player_camera;
     result.debug_camera = impl_->debug_camera;
     return result;
+}
+
+BvhInfo Inspector::bvhInfo() const
+{
+    return impl_->bvh_info;
 }
 
 void Inspector::clear(Ecs::World *world)

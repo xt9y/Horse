@@ -23,6 +23,17 @@ struct SnapshotInfo {
     Ecs::Entity debug_camera = Ecs::INVALID_ENTITY;
 };
 
+struct BvhInfo {
+    bool available = false;
+    bool selected = false;
+    int level = 0;
+    int maximum_level = 0;
+    std::size_t total_nodes = 0u;
+    std::size_t level_nodes = 0u;
+    std::size_t containing_nodes = 0u;
+    std::size_t selected_node = 0u;
+};
+
 class Inspector {
 public:
     Inspector();
@@ -51,6 +62,7 @@ public:
     bool frozen() const;
     Ecs::Entity debugCamera() const;
     SnapshotInfo snapshotInfo() const;
+    BvhInfo bvhInfo() const;
 
     void clear(Ecs::World *world = nullptr);
 
