@@ -25,10 +25,9 @@ bool prepareMetal(Renderer::Internal::FrameOutput& output);
 bool renderMetal(ImDrawData *draw_data, Renderer::Internal::FrameOutput& output);
 #endif
 
-bool renderPersistentOverlays();
-void clearPersistentOverlays();
+bool renderPersistentOverlays(const Ecs::World& world);
 
-void render(Renderer::Internal::FrameOutput& output);
+void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output);
 void shutdownRendererBackend();
 
 } // namespace UI::Internal
