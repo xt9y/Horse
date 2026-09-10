@@ -43,6 +43,7 @@ public:
 
     bool valid() const;
     std::size_t photonCount() const;
+    const Photon *photonData() const;
     float radius() const;
 
 private:
