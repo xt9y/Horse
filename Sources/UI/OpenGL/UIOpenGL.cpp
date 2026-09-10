@@ -28,14 +28,21 @@ void shutdownOpenGL()
 #endif
 }
 
+void newFrameOpenGL()
+{
+#ifdef __APPLE__
+    ImGui_ImplOpenGL2_NewFrame();
+#else
+    ImGui_ImplOpenGL3_NewFrame();
+#endif
+}
+
 void renderOpenGL(ImDrawData *draw_data)
 {
     if (!draw_data) return;
 #ifdef __APPLE__
-    ImGui_ImplOpenGL2_NewFrame();
     ImGui_ImplOpenGL2_RenderDrawData(draw_data);
 #else
-    ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplOpenGL3_RenderDrawData(draw_data);
 #endif
 }
