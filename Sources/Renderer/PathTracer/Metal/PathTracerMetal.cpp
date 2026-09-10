@@ -83,9 +83,19 @@ struct PathTracer::Impl {
         return initialized && settings.enabled;
     }
 
+    bool configured() const
+    {
+        return settings.resolution_divisor > 0 && settings.samples_per_frame > 0;
+    }
+
     void updateTraceResolution()
     {
-        const int divisor = std::clamp(settings.resolution_divisor, 1, 4);
+        const int divisor = settings.resolution_divisor;
+        if (divisor <= 0) {
+            trace_width = 0;
+            trace_height = 0;
+            return;
+        }
         trace_width = std::max(width / divisor, 1);
         trace_height = std::max(height / divisor, 1);
     }
@@ -182,6 +192,8 @@ struct PathTracer::Impl {
 
     bool createTraceTargets()
     {
+        if (trace_width <= 0 || trace_height <= 0) return false;
+
         const LWMGLTextureDesc accumulation_desc = {
             static_cast<std::uint32_t>(trace_width),
             static_cast<std::uint32_t>(trace_height),
@@ -331,7 +343,7 @@ struct PathTracer::Impl {
             return false;
         }
 
-        progressive.advance(static_cast<std::uint32_t>(std::clamp(settings.samples_per_frame, 1, 4)));
+        progressive.advance(static_cast<std::uint32_t>(settings.samples_per_frame));
         out_command = command;
         return true;
     }
@@ -349,6 +361,10 @@ PathTracer::~PathTracer()
 bool PathTracer::init()
 {
     if (impl_->initialized) return true;
+    if (!impl_->configured()) {
+        std::fprintf(stderr, "[PathTracer]: configure the renderer before init\n");
+        return false;
+    }
     if (!Display.isCreated() || !Display.getNativeWindow()) {
         std::fprintf(stderr, "[PathTracer]: lwcgl Display must be created before Metal PathTracer\n");
         return false;
@@ -409,6 +425,25 @@ bool PathTracer::init()
     return true;
 }
 
+bool PathTracer::activate()
+{
+    if (!impl_ || !impl_->initialized || !Metal.isCreated()) return false;
+    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() != 0) return true;
+    if (!Metal.attachSurface || Metal.attachSurface(Display.getNativeWindow()) != 0) {
+        std::fprintf(stderr, "[PathTracer]: Metal surface activation failed: %s\n", lwmglGetLastError());
+        return false;
+    }
+    return true;
+}
+
+void PathTracer::deactivate()
+{
+    if (!impl_ || !impl_->initialized || !Metal.isCreated()) return;
+    if (Metal.isSurfaceAttached && Metal.isSurfaceAttached() == 0) return;
+    Metal.waitIdle();
+    if (Metal.detachSurface) Metal.detachSurface();
+}
+
 void PathTracer::resize(int width, int height)
 {
     impl_->width = std::max(width, 1);
@@ -441,7 +476,7 @@ void PathTracer::resize(int width, int height)
 
 bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
-    if (!impl_->initialized) return false;
+    if (!impl_->initialized || !Metal.isSurfaceAttached || Metal.isSurfaceAttached() == 0) return false;
 
     output.api = Internal::GraphicsApi::Metal;
     output.depth = Internal::DepthSource::None;
@@ -510,6 +545,7 @@ void PathTracer::shutdown()
 {
     if (!impl_) return;
 
+    deactivate();
     if (Metal.isCreated()) Metal.waitIdle();
     Internal::shutdownFonts(Internal::GraphicsApi::Metal);
     Internal::shutdownGlobalIlluminationMetal();
