@@ -2,18 +2,14 @@
 
 #include "Camera.hpp"
 #include "Models/Models.hpp"
-#include "Renderer/DepthPrepass/OpenGL/DepthPrepassOpenGL.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
-#include "Renderer/HorizonGI/OpenGL/HorizonGIOpenGL.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Rasterizer/RasterizerShaders.hpp"
 #include "Renderer/Systems/OpenGL/Program.hpp"
-#include "Renderer/Systems/OpenGL/RenderSurface.hpp"
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
-#include "Renderer/Upscale/OpenGL/UpscaleOpenGL.hpp"
 #include "Renderer/Visibility/Visibility.hpp"
 
 #include <lwcgl/glmodern.h>
@@ -108,25 +104,20 @@ Math::Mat4 perspectiveMatrix(float fov_degrees, float aspect, float near_plane, 
     };
 }
 
-Math::Mat4 infinitePerspectiveMatrix(float fov_degrees, float aspect, float near_plane)
+void applyInfinitePerspective(float fov_degrees, float aspect, float near_plane)
 {
     const float safe_fov = std::clamp(fov_degrees, 1.0f, 179.0f);
     const float safe_aspect = aspect > 1.0e-6f ? aspect : 1.0f;
     const float safe_near = std::max(near_plane, 1.0e-4f);
     const float focal = 1.0f / std::tan(safe_fov * (kPi / 360.0f));
 
-    return {
+    const GLfloat projection[16] = {
         focal / safe_aspect, 0.0f, 0.0f, 0.0f,
         0.0f, focal, 0.0f, 0.0f,
         0.0f, 0.0f, -1.0f, -1.0f,
         0.0f, 0.0f, -2.0f * safe_near, 0.0f,
     };
-}
-
-void applyInfinitePerspective(float fov_degrees, float aspect, float near_plane)
-{
-    const Math::Mat4 projection = infinitePerspectiveMatrix(fov_degrees, aspect, near_plane);
-    glLoadMatrixf(projection.data());
+    glLoadMatrixf(projection);
 }
 
 Math::Mat4 cameraView(const Systems::Scene::CameraState& camera)
@@ -243,18 +234,11 @@ struct Rasterizer::Impl {
     int height = 1;
     Systems::OpenGL::TextureCache textures;
     std::vector<Systems::Scene::RenderItem> render_items;
-    std::vector<Systems::Scene::RenderItem> visible_render_items;
     std::unordered_set<Ecs::Entity> viewport_visible;
     bool viewport_filter_valid = false;
 
     Systems::OpenGL::Program main_program;
     Systems::OpenGL::Program shadow_program;
-    DepthPrepass::OpenGLPass depth_prepass;
-    HorizonGI::OpenGLPass horizon_gi;
-    Upscale::OpenGLPass upscaler;
-    Systems::OpenGL::RenderSurface scene_surface;
-    Systems::OpenGL::RenderSurface full_depth_surface;
-    RasterizerStatistics runtime_stats{};
     MainUniforms main_uniforms{};
     ShadowUniforms shadow_uniforms{};
 
@@ -774,15 +758,7 @@ struct Rasterizer::Impl {
             return false;
         }
 
-        int requested_size = std::max(settings.shadow_resolution, 1);
-        if (settings.shadow_resolution_divisor > 1) {
-            const int relative_size = std::max(
-                (std::max(width, height) + settings.shadow_resolution_divisor - 1) /
-                    settings.shadow_resolution_divisor,
-                1
-            );
-            requested_size = std::min(requested_size, relative_size);
-        }
+        const int requested_size = std::max(settings.shadow_resolution, 1);
         const int minimum_size = std::max(settings.minimum_shadow_resolution, 1);
         const int fallback_size = std::max(
             minimum_size,
@@ -934,59 +910,36 @@ struct Rasterizer::Impl {
     void updateViewportVisibility(const Ecs::World& world)
     {
         viewport_visible.clear();
-        visible_render_items.clear();
         viewport_filter_valid = false;
-        if (!settings.viewport_culling) {
-            visible_render_items = render_items;
-            return;
-        }
+        if (!settings.viewport_culling) return;
 
         const Visibility::Result visibility = Visibility::system().evaluate(world, width, height);
-        if (!visibility.frustum.valid) {
-            visible_render_items = render_items;
-            return;
-        }
+        if (!visibility.frustum.valid) return;
 
         viewport_visible.insert(visibility.visible.begin(), visibility.visible.end());
         viewport_filter_valid = true;
-        visible_render_items.reserve(viewport_visible.size());
-        for (const Systems::Scene::RenderItem& item : render_items) {
-            if (viewport_visible.find(item.entity) != viewport_visible.end())
-                visible_render_items.push_back(item);
-        }
     }
 
-    std::uint64_t temporalSignature(
-        const Systems::Scene::CameraState& camera,
-        const Systems::Scene::LightState& light) const
+    void draw(const Ecs::World& world, const GlobalIllumination::Field *gi)
     {
-        std::uint64_t hash = currentShadowSignature(light);
-        hashTransform(hash, camera.transform);
-        hashFloat(hash, camera.fov_degrees);
-        hashFloat(hash, camera.near_plane);
-        hashValue(hash, static_cast<std::uint32_t>(width));
-        hashValue(hash, static_cast<std::uint32_t>(height));
-        return hash;
-    }
+        Systems::Scene::collectRenderItems(world, render_items);
+        updateViewportVisibility(world);
 
-    void drawCameraGeometry(
-        const Systems::Scene::CameraState& camera,
-        const Systems::Scene::LightState& light,
-        const GlobalIllumination::Field *gi,
-        int target_width,
-        int target_height)
-    {
-        const int safe_width = std::max(target_width, 1);
-        const int safe_height = std::max(target_height, 1);
-        glViewport(0, 0, safe_width, safe_height);
+        const Systems::Scene::LightState light = Systems::Scene::lightState(world);
+        renderPointShadowMaps(light);
+
+        glViewport(0, 0, width, height);
         applyClearColor();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
+        if (!camera.valid) return;
 
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
         applyInfinitePerspective(
             camera.fov_degrees,
-            static_cast<float>(safe_width) / static_cast<float>(safe_height),
+            static_cast<float>(width) / static_cast<float>(height),
             camera.near_plane
         );
 
@@ -1006,155 +959,6 @@ struct Rasterizer::Impl {
         GLModern.glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, 0u);
         glDisable(GL_BLEND);
-    }
-
-    bool drawScaled(
-        const Systems::Scene::CameraState& camera,
-        const Systems::Scene::LightState& light)
-    {
-        const Quality::Extent lighting_extent = Quality::scaledExtent(
-            width,
-            height,
-            settings.lighting
-        );
-        if (!scene_surface.ensure(
-                lighting_extent.width,
-                lighting_extent.height,
-                Systems::OpenGL::SurfaceColorFormat::Rgba8,
-                true))
-        {
-            return false;
-        }
-        if (!full_depth_surface.ensure(
-                width,
-                height,
-                Systems::OpenGL::SurfaceColorFormat::Rgba8,
-                true))
-        {
-            return false;
-        }
-
-        const float aspect = static_cast<float>(width) / static_cast<float>(height);
-        const Math::Mat4 projection = infinitePerspectiveMatrix(
-            camera.fov_degrees,
-            aspect,
-            camera.near_plane
-        );
-        const Math::Mat4 view = cameraView(camera);
-
-        if (!full_depth_surface.bind()) return false;
-        const bool depth_ok = depth_prepass.render(
-            {
-                &visible_render_items,
-                projection,
-                view,
-                width,
-                height,
-                Systems::SceneCache::opacityCutoff(),
-            },
-            textures
-        );
-        Systems::OpenGL::RenderSurface::unbind();
-        if (!depth_ok) return false;
-
-        if (!scene_surface.bind()) return false;
-        drawCameraGeometry(camera, light, nullptr, lighting_extent.width, lighting_extent.height);
-        Systems::OpenGL::RenderSurface::unbind();
-
-        const std::uint64_t signature = temporalSignature(camera, light);
-        unsigned int horizon_texture = 0u;
-        HorizonGI::Statistics horizon_stats{};
-        if (settings.horizon_gi.enabled) {
-            const float tan_half_fov = std::tan(
-                std::clamp(camera.fov_degrees, 1.0f, 179.0f) * (kPi / 360.0f)
-            );
-            horizon_texture = horizon_gi.render(
-                {
-                    scene_surface.colorTexture(),
-                    scene_surface.depthTexture(),
-                    lighting_extent.width,
-                    lighting_extent.height,
-                    width,
-                    height,
-                    camera.near_plane,
-                    tan_half_fov,
-                    aspect,
-                    1.0f,
-                    signature,
-                },
-                settings.horizon_gi
-            );
-            horizon_stats = horizon_gi.statistics();
-            if (horizon_texture == 0u) return false;
-        } else {
-            horizon_gi.resetHistory();
-        }
-
-        glViewport(0, 0, width, height);
-        applyClearColor();
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        const bool upscale_ok = upscaler.render(
-            {
-                scene_surface.colorTexture(),
-                scene_surface.depthTexture(),
-                full_depth_surface.depthTexture(),
-                horizon_texture,
-                lighting_extent.width,
-                lighting_extent.height,
-                horizon_stats.width > 0 ? horizon_stats.width : 1,
-                horizon_stats.height > 0 ? horizon_stats.height : 1,
-                width,
-                height,
-                camera.near_plane,
-                signature,
-            },
-            settings.lighting
-        );
-        glViewport(0, 0, width, height);
-        if (upscale_ok) {
-            runtime_stats.scaled_pipeline_active = true;
-            runtime_stats.lighting_width = lighting_extent.width;
-            runtime_stats.lighting_height = lighting_extent.height;
-            runtime_stats.depth_prepass_items = depth_prepass.statistics().drawn_items;
-        }
-        return upscale_ok;
-    }
-
-    void draw(const Ecs::World& world, const GlobalIllumination::Field *gi)
-    {
-        runtime_stats = {};
-        runtime_stats.output_width = width;
-        runtime_stats.output_height = height;
-        runtime_stats.lighting_width = width;
-        runtime_stats.lighting_height = height;
-
-        Systems::Scene::collectRenderItems(world, render_items);
-        updateViewportVisibility(world);
-
-        const Systems::Scene::LightState light = Systems::Scene::lightState(world);
-        renderPointShadowMaps(light);
-        runtime_stats.shadow_active = shadow_valid;
-        runtime_stats.shadow_resolution = shadow_valid ? shadow_size : 0;
-
-        const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
-        if (!camera.valid) {
-            glViewport(0, 0, width, height);
-            applyClearColor();
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            return;
-        }
-
-        const Quality::ScaledPassSettings lighting = Quality::sanitized(settings.lighting);
-        const bool scaled_pipeline =
-            lighting.resolution_divisor > 1 ||
-            lighting.temporal_filter ||
-            settings.horizon_gi.enabled;
-        if (scaled_pipeline && drawScaled(camera, light)) return;
-
-        upscaler.resetHistory();
-        horizon_gi.resetHistory();
-        drawCameraGeometry(camera, light, gi, width, height);
     }
 };
 
@@ -1218,14 +1022,8 @@ bool Rasterizer::init()
 
 void Rasterizer::resize(int width, int height)
 {
-    const int new_width = std::max(width, 1);
-    const int new_height = std::max(height, 1);
-    if (impl_->width != new_width || impl_->height != new_height) {
-        impl_->upscaler.resetHistory();
-        impl_->horizon_gi.resetHistory();
-    }
-    impl_->width = new_width;
-    impl_->height = new_height;
+    impl_->width = std::max(width, 1);
+    impl_->height = std::max(height, 1);
     if (impl_->initialized) glViewport(0, 0, impl_->width, impl_->height);
 }
 
@@ -1259,17 +1057,10 @@ void Rasterizer::shutdown()
     impl_->clearTextures();
     impl_->clearGiTextures();
     impl_->clearShadowTextures();
-    impl_->depth_prepass.shutdown();
-    impl_->horizon_gi.shutdown();
-    impl_->upscaler.shutdown();
-    impl_->scene_surface.clear();
-    impl_->full_depth_surface.clear();
     impl_->destroyPrograms();
     impl_->render_items.clear();
-    impl_->visible_render_items.clear();
     impl_->viewport_visible.clear();
     impl_->viewport_filter_valid = false;
-    impl_->runtime_stats = {};
     impl_->initialized = false;
 }
 
@@ -1297,13 +1088,6 @@ void Rasterizer::setShadowResolution(int value)
 {
     if (!impl_) return;
     impl_->settings.shadow_resolution = value;
-    impl_->shadow_valid = false;
-}
-
-void Rasterizer::setShadowResolutionDivisor(int value)
-{
-    if (!impl_) return;
-    impl_->settings.shadow_resolution_divisor = std::max(value, 1);
     impl_->shadow_valid = false;
 }
 
@@ -1335,112 +1119,6 @@ void Rasterizer::setShadowFarScale(float value)
     impl_->shadow_valid = false;
 }
 
-void Rasterizer::setLightingResolutionDivisor(int value)
-{
-    if (!impl_) return;
-    impl_->settings.lighting.resolution_divisor = std::max(value, 1);
-    impl_->upscaler.resetHistory();
-}
-
-void Rasterizer::setDepthAwareUpscaling(bool value)
-{
-    if (!impl_) return;
-    impl_->settings.lighting.depth_aware_upscale = value;
-    impl_->upscaler.resetHistory();
-}
-
-void Rasterizer::setTemporalUpscaling(bool value)
-{
-    if (!impl_) return;
-    impl_->settings.lighting.temporal_filter = value;
-    impl_->upscaler.resetHistory();
-}
-
-void Rasterizer::setTemporalUpscalingWeight(float value)
-{
-    if (!impl_) return;
-    impl_->settings.lighting.temporal_weight = std::clamp(value, 0.0f, 1.0f);
-    impl_->upscaler.resetHistory();
-}
-
-void Rasterizer::setUpscalingDepthThreshold(float value)
-{
-    if (!impl_) return;
-    impl_->settings.lighting.depth_threshold = std::max(value, 0.0f);
-    impl_->upscaler.resetHistory();
-}
-
-void Rasterizer::setHorizonGiEnabled(bool value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.enabled = value;
-    impl_->horizon_gi.resetHistory();
-    impl_->upscaler.resetHistory();
-}
-
-void Rasterizer::setHorizonGiResolutionDivisor(int value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.pass.resolution_divisor = std::max(value, 1);
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiDirections(int value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.directions = std::clamp(value, 1, HorizonGI::MaximumDirections);
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiSteps(int value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.steps = std::clamp(value, 1, HorizonGI::MaximumSteps);
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiRadius(float value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.radius = std::max(value, 0.001f);
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiThickness(float value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.thickness = std::max(value, 0.0f);
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiAoStrength(float value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.ao_strength = std::max(value, 0.0f);
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiIndirectStrength(float value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.indirect_strength = std::max(value, 0.0f);
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiTemporalFilter(bool value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.pass.temporal_filter = value;
-    impl_->horizon_gi.resetHistory();
-}
-
-void Rasterizer::setHorizonGiTemporalWeight(float value)
-{
-    if (!impl_) return;
-    impl_->settings.horizon_gi.pass.temporal_weight = std::clamp(value, 0.0f, 1.0f);
-    impl_->horizon_gi.resetHistory();
-}
-
 void Rasterizer::setClearColor(Vec4 value)
 {
     if (impl_) impl_->settings.clear_color = value;
@@ -1454,11 +1132,6 @@ bool Rasterizer::viewportCulling() const
 int Rasterizer::shadowResolution() const
 {
     return impl_ ? impl_->settings.shadow_resolution : 0;
-}
-
-int Rasterizer::shadowResolutionDivisor() const
-{
-    return impl_ ? std::max(impl_->settings.shadow_resolution_divisor, 1) : 1;
 }
 
 int Rasterizer::fallbackShadowResolution() const
@@ -1481,65 +1154,9 @@ float Rasterizer::shadowFarScale() const
     return impl_ ? impl_->settings.shadow_far_scale : 0.0f;
 }
 
-int Rasterizer::lightingResolutionDivisor() const
-{
-    return impl_ ? std::max(impl_->settings.lighting.resolution_divisor, 1) : 1;
-}
-
-bool Rasterizer::depthAwareUpscaling() const
-{
-    return impl_ && impl_->settings.lighting.depth_aware_upscale;
-}
-
-bool Rasterizer::temporalUpscaling() const
-{
-    return impl_ && impl_->settings.lighting.temporal_filter;
-}
-
-float Rasterizer::temporalUpscalingWeight() const
-{
-    return impl_ ? impl_->settings.lighting.temporal_weight : 0.0f;
-}
-
-float Rasterizer::upscalingDepthThreshold() const
-{
-    return impl_ ? impl_->settings.lighting.depth_threshold : 0.0f;
-}
-
-HorizonGI::Settings& Rasterizer::horizonGiSettings()
-{
-    return impl_->settings.horizon_gi;
-}
-
-const HorizonGI::Settings& Rasterizer::horizonGiSettings() const
-{
-    return impl_->settings.horizon_gi;
-}
-
-HorizonGI::Statistics Rasterizer::horizonGiStatistics() const
-{
-    return impl_ ? impl_->horizon_gi.statistics() : HorizonGI::Statistics{};
-}
-
-Upscale::Statistics Rasterizer::upscaleStatistics() const
-{
-    return impl_ ? impl_->upscaler.statistics() : Upscale::Statistics{};
-}
-
-RasterizerStatistics Rasterizer::statistics() const
-{
-    return impl_ ? impl_->runtime_stats : RasterizerStatistics{};
-}
-
 Vec4 Rasterizer::clearColor() const
 {
     return impl_ ? impl_->settings.clear_color : Vec4{};
-}
-
-bool Rasterizer::usesGlobalIlluminationField(const Ecs::World& world) const
-{
-    (void)world;
-    return !impl_ || !impl_->settings.horizon_gi.enabled;
 }
 
 RasterizerSettings& Rasterizer::settings()

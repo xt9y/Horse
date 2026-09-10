@@ -52,11 +52,6 @@ public:
     virtual void setEnabled(bool enabled) = 0;
 
 protected:
-    virtual bool usesGlobalIlluminationField(const Ecs::World& world) const
-    {
-        (void)world;
-        return true;
-    }
     virtual bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) = 0;
     virtual void present(Internal::FrameOutput& output) = 0;
 };

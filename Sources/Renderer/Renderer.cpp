@@ -12,9 +12,7 @@ namespace Renderer {
 void IRenderer::render(const Ecs::World& world)
 {
     Internal::FrameOutput output;
-    output.global_illumination = usesGlobalIlluminationField(world)
-        ? GlobalIllumination::update(world)
-        : nullptr;
+    output.global_illumination = GlobalIllumination::update(world);
     if (!renderScene(world, output)) return;
     Debug::Internal::render(world, output);
     Internal::renderFonts(world, output);
