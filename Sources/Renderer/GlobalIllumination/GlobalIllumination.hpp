@@ -21,7 +21,7 @@ struct Field {
     std::uint32_t size_x = 0u;
     std::uint32_t size_y = 0u;
     std::uint32_t size_z = 0u;
-    float intensity = 1.0f;
+    float intensity = 0.0f;
     std::uint64_t revision = 0u;
     std::vector<Probe> probes;
 
@@ -38,6 +38,14 @@ struct Field {
             probes.size() == probeCount();
     }
 };
+
+void setRaysPerProbe(std::size_t value);
+void setProbeBudgetPerFrame(std::size_t value);
+void setProbeDimensionRange(std::uint32_t minimum, std::uint32_t maximum);
+void setBoundsMargin(float scale, float minimum);
+void setRayEpsilon(float value);
+void setMaximumBounces(std::uint8_t value);
+void setMaximumPhotonCount(std::uint32_t value);
 
 const Field *update(const Ecs::World& world);
 Vec3 sample(const Field *field, Vec3 position, Vec3 normal);
