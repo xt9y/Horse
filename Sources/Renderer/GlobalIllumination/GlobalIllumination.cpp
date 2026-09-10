@@ -23,11 +23,25 @@ namespace {
 constexpr float kPi = 3.14159265358979323846f;
 constexpr float kY00 = 0.28209479177387814f;
 constexpr float kY1 = 0.48860251190291992f;
-constexpr float kRayEpsilon = 0.0025f;
-constexpr std::size_t kRaysPerProbe = 48u;
-constexpr std::size_t kProbeBudgetPerFrame = 16u;
+constexpr float kGoldenAngle = 2.39996322972865332f;
+constexpr float kGoldenRatioFraction = 0.61803398875f;
 
 using Clock = std::chrono::steady_clock;
+
+struct Tuning {
+    std::size_t rays_per_probe = 0u;
+    std::size_t probe_budget_per_frame = 0u;
+    std::uint32_t minimum_probe_dimension = 0u;
+    std::uint32_t maximum_probe_dimension = 0u;
+    float bounds_margin_scale = 0.0f;
+    float minimum_bounds_margin = 0.0f;
+    float ray_epsilon = 0.0f;
+    std::uint8_t maximum_bounces = 0u;
+    std::uint32_t maximum_photon_count = 0u;
+    bool paused = false;
+};
+
+Tuning tuning;
 
 Vec3 add(Vec3 a, Vec3 b)
 {
@@ -67,7 +81,7 @@ float lengthSquared(Vec3 value)
 Vec3 normalize(Vec3 value)
 {
     const float squared = lengthSquared(value);
-    if (squared <= 1.0e-20f) return {0.0f, 1.0f, 0.0f};
+    if (squared <= std::numeric_limits<float>::epsilon()) return {0.0f, 1.0f, 0.0f};
     return divide(value, std::sqrt(squared));
 }
 
@@ -105,7 +119,7 @@ struct State {
     std::uint64_t light_signature = 0u;
     std::uint64_t next_field_revision = 1u;
 
-    std::uint8_t bounces = 2u;
+    std::uint8_t bounces = 0u;
     PhotonMapping::Settings photon_settings{};
     Scenes::LightState light{};
     std::vector<Scenes::Scene::RenderItem> render_items;
@@ -124,6 +138,15 @@ struct State {
 };
 
 State state;
+
+bool configured()
+{
+    return tuning.rays_per_probe > 0u &&
+        tuning.probe_budget_per_frame > 0u &&
+        tuning.minimum_probe_dimension > 1u &&
+        tuning.maximum_probe_dimension >= tuning.minimum_probe_dimension &&
+        tuning.maximum_bounces > 0u;
+}
 
 SettingsState settingsState(const Ecs::World& world)
 {
@@ -160,17 +183,17 @@ Vec3 directIrradiance(const TraceHit& hit)
         light_direction = multiply(normalize(state.light.direction), -1.0f);
     } else {
         const Vec3 to_light = subtract(state.light.position, hit.position);
-        const float distance_squared = std::max(lengthSquared(to_light), 1.0e-4f);
+        const float distance_squared = std::max(lengthSquared(to_light), std::numeric_limits<float>::epsilon());
         const float distance = std::sqrt(distance_squared);
         light_direction = divide(to_light, distance);
         attenuation = 1.0f / distance_squared;
-        shadow_distance = std::max(distance - kRayEpsilon * 8.0f, 0.0f);
+        shadow_distance = std::max(distance - tuning.ray_epsilon, 0.0f);
     }
 
     const float cosine = std::max(dot(hit.normal, light_direction), 0.0f);
     if (cosine <= 0.0f) return {};
 
-    const Vec3 shadow_origin = add(hit.position, multiply(hit.normal, kRayEpsilon * 4.0f));
+    const Vec3 shadow_origin = add(hit.position, multiply(hit.normal, tuning.ray_epsilon));
     if (state.trace_scene.occluded(shadow_origin, light_direction, shadow_distance)) return {};
 
     return multiply(
@@ -198,7 +221,7 @@ Vec3 sampleField(const Field *field, Vec3 position, Vec3 normal, bool apply_inte
 
     const Vec3 span = subtract(field->maximum, field->minimum);
     const auto coordinate = [](float value, float minimum, float extent, std::uint32_t size) {
-        if (extent <= 1.0e-8f || size <= 1u) return 0.0f;
+        if (extent <= std::numeric_limits<float>::epsilon() || size <= 1u) return 0.0f;
         const float normalized = std::clamp((value - minimum) / extent, 0.0f, 1.0f);
         return normalized * static_cast<float>(size - 1u);
     };
@@ -246,12 +269,12 @@ Vec3 sampleField(const Field *field, Vec3 position, Vec3 normal, bool apply_inte
 
 Vec3 fibonacciDirection(std::size_t ray, std::size_t probe)
 {
-    constexpr float golden_angle = 2.39996322972865332f;
-    const float t = (static_cast<float>(ray) + 0.5f) / static_cast<float>(kRaysPerProbe);
+    const float ray_count = static_cast<float>(tuning.rays_per_probe);
+    const float t = (static_cast<float>(ray) + 0.5f) / ray_count;
     const float z = 1.0f - 2.0f * t;
     const float radius = std::sqrt(std::max(1.0f - z * z, 0.0f));
-    const float phase = golden_angle *
-        (static_cast<float>(ray) + static_cast<float>(probe) * 0.61803398875f);
+    const float phase = kGoldenAngle *
+        (static_cast<float>(ray) + static_cast<float>(probe) * kGoldenRatioFraction);
     return {radius * std::cos(phase), radius * std::sin(phase), z};
 }
 
@@ -279,9 +302,9 @@ void solveProbe(std::size_t probe_index)
 {
     Probe result{};
     const Vec3 origin = probePosition(state.working, probe_index);
-    const float weight = 4.0f * kPi / static_cast<float>(kRaysPerProbe);
+    const float weight = 4.0f * kPi / static_cast<float>(tuning.rays_per_probe);
 
-    for (std::size_t ray = 0u; ray < kRaysPerProbe; ++ray) {
+    for (std::size_t ray = 0u; ray < tuning.rays_per_probe; ++ray) {
         const Vec3 direction = fibonacciDirection(ray, probe_index);
         const TraceHit hit = state.trace_scene.traceClosest(
             origin,
@@ -320,9 +343,13 @@ void solveProbe(std::size_t probe_index)
 
 std::uint32_t dimensionFor(float extent, float maximum_extent)
 {
-    if (maximum_extent <= 1.0e-6f) return 3u;
+    if (maximum_extent <= std::numeric_limits<float>::epsilon())
+        return tuning.minimum_probe_dimension;
+
     const float ratio = std::clamp(extent / maximum_extent, 0.0f, 1.0f);
-    return static_cast<std::uint32_t>(std::clamp(std::lround(3.0 + ratio * 5.0), 3l, 8l));
+    const float minimum = static_cast<float>(tuning.minimum_probe_dimension);
+    const float span = static_cast<float>(tuning.maximum_probe_dimension - tuning.minimum_probe_dimension);
+    return static_cast<std::uint32_t>(std::lround(minimum + ratio * span));
 }
 
 void restartCalculation(float intensity)
@@ -337,8 +364,11 @@ void restartCalculation(float intensity)
     }
 
     const Vec3 raw_extent = subtract(scene_bounds.maximum, scene_bounds.minimum);
-    const float maximum_extent = std::max({raw_extent.x, raw_extent.y, raw_extent.z, 1.0e-3f});
-    const float margin = std::max(maximum_extent * 0.05f, 0.25f);
+    const float maximum_extent = std::max({raw_extent.x, raw_extent.y, raw_extent.z});
+    const float margin = std::max(
+        maximum_extent * tuning.bounds_margin_scale,
+        tuning.minimum_bounds_margin
+    );
 
     Field field;
     field.minimum = subtract(scene_bounds.minimum, Vec3{margin, margin, margin});
@@ -366,7 +396,7 @@ void advanceCalculation()
     if (!state.calculating || !state.working.valid()) return;
 
     const std::size_t end = std::min(
-        state.probe_cursor + kProbeBudgetPerFrame,
+        state.probe_cursor + tuning.probe_budget_per_frame,
         state.working.probes.size()
     );
     while (state.probe_cursor < end) {
@@ -396,10 +426,7 @@ void advanceCalculation()
 void disableIlluminationState()
 {
     state.photon_map.clear();
-    state.photon_settings.enabled = false;
-    state.photon_settings.photon_count = 0u;
-    state.photon_settings.bounces = 0u;
-    state.photon_settings.radius = 0.0f;
+    state.photon_settings = {};
     state.published = {};
     state.working = {};
     state.source = {};
@@ -412,8 +439,31 @@ void disableIlluminationState()
 
 } // namespace
 
+void setRaysPerProbe(std::size_t value) { tuning.rays_per_probe = value; }
+void setProbeBudgetPerFrame(std::size_t value) { tuning.probe_budget_per_frame = value; }
+void setProbeDimensionRange(std::uint32_t minimum, std::uint32_t maximum)
+{
+    tuning.minimum_probe_dimension = minimum;
+    tuning.maximum_probe_dimension = maximum;
+}
+void setBoundsMargin(float scale, float minimum)
+{
+    tuning.bounds_margin_scale = scale;
+    tuning.minimum_bounds_margin = minimum;
+}
+void setRayEpsilon(float value) { tuning.ray_epsilon = value; }
+void setMaximumBounces(std::uint8_t value) { tuning.maximum_bounces = value; }
+void setMaximumPhotonCount(std::uint32_t value) { tuning.maximum_photon_count = value; }
+void setPaused(bool value) { tuning.paused = value; }
+bool paused() { return tuning.paused; }
+
 const Field *update(const Ecs::World& world)
 {
+    if (tuning.paused)
+        return state.published.valid() ? &state.published : nullptr;
+
+    if (!configured()) return nullptr;
+
     const SettingsState settings = settingsState(world);
 
     if (state.world != &world) {
@@ -459,10 +509,16 @@ const Field *update(const Ecs::World& world)
     }
 
     const float intensity = std::max(settings.component.intensity, 0.0f);
-    const std::uint8_t bounces = std::clamp<std::uint8_t>(settings.component.bounces, 1u, 4u);
+    const std::uint8_t bounces = std::max<std::uint8_t>(
+        1u,
+        std::min(settings.component.bounces, tuning.maximum_bounces)
+    );
     PhotonMapping::Settings photon_settings;
     photon_settings.enabled = settings.component.photon_mapping;
-    photon_settings.photon_count = std::min(settings.component.photon_count, 262144u);
+    photon_settings.photon_count = std::min(
+        settings.component.photon_count,
+        tuning.maximum_photon_count
+    );
     photon_settings.bounces = bounces;
     photon_settings.radius = std::max(settings.component.photon_radius, 0.0f);
 
@@ -497,7 +553,9 @@ Vec3 sample(const Field *field, Vec3 position, Vec3 normal)
 
 void reset()
 {
+    const bool was_paused = tuning.paused;
     state = State{};
+    tuning.paused = was_paused;
 }
 
 namespace Debug {
