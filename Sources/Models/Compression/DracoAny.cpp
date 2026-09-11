@@ -1,5 +1,6 @@
 #include "Models/Compression/Draco.hpp"
 #include "Models/Compression/DracoEdgeBreakerComplete.hpp"
+#include "Models/Compression/DracoSequentialComplete.hpp"
 
 #include <cstring>
 
@@ -28,7 +29,7 @@ bool decodeDracoAny(
 
     switch (data[8]) {
         case 0u:
-            return decodeDraco(data, size, mesh, error);
+            return decodeDracoSequentialComplete(data, size, mesh, error);
         case 1u:
             return decodeDracoEdgeBreakerComplete(data, size, mesh, error);
         default:
