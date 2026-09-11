@@ -57,47 +57,6 @@ unsigned int highBit(std::uint32_t value)
     return result;
 }
 
-unsigned int log2Sup(std::uint32_t value)
-{
-    unsigned int bits = 0u;
-    std::uint32_t power = 1u;
-    while (power <= value) {
-        power <<= 1u;
-        ++bits;
-    }
-    return bits;
-}
-
-bool readProbabilityValue(
-    ForwardBits *bits,
-    std::uint32_t maximum_value,
-    std::uint32_t *value,
-    std::string *error)
-{
-    if (!bits || !value) return fail(error, "invalid Zstd FSE probability reader");
-    const unsigned int width = log2Sup(maximum_value);
-    if (width == 0u) {
-        *value = 0u;
-        return true;
-    }
-
-    const std::uint32_t half = std::uint32_t{1u} << (width - 1u);
-    const std::uint32_t short_count = (std::uint32_t{1u} << width) - (maximum_value + 1u);
-    std::uint32_t low = 0u;
-    if (!bits->peek(width - 1u, &low)) return fail(error, "truncated Zstd FSE probability");
-    if (low < short_count) {
-        if (!bits->read(width - 1u, &low)) return fail(error, "truncated Zstd FSE probability");
-        *value = low;
-        return true;
-    }
-
-    std::uint32_t full = 0u;
-    if (!bits->read(width, &full)) return fail(error, "truncated Zstd FSE probability");
-    *value = full >= half ? full - short_count : full;
-    if (*value > maximum_value) return fail(error, "invalid Zstd FSE probability value");
-    return true;
-}
-
 } // namespace
 
 bool buildFseTable(
@@ -153,7 +112,7 @@ bool buildFseTable(
     table->rows.assign(table_size, {});
     for (std::size_t state = 0u; state < table_size; ++state) {
         const std::uint16_t symbol = symbols[state];
-        std::uint32_t next_state = next[symbol]++;
+        const std::uint32_t next_state = next[symbol]++;
         if (next_state == 0u) return fail(error, "invalid zero Zstd FSE next state");
         const unsigned int bits = static_cast<unsigned int>(accuracy_log) - highBit(next_state);
         const std::uint32_t baseline = (next_state << bits) - static_cast<std::uint32_t>(table_size);
@@ -185,44 +144,63 @@ bool parseFseTable(
     if (accuracy_log > maximum_accuracy_log)
         return fail(error, "Zstd FSE accuracy log exceeds symbol-table limit");
 
-    std::uint32_t remaining = std::uint32_t{1u} << accuracy_log;
+    std::uint32_t threshold = std::uint32_t{1u} << accuracy_log;
+    std::uint32_t remaining = threshold + 1u;
+    unsigned int probability_bits = static_cast<unsigned int>(accuracy_log) + 1u;
     std::vector<std::int16_t> normalized;
     normalized.reserve(static_cast<std::size_t>(maximum_symbol) + 1u);
-    std::size_t nonzero = 0u;
+    bool previous_zero = false;
 
-    while (remaining != 0u) {
-        if (normalized.size() > maximum_symbol)
-            return fail(error, "Zstd FSE distribution defines a nonzero symbol above the allowed maximum");
-        const std::uint32_t maximum_value = remaining + 1u;
-        std::uint32_t encoded = 0u;
-        if (!readProbabilityValue(&bits, maximum_value, &encoded, error)) return false;
-        const std::int32_t probability = static_cast<std::int32_t>(encoded) - 1;
-        normalized.push_back(static_cast<std::int16_t>(probability));
-
-        if (probability == -1) {
-            if (remaining == 0u) return fail(error, "invalid Zstd FSE low-probability symbol");
-            --remaining;
-            ++nonzero;
-        } else if (probability > 0) {
-            if (static_cast<std::uint32_t>(probability) > remaining)
-                return fail(error, "Zstd FSE probability exceeds remaining total");
-            remaining -= static_cast<std::uint32_t>(probability);
-            ++nonzero;
-        } else {
+    while (remaining > 1u) {
+        if (previous_zero) {
+            std::size_t next_symbol = normalized.size();
             for (;;) {
                 std::uint32_t repeat = 0u;
-                if (!bits.read(2u, &repeat)) return fail(error, "truncated Zstd FSE zero-run");
-                if (repeat > 0u) {
-                    if (normalized.size() + repeat > static_cast<std::size_t>(maximum_symbol) + 1u)
-                        return fail(error, "Zstd FSE zero-run exceeds allowed symbol range");
-                    normalized.insert(normalized.end(), repeat, 0);
-                }
+                if (!bits.read(2u, &repeat)) return fail(error, "truncated Zstd FSE zero run");
+                if (repeat > static_cast<std::uint32_t>(std::numeric_limits<std::size_t>::max() - next_symbol))
+                    return fail(error, "Zstd FSE zero run overflows");
+                next_symbol += repeat;
                 if (repeat != 3u) break;
             }
+            if (next_symbol > maximum_symbol)
+                return fail(error, "Zstd FSE zero run exceeds allowed symbol range");
+            normalized.resize(next_symbol, 0);
+        }
+
+        if (normalized.size() > maximum_symbol)
+            return fail(error, "Zstd FSE distribution exceeds allowed symbol range");
+
+        const std::uint32_t maximum_short = (threshold << 1u) - 1u;
+        const std::uint32_t short_limit = maximum_short - remaining;
+        std::uint32_t low = 0u;
+        if (!bits.peek(probability_bits - 1u, &low)) return fail(error, "truncated Zstd FSE probability");
+
+        std::uint32_t encoded = 0u;
+        if (low < short_limit) {
+            if (!bits.read(probability_bits - 1u, &encoded)) return fail(error, "truncated Zstd FSE short probability");
+        } else {
+            if (!bits.read(probability_bits, &encoded)) return fail(error, "truncated Zstd FSE probability");
+            if (encoded >= threshold) encoded -= short_limit;
+        }
+
+        const std::int32_t probability = static_cast<std::int32_t>(encoded) - 1;
+        if (probability < -1) return fail(error, "invalid Zstd FSE probability");
+        const std::uint32_t points = probability == -1
+            ? 1u
+            : static_cast<std::uint32_t>(probability);
+        if (points >= remaining) return fail(error, "Zstd FSE probability exhausts distribution early");
+        remaining -= points;
+        normalized.push_back(static_cast<std::int16_t>(probability));
+        previous_zero = probability == 0;
+
+        while (remaining < threshold) {
+            threshold >>= 1u;
+            if (probability_bits == 0u) return fail(error, "invalid Zstd FSE probability bit width");
+            --probability_bits;
         }
     }
 
-    if (nonzero < 2u) return fail(error, "Zstd FSE table must contain at least two symbols");
+    if (remaining != 1u) return fail(error, "Zstd FSE normalized distribution is incomplete");
     *consumed = bits.bytesConsumed();
     if (*consumed == 0u || *consumed > size) return fail(error, "invalid Zstd FSE table description length");
     return buildFseTable(normalized, accuracy_log, table, error);
