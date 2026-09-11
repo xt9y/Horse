@@ -36,11 +36,12 @@ constexpr std::array<int, 22> CoeffTree {{
 bool readToken(
     BoolDecoder *decoder,
     const CoeffNode& probabilities,
+    bool skip_eob,
     unsigned int *token,
     std::string *error)
 {
     if (!decoder || !token) return fail(error, "invalid VP8 coefficient token output");
-    std::size_t index = 0u;
+    std::size_t index = skip_eob ? 2u : 0u;
     for (;;) {
         if (index + 1u >= CoeffTree.size() || index / 2u >= probabilities.size())
             return fail(error, "invalid VP8 coefficient token tree");
@@ -97,16 +98,18 @@ bool decodeBlock(
     coefficients->value.fill(0);
     coefficients->nonzero = false;
     unsigned int context = static_cast<unsigned int>(above != 0u) + static_cast<unsigned int>(left != 0u);
+    bool after_zero = false;
 
     for (std::size_t coefficient = start; coefficient < 16u; ++coefficient) {
         const std::size_t band = CoeffBands[coefficient];
         if (band >= probabilities[type].size() || context >= probabilities[type][band].size())
             return fail(error, "invalid VP8 coefficient context");
         unsigned int token = 0u;
-        if (!readToken(decoder, probabilities[type][band][context], &token, error)) return false;
+        if (!readToken(decoder, probabilities[type][band][context], after_zero, &token, error)) return false;
         if (token == 11u) break;
         if (token == 0u) {
             context = 0u;
+            after_zero = true;
             continue;
         }
 
@@ -116,6 +119,7 @@ bool decodeBlock(
         coefficients->value[destination] = static_cast<std::int16_t>(decoded);
         coefficients->nonzero = true;
         context = token == 1u ? 1u : 2u;
+        after_zero = false;
     }
     *nonzero_context = coefficients->nonzero ? 1u : 0u;
     return true;
