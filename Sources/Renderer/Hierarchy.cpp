@@ -80,6 +80,8 @@ Transform decompose(const Math::Mat4& matrix)
         y * radians_to_degrees,
         z * radians_to_degrees,
     };
+    result.matrix_override = matrix;
+    result.matrix_override_enabled = true;
     return result;
 }
 
