@@ -1,5 +1,6 @@
 #include "Models/Compression/Zstd.hpp"
 
+#include "Models/Compression/XxHash.hpp"
 #include "Models/Compression/ZstdBlock.hpp"
 
 #include <algorithm>
@@ -205,12 +206,18 @@ bool decodeFrame(
         }
     } while (!last);
 
+    const std::size_t regenerated = output->size() - frame_output_begin;
     if (header.checksum) {
         if (size - cursor < 4u) return fail(error, "truncated Zstd content checksum");
+        const std::uint8_t *frame_output = regenerated == 0u
+            ? nullptr
+            : output->data() + frame_output_begin;
+        const std::uint32_t actual = static_cast<std::uint32_t>(xxHash64(frame_output, regenerated, 0u));
+        const std::uint32_t expected = u32le(data + cursor);
+        if (actual != expected) return fail(error, "Zstd frame content checksum mismatch");
         cursor += 4u;
     }
 
-    const std::size_t regenerated = output->size() - frame_output_begin;
     if (header.has_content_size && regenerated != header.content_size)
         return fail(error, "Zstd regenerated size does not match frame content size");
     *consumed = cursor;
