@@ -1,5 +1,5 @@
 #include "Models/Compression/Draco.hpp"
-#include "Models/Compression/DracoEdgeBreaker.hpp"
+#include "Models/Compression/DracoEdgeBreakerComplete.hpp"
 
 #include <cstring>
 
@@ -30,7 +30,7 @@ bool decodeDracoAny(
         case 0u:
             return decodeDraco(data, size, mesh, error);
         case 1u:
-            return decodeDracoEdgeBreaker(data, size, mesh, error);
+            return decodeDracoEdgeBreakerComplete(data, size, mesh, error);
         default:
             return fail(error, "unsupported Draco mesh encoding method");
     }
