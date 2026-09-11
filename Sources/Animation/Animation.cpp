@@ -306,7 +306,7 @@ void System::update(Ecs::World& world, float delta_seconds) const
         }
     );
 
-    if (changed) world.markChanged();
+    if (changed) world.markChanged(Ecs::ChangeKind::Animation);
 }
 
 Transform blend(const Transform& a, const Transform& b, float factor)
