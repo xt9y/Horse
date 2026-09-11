@@ -8,6 +8,7 @@
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Rasterizer/OpenGL/GlobalIlluminationTextures.hpp"
+#include "Renderer/Rasterizer/OpenGL/ShadowTarget.hpp"
 #include "Renderer/Rasterizer/RasterizerShaders.hpp"
 #include "Renderer/Systems/OpenGL/Program.hpp"
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
@@ -17,9 +18,6 @@
 
 #include <lwcgl/glmodern.h>
 #include <lwcgl/lwcgl.h>
-
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
 
 #include <algorithm>
 #include <array>
@@ -31,35 +29,8 @@
 #include <unordered_set>
 #include <vector>
 
-#ifndef GL_TEXTURE_3D
-#define GL_TEXTURE_3D 0x806F
-#endif
 #ifndef GL_TEXTURE0
 #define GL_TEXTURE0 0x84C0
-#endif
-#ifndef GL_RGBA16F_ARB
-#define GL_RGBA16F_ARB 0x881A
-#endif
-#ifndef GL_CLAMP_TO_EDGE
-#define GL_CLAMP_TO_EDGE 0x812F
-#endif
-#ifndef GL_FRAMEBUFFER_EXT
-#define GL_FRAMEBUFFER_EXT 0x8D40
-#endif
-#ifndef GL_RENDERBUFFER_EXT
-#define GL_RENDERBUFFER_EXT 0x8D41
-#endif
-#ifndef GL_COLOR_ATTACHMENT0_EXT
-#define GL_COLOR_ATTACHMENT0_EXT 0x8CE0
-#endif
-#ifndef GL_DEPTH_ATTACHMENT_EXT
-#define GL_DEPTH_ATTACHMENT_EXT 0x8D00
-#endif
-#ifndef GL_FRAMEBUFFER_COMPLETE_EXT
-#define GL_FRAMEBUFFER_COMPLETE_EXT 0x8CD5
-#endif
-#ifndef GL_DEPTH_COMPONENT24
-#define GL_DEPTH_COMPONENT24 0x81A6
 #endif
 #ifndef GL_MAX_TEXTURE_IMAGE_UNITS
 #define GL_MAX_TEXTURE_IMAGE_UNITS 0x8872
@@ -155,17 +126,6 @@ void setMatrix(GLint location, const Math::Mat4& matrix) { if (location >= 0) GL
 } // namespace
 
 struct Rasterizer::Impl {
-    using GenFramebuffersProc = void (*)(GLsizei, GLuint *);
-    using DeleteFramebuffersProc = void (*)(GLsizei, const GLuint *);
-    using BindFramebufferProc = void (*)(GLenum, GLuint);
-    using FramebufferTexture2DProc = void (*)(GLenum, GLenum, GLenum, GLuint, GLint);
-    using CheckFramebufferStatusProc = GLenum (*)(GLenum);
-    using GenRenderbuffersProc = void (*)(GLsizei, GLuint *);
-    using DeleteRenderbuffersProc = void (*)(GLsizei, const GLuint *);
-    using BindRenderbufferProc = void (*)(GLenum, GLuint);
-    using RenderbufferStorageProc = void (*)(GLenum, GLenum, GLsizei, GLsizei);
-    using FramebufferRenderbufferProc = void (*)(GLenum, GLenum, GLenum, GLuint);
-
     struct MainUniforms {
         GLint diffuse = -1, normal_map = -1, roughness_map = -1, metallic_map = -1, ao_map = -1, emissive_map = -1, environment = -1;
         GLint gi[4] {-1, -1, -1, -1};
@@ -214,49 +174,13 @@ struct Rasterizer::Impl {
     ShadowUniforms shadow_uniforms{};
 
     RasterizerOpenGL::GlobalIlluminationTextures gi_textures;
-    std::array<GLuint, 6> shadow_textures{};
+    RasterizerOpenGL::ShadowTarget shadow_target;
     std::array<Math::Mat4, 6> shadow_matrices{};
     std::uint64_t shadow_signature = 0u;
     float shadow_far = 1.0f;
-    int shadow_size = 0;
     bool shadow_valid = false;
 
-    GenFramebuffersProc glGenFramebuffers = nullptr;
-    DeleteFramebuffersProc glDeleteFramebuffers = nullptr;
-    BindFramebufferProc glBindFramebuffer = nullptr;
-    FramebufferTexture2DProc glFramebufferTexture2D = nullptr;
-    CheckFramebufferStatusProc glCheckFramebufferStatus = nullptr;
-    GenRenderbuffersProc glGenRenderbuffers = nullptr;
-    DeleteRenderbuffersProc glDeleteRenderbuffers = nullptr;
-    BindRenderbufferProc glBindRenderbuffer = nullptr;
-    RenderbufferStorageProc glRenderbufferStorage = nullptr;
-    FramebufferRenderbufferProc glFramebufferRenderbuffer = nullptr;
-    GLuint shadow_framebuffer = 0u, shadow_depth_renderbuffer = 0u;
-    bool shadow_framebuffer_available = false;
-
     void applyClearColor() const { glClearColor(settings.clear_color.x, settings.clear_color.y, settings.clear_color.z, settings.clear_color.w); }
-    static GLFWglproc resolveFramebufferProc(const char *core, const char *extension)
-    {
-        GLFWglproc result = glfwGetProcAddress(core);
-        if (!result) result = glfwGetProcAddress(extension);
-        return result;
-    }
-    bool loadShadowFramebufferApi()
-    {
-        glGenFramebuffers = reinterpret_cast<GenFramebuffersProc>(resolveFramebufferProc("glGenFramebuffers", "glGenFramebuffersEXT"));
-        glDeleteFramebuffers = reinterpret_cast<DeleteFramebuffersProc>(resolveFramebufferProc("glDeleteFramebuffers", "glDeleteFramebuffersEXT"));
-        glBindFramebuffer = reinterpret_cast<BindFramebufferProc>(resolveFramebufferProc("glBindFramebuffer", "glBindFramebufferEXT"));
-        glFramebufferTexture2D = reinterpret_cast<FramebufferTexture2DProc>(resolveFramebufferProc("glFramebufferTexture2D", "glFramebufferTexture2DEXT"));
-        glCheckFramebufferStatus = reinterpret_cast<CheckFramebufferStatusProc>(resolveFramebufferProc("glCheckFramebufferStatus", "glCheckFramebufferStatusEXT"));
-        glGenRenderbuffers = reinterpret_cast<GenRenderbuffersProc>(resolveFramebufferProc("glGenRenderbuffers", "glGenRenderbuffersEXT"));
-        glDeleteRenderbuffers = reinterpret_cast<DeleteRenderbuffersProc>(resolveFramebufferProc("glDeleteRenderbuffers", "glDeleteRenderbuffersEXT"));
-        glBindRenderbuffer = reinterpret_cast<BindRenderbufferProc>(resolveFramebufferProc("glBindRenderbuffer", "glBindRenderbufferEXT"));
-        glRenderbufferStorage = reinterpret_cast<RenderbufferStorageProc>(resolveFramebufferProc("glRenderbufferStorage", "glRenderbufferStorageEXT"));
-        glFramebufferRenderbuffer = reinterpret_cast<FramebufferRenderbufferProc>(resolveFramebufferProc("glFramebufferRenderbuffer", "glFramebufferRenderbufferEXT"));
-        shadow_framebuffer_available = glGenFramebuffers && glDeleteFramebuffers && glBindFramebuffer && glFramebufferTexture2D &&
-            glCheckFramebufferStatus && glGenRenderbuffers && glDeleteRenderbuffers && glBindRenderbuffer && glRenderbufferStorage && glFramebufferRenderbuffer;
-        return shadow_framebuffer_available;
-    }
 
     unsigned int fallbackTexture() { return textures.white(); }
     unsigned int textureFor(Models::TextureHandle handle) { return handle == Models::INVALID_TEXTURE ? 0u : textures.texture(handle); }
@@ -356,50 +280,9 @@ struct Rasterizer::Impl {
         return std::max(std::sqrt(far_squared) * std::max(settings.shadow_far_scale, 0.0f), 1.0f);
     }
 
-    void clearShadowFramebuffer()
-    {
-        if (shadow_depth_renderbuffer != 0u && glDeleteRenderbuffers) glDeleteRenderbuffers(1, &shadow_depth_renderbuffer);
-        if (shadow_framebuffer != 0u && glDeleteFramebuffers) glDeleteFramebuffers(1, &shadow_framebuffer);
-        shadow_depth_renderbuffer = 0u; shadow_framebuffer = 0u;
-    }
     void clearShadowTextures()
     {
-        clearShadowFramebuffer();
-        for (GLuint texture : shadow_textures) if (texture != 0u) glDeleteTextures(1, &texture);
-        shadow_textures.fill(0u); shadow_matrices.fill(Math::identityMatrix()); shadow_signature = 0u; shadow_far = 1.0f; shadow_size = 0; shadow_valid = false;
-    }
-    bool createShadowFramebuffer()
-    {
-        if (!shadow_framebuffer_available) return false;
-        glGenFramebuffers(1, &shadow_framebuffer); glGenRenderbuffers(1, &shadow_depth_renderbuffer);
-        if (shadow_framebuffer == 0u || shadow_depth_renderbuffer == 0u) { clearShadowFramebuffer(); return false; }
-        glBindFramebuffer(GL_FRAMEBUFFER_EXT, shadow_framebuffer);
-        glBindRenderbuffer(GL_RENDERBUFFER_EXT, shadow_depth_renderbuffer);
-        glRenderbufferStorage(GL_RENDERBUFFER_EXT, GL_DEPTH_COMPONENT24, shadow_size, shadow_size);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, shadow_depth_renderbuffer);
-        glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, shadow_textures[0], 0);
-        glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT);
-        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER_EXT);
-        glBindRenderbuffer(GL_RENDERBUFFER_EXT, 0u); glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0u); glDrawBuffer(GL_BACK);
-        if (status != GL_FRAMEBUFFER_COMPLETE_EXT) { clearShadowFramebuffer(); shadow_framebuffer_available = false; return false; }
-        return true;
-    }
-    bool ensureShadowTextures(int requested_size)
-    {
-        GLint maximum = requested_size; glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
-        const int size = std::max(1, std::min(requested_size, static_cast<int>(maximum)));
-        if (shadow_textures[0] != 0u && shadow_size == size) return true;
-        clearShadowTextures(); shadow_size = size;
-        glGenTextures(static_cast<GLsizei>(shadow_textures.size()), shadow_textures.data());
-        for (GLuint texture : shadow_textures) {
-            if (texture == 0u) return false;
-            GLModern.glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, shadow_size, shadow_size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        }
-        if (shadow_framebuffer_available && !createShadowFramebuffer()) return false;
-        shadow_valid = false; return true;
+        shadow_target.clear(); shadow_matrices.fill(Math::identityMatrix()); shadow_signature = 0u; shadow_far = 1.0f; shadow_valid = false;
     }
 
     static Math::Mat4 shadowView(Vec3 position, int face)
@@ -518,32 +401,33 @@ struct Rasterizer::Impl {
         const int requested = std::max(settings.shadow_resolution, 1);
         const int minimum = std::max(settings.minimum_shadow_resolution, 1);
         const int fallback = std::max(minimum, std::min({std::max(settings.fallback_shadow_resolution, 1), width, height}));
-        const int target = shadow_framebuffer_available ? requested : fallback;
-        if (!ensureShadowTextures(target)) {
-            if (shadow_framebuffer_available) { shadow_framebuffer_available = false; if (!ensureShadowTextures(fallback)) return false; }
+        const int target = shadow_target.framebufferAvailable() ? requested : fallback;
+        const int previous_size = shadow_target.size();
+        if (!shadow_target.ensure(target)) {
+            if (shadow_target.framebufferAvailable()) { shadow_target.disableFramebuffer(); if (!shadow_target.ensure(fallback)) return false; }
             else return false;
         }
+        if (shadow_target.size() != previous_size) shadow_valid = false;
         const std::uint64_t signature = currentShadowSignature(light);
         if (shadow_valid && shadow_signature == signature) return true;
         shadow_far = calculateShadowFar(light.transform.position, std::max(light.light.range, 0.0f));
         const Math::Mat4 projection = perspectiveMatrix(90.0f, 1.0f, std::max(settings.shadow_near_plane, 1.0e-4f), shadow_far);
-        for (int i = 0; i < 6; ++i) { GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kShadowTextureUnit + i)); glBindTexture(GL_TEXTURE_2D, 0u); }
-        GLModern.glActiveTexture(GL_TEXTURE0);
-        const bool offscreen = shadow_framebuffer_available && shadow_framebuffer != 0u && shadow_depth_renderbuffer != 0u;
-        if (offscreen) { glBindFramebuffer(GL_FRAMEBUFFER_EXT, shadow_framebuffer); glDrawBuffer(GL_COLOR_ATTACHMENT0_EXT); }
+        shadow_target.unbind(kShadowTextureUnit);
+        const bool offscreen = shadow_target.offscreen();
+        shadow_target.begin();
         glDisable(GL_BLEND); glDisable(GL_LIGHTING); glDisable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
-        glViewport(0,0,shadow_size,shadow_size); glClearColor(1,1,1,1);
+        glViewport(0,0,shadow_target.size(),shadow_target.size()); glClearColor(1,1,1,1);
         shadow_program.use(); setVec3(shadow_uniforms.light_position, light.transform.position); setFloat(shadow_uniforms.shadow_far, shadow_far);
         for (int face = 0; face < 6; ++face) {
             const Math::Mat4 view = shadowView(light.transform.position, face);
             shadow_matrices[static_cast<std::size_t>(face)] = Math::multiply(projection, view);
-            if (offscreen) glFramebufferTexture2D(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, shadow_textures[static_cast<std::size_t>(face)], 0);
+            if (offscreen) shadow_target.selectFace(static_cast<std::size_t>(face));
             glMatrixMode(GL_PROJECTION); glLoadMatrixf(projection.data()); glMatrixMode(GL_MODELVIEW); glLoadMatrixf(view.data());
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); drawGeometry(true);
-            if (!offscreen) { GLModern.glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, shadow_textures[static_cast<std::size_t>(face)]); glCopyTexSubImage2D(GL_TEXTURE_2D,0,0,0,0,0,shadow_size,shadow_size); }
+            if (!offscreen) shadow_target.captureFace(static_cast<std::size_t>(face));
         }
         Systems::OpenGL::unbindProgram();
-        if (offscreen) { glBindFramebuffer(GL_FRAMEBUFFER_EXT, 0u); glDrawBuffer(GL_BACK); }
+        shadow_target.finish();
         glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glViewport(0,0,width,height); applyClearColor();
         shadow_signature = signature; shadow_valid = true; return true;
     }
@@ -581,8 +465,8 @@ struct Rasterizer::Impl {
             setVec3(main_uniforms.gi_minimum, gi->minimum); setVec3(main_uniforms.gi_maximum, gi->maximum); setFloat(main_uniforms.gi_intensity, std::max(gi->intensity,0.0f));
         } else setFloat(main_uniforms.gi_intensity,0.0f);
         const bool has_shadow = shadow_valid && (light_type == 1 || light_type == 3); setInt(main_uniforms.has_shadow, has_shadow ? 1 : 0);
-        setFloat(main_uniforms.shadow_far, has_shadow ? shadow_far : 1.0f); setFloat(main_uniforms.shadow_texel, has_shadow ? 1.0f/static_cast<float>(shadow_size) : 0.0f);
-        if (has_shadow) for (int i=0;i<6;++i) { GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0+kShadowTextureUnit+i)); glBindTexture(GL_TEXTURE_2D,shadow_textures[static_cast<std::size_t>(i)]); setMatrix(main_uniforms.shadow_matrix[i],shadow_matrices[static_cast<std::size_t>(i)]); }
+        setFloat(main_uniforms.shadow_far, has_shadow ? shadow_far : 1.0f); setFloat(main_uniforms.shadow_texel, has_shadow ? 1.0f/static_cast<float>(shadow_target.size()) : 0.0f);
+        if (has_shadow) { shadow_target.bind(kShadowTextureUnit); for (int i=0;i<6;++i) setMatrix(main_uniforms.shadow_matrix[i],shadow_matrices[static_cast<std::size_t>(i)]); }
         bindEnvironment(environment); GLModern.glActiveTexture(GL_TEXTURE0);
     }
 
@@ -647,7 +531,7 @@ bool Rasterizer::init()
     impl_->environment_specular_texture_supported = texture_units > kEnvironmentTextureUnit;
     if (!impl_->createPrograms()) { impl_->destroyPrograms(); return false; }
     if (impl_->fallbackTexture() == 0u) { impl_->destroyPrograms(); return false; }
-    impl_->loadShadowFramebufferApi();
+    impl_->shadow_target.loadFramebufferApi();
     impl_->frame_target.resize(impl_->width,impl_->height);
     if (!impl_->frame_target.init()) { std::fprintf(stderr,"[Rasterizer]: frame target unavailable\n"); impl_->destroyPrograms(); return false; }
     glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glDisable(GL_LIGHTING); glShadeModel(GL_SMOOTH);
