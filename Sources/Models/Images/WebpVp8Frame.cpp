@@ -142,6 +142,39 @@ bool parseTokenPartitions(
     return true;
 }
 
+bool parseEntropy(KeyFrame *frame, std::string *error)
+{
+    if (!frame) return fail(error, "null VP8 entropy state");
+    frame->coefficient_probabilities = DefaultCoeffProbabilities;
+    for (std::size_t type = 0u; type < frame->coefficient_probabilities.size(); ++type) {
+        for (std::size_t band = 0u; band < frame->coefficient_probabilities[type].size(); ++band) {
+            for (std::size_t context = 0u; context < frame->coefficient_probabilities[type][band].size(); ++context) {
+                for (std::size_t node = 0u; node < frame->coefficient_probabilities[type][band][context].size(); ++node) {
+                    unsigned int update = 0u;
+                    if (!frame->header.read(CoeffUpdateProbabilities[type][band][context][node], &update, error))
+                        return false;
+                    if (update != 0u) {
+                        std::uint32_t probability = 0u;
+                        if (!frame->header.literal(8u, &probability, error)) return false;
+                        frame->coefficient_probabilities[type][band][context][node] = static_cast<std::uint8_t>(probability);
+                    }
+                }
+            }
+        }
+    }
+
+    bool skip_enabled = false;
+    if (!bit(&frame->header, &skip_enabled, error)) return false;
+    frame->coefficient_skip_enabled = skip_enabled;
+    frame->coefficient_skip_probability = 0u;
+    if (skip_enabled) {
+        std::uint32_t probability = 0u;
+        if (!frame->header.literal(8u, &probability, error)) return false;
+        frame->coefficient_skip_probability = static_cast<std::uint8_t>(probability);
+    }
+    return true;
+}
+
 } // namespace
 
 bool parseKeyFrame(
@@ -202,7 +235,7 @@ bool parseKeyFrame(
 
     if (!parseQuantizer(&frame->header, &frame->quantizer, error)) return false;
     if (!bit(&frame->header, &frame->refresh_entropy, error)) return false;
-    return true;
+    return parseEntropy(frame, error);
 }
 
 } // namespace Models::Images::WebpVp8Internal
