@@ -2,6 +2,7 @@
 
 #include "Models/Compression/Deflate.hpp"
 #include "Models/Compression/Zstd.hpp"
+#include "Models/Images/Etc1s.hpp"
 #include "Models/Images/Uastc.hpp"
 
 #include <algorithm>
@@ -299,7 +300,7 @@ bool decompressLevel(
         return true;
     }
     if (header.supercompression == 1u)
-        return fail(error, "KTX2 BasisLZ requires the Horse ETC1S/Basis decoder");
+        return fail(error, "KTX2 BasisLZ is decoded by the ETC1S path");
     return fail(error, "unsupported KTX2 supercompression scheme: " + std::to_string(header.supercompression));
 }
 
@@ -323,14 +324,33 @@ bool decode(
     if (!parse(data, size, &header, &base, error)) return false;
     if (header.depth > 1u || header.layers > 1u || header.faces != 1u)
         return fail(error, "Horse image textures require a non-array 1D/2D KTX2 image");
+    const std::uint32_t height = std::max(header.height, 1u);
     if (header.width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
-        std::max(header.height, 1u) > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+        height > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
         return fail(error, "KTX2 dimensions exceed Horse image limits");
+    if (base.length > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+        return fail(error, "KTX2 base level exceeds addressable memory");
 
+    const std::uint8_t *level_data = data + static_cast<std::size_t>(base.offset);
     if (header.format == 0u && header.color_model == ColorModelEtc1s) {
         if (header.supercompression != 1u)
             return fail(error, "KTX2 ETC1S requires BasisLZ supercompression");
-        return fail(error, "KTX2 ETC1S/BasisLZ requires the Horse ETC1S decoder");
+        if (header.sgd_length == 0u ||
+            header.sgd_offset > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) ||
+            header.sgd_length > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+            return fail(error, "KTX2 ETC1S is missing addressable BasisLZ global data");
+        const std::size_t image_count = static_cast<std::size_t>(std::max(header.levels, 1u));
+        return Etc1s::decodeKtx2BaseLevel(
+            data + static_cast<std::size_t>(header.sgd_offset),
+            static_cast<std::size_t>(header.sgd_length),
+            image_count,
+            level_data,
+            static_cast<std::size_t>(base.length),
+            static_cast<int>(header.width),
+            static_cast<int>(height),
+            image,
+            error
+        );
     }
     if (header.format == 0u && header.color_model == ColorModelUastc &&
         header.supercompression != 0u && header.supercompression != 2u)
@@ -338,16 +358,14 @@ bool decode(
     if (header.format == 0u && header.color_model != ColorModelUastc)
         return fail(error, "unsupported KTX2 transcodable DFD color model: " + std::to_string(header.color_model));
 
-    const std::uint8_t *level_data = data + static_cast<std::size_t>(base.offset);
     std::vector<std::uint8_t> level;
     if (!decompressLevel(header, base, level_data, &level, error)) return false;
-
-    if (header.format == 0u && header.color_model == ColorModelUastc) {
+    if (header.format == 0u) {
         return Uastc::decodeImage(
             level.data(),
             level.size(),
             static_cast<int>(header.width),
-            static_cast<int>(std::max(header.height, 1u)),
+            static_cast<int>(height),
             image,
             error
         );
