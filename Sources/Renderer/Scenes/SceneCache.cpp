@@ -327,6 +327,7 @@ bool SceneCache::rebuildResources(
 
     std::vector<Models::TextureHandle> requested_textures;
     std::unordered_set<Models::TextureHandle> seen_textures;
+    std::unordered_set<Models::TextureHandle> preferred_textures;
     std::vector<Models::MaterialHandle> requested_materials;
     std::unordered_set<Models::MaterialHandle> seen_materials;
 
@@ -338,6 +339,10 @@ bool SceneCache::rebuildResources(
     for (const Scene::RenderItem& item : items) {
         if (!item.mesh_component || !item.material || item.material->opacity < opacity_cutoff_) continue;
         appendMaterialTextures(*item.material, requested_textures, seen_textures);
+        if (item.material->diffuse_texture != Models::INVALID_TEXTURE)
+            preferred_textures.insert(item.material->diffuse_texture);
+        if (item.material->opacity_texture != Models::INVALID_TEXTURE)
+            preferred_textures.insert(item.material->opacity_texture);
         const Models::MaterialHandle handle = item.mesh_component->material;
         if (handle != Models::INVALID_MATERIAL && seen_materials.insert(handle).second)
             requested_materials.push_back(handle);
@@ -349,7 +354,10 @@ bool SceneCache::rebuildResources(
     std::stable_sort(
         material_texture_begin,
         requested_textures.end(),
-        [](Models::TextureHandle a, Models::TextureHandle b) {
+        [&](Models::TextureHandle a, Models::TextureHandle b) {
+            const bool preferred_a = preferred_textures.find(a) != preferred_textures.end();
+            const bool preferred_b = preferred_textures.find(b) != preferred_textures.end();
+            if (preferred_a != preferred_b) return preferred_a && !preferred_b;
             const bool alpha_a = textureHasTransparency(a);
             const bool alpha_b = textureHasTransparency(b);
             if (alpha_a != alpha_b) return alpha_a && !alpha_b;
@@ -358,14 +366,8 @@ bool SceneCache::rebuildResources(
     );
 
     const std::size_t packed_limit = std::min<std::size_t>(maximum_texture_slots, PackedTextureNone);
-    if (requested_textures.size() > packed_limit) {
-        if (error) {
-            *error = "ray scene requires " + std::to_string(requested_textures.size()) +
-                " shared environment/material textures but backend supports " +
-                std::to_string(packed_limit);
-        }
-        return false;
-    }
+    if (requested_textures.size() > packed_limit)
+        requested_textures.resize(packed_limit);
 
     texture_handles_ = requested_textures;
     std::unordered_map<Models::TextureHandle, int> texture_indices;
