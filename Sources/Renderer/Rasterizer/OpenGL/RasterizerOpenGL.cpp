@@ -7,6 +7,7 @@
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/Math.hpp"
+#include "Renderer/Rasterizer/OpenGL/GlobalIlluminationTextures.hpp"
 #include "Renderer/Rasterizer/RasterizerShaders.hpp"
 #include "Renderer/Systems/OpenGL/Program.hpp"
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
@@ -212,9 +213,7 @@ struct Rasterizer::Impl {
     SkyUniforms sky_uniforms{};
     ShadowUniforms shadow_uniforms{};
 
-    std::array<GLuint, 4> gi_textures{};
-    std::uint64_t gi_revision = 0u;
-    bool gi_uploaded = false;
+    RasterizerOpenGL::GlobalIlluminationTextures gi_textures;
     std::array<GLuint, 6> shadow_textures{};
     std::array<Math::Mat4, 6> shadow_matrices{};
     std::uint64_t shadow_signature = 0u;
@@ -320,43 +319,6 @@ struct Rasterizer::Impl {
     {
         main_program.destroy(); sky_program.destroy(); shadow_program.destroy();
         main_uniforms = {}; sky_uniforms = {}; shadow_uniforms = {};
-    }
-
-    bool ensureGiTextures()
-    {
-        if (gi_textures[0] != 0u) return true;
-        glGenTextures(static_cast<GLsizei>(gi_textures.size()), gi_textures.data());
-        for (GLuint texture : gi_textures) if (texture == 0u) return false;
-        return true;
-    }
-
-    bool uploadGlobalIllumination(const GlobalIllumination::Field *gi)
-    {
-        if (!gi || !gi->valid()) { gi_uploaded = false; return false; }
-        if (gi_uploaded && gi_revision == gi->revision) return true;
-        if (!ensureGiTextures()) return false;
-        const std::size_t probe_count = gi->probes.size();
-        std::vector<float> data(probe_count * 4u, 0.0f);
-        for (std::size_t coefficient = 0u; coefficient < 4u; ++coefficient) {
-            for (std::size_t probe = 0u; probe < probe_count; ++probe) {
-                const Vec3 value = gi->probes[probe].sh[coefficient];
-                const std::size_t offset = probe * 4u;
-                data[offset + 0u] = value.x; data[offset + 1u] = value.y; data[offset + 2u] = value.z;
-            }
-            GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0 + kGiTextureUnit + coefficient));
-            glBindTexture(GL_TEXTURE_3D, gi_textures[coefficient]);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-            GLModern.glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F_ARB, static_cast<GLsizei>(gi->size_x), static_cast<GLsizei>(gi->size_y), static_cast<GLsizei>(gi->size_z), 0, GL_RGBA, GL_FLOAT, data.data());
-        }
-        GLModern.glActiveTexture(GL_TEXTURE0);
-        gi_revision = gi->revision; gi_uploaded = true; return true;
-    }
-
-    void clearGiTextures()
-    {
-        for (GLuint texture : gi_textures) if (texture != 0u) glDeleteTextures(1, &texture);
-        gi_textures.fill(0u); gi_revision = 0u; gi_uploaded = false;
     }
 
     std::uint64_t currentShadowSignature(const Systems::Scene::LightState& light) const
@@ -614,10 +576,9 @@ struct Rasterizer::Impl {
         const float inner = light.valid ? std::clamp(light.light.inner_cone_degrees,0.0f,89.9f) : 0.0f;
         const float outer = light.valid ? std::clamp(std::max(light.light.outer_cone_degrees,inner),inner,89.9f) : 0.0f;
         setFloat(main_uniforms.spot_inner_cos, std::cos(inner * (kPi/180.0f))); setFloat(main_uniforms.spot_outer_cos, std::cos(outer * (kPi/180.0f)));
-        const bool has_gi = uploadGlobalIllumination(gi); setInt(main_uniforms.has_gi, has_gi ? 1 : 0);
+        const bool has_gi = gi_textures.bind(gi, kGiTextureUnit); setInt(main_uniforms.has_gi, has_gi ? 1 : 0);
         if (has_gi && gi) {
             setVec3(main_uniforms.gi_minimum, gi->minimum); setVec3(main_uniforms.gi_maximum, gi->maximum); setFloat(main_uniforms.gi_intensity, std::max(gi->intensity,0.0f));
-            for (int i=0;i<4;++i) { GLModern.glActiveTexture(static_cast<GLenum>(GL_TEXTURE0+kGiTextureUnit+i)); glBindTexture(GL_TEXTURE_3D,gi_textures[static_cast<std::size_t>(i)]); }
         } else setFloat(main_uniforms.gi_intensity,0.0f);
         const bool has_shadow = shadow_valid && (light_type == 1 || light_type == 3); setInt(main_uniforms.has_shadow, has_shadow ? 1 : 0);
         setFloat(main_uniforms.shadow_far, has_shadow ? shadow_far : 1.0f); setFloat(main_uniforms.shadow_texel, has_shadow ? 1.0f/static_cast<float>(shadow_size) : 0.0f);
@@ -719,7 +680,7 @@ void Rasterizer::present(Internal::FrameOutput& output) { (void)output; }
 void Rasterizer::shutdown()
 {
     if (!impl_ || !impl_->initialized) return;
-    Internal::shutdownFonts(Internal::GraphicsApi::OpenGL); impl_->frame_target.shutdown(); impl_->clearTextures(); impl_->clearGiTextures(); impl_->clearShadowTextures(); impl_->destroyPrograms();
+    Internal::shutdownFonts(Internal::GraphicsApi::OpenGL); impl_->frame_target.shutdown(); impl_->clearTextures(); impl_->gi_textures.clear(); impl_->clearShadowTextures(); impl_->destroyPrograms();
     impl_->render_items.clear(); impl_->viewport_visible.clear(); impl_->previous_models.clear(); impl_->previous_model_valid.clear(); impl_->viewport_filter_valid=false; impl_->history_valid=false; impl_->initialized=false;
 }
 
