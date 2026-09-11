@@ -594,12 +594,12 @@ bool deformPart(
                     position.y * inverse_total,
                     position.z * inverse_total,
                 };
-                output->vertices[vertex_index].normal = normalized({
+                output->vertices[vertex_index].normal = normalized(Vec3{
                     normal.x * inverse_total,
                     normal.y * inverse_total,
                     normal.z * inverse_total,
                 });
-                const Vec3 tangent_normalized = normalized({
+                const Vec3 tangent_normalized = normalized(Vec3{
                     tangent.x * inverse_total,
                     tangent.y * inverse_total,
                     tangent.z * inverse_total,
@@ -612,7 +612,7 @@ bool deformPart(
     } else {
         for (Vertex& vertex : output->vertices) {
             vertex.normal = normalized(vertex.normal);
-            const Vec3 tangent = normalized({vertex.tangent.x, vertex.tangent.y, vertex.tangent.z});
+            const Vec3 tangent = normalized(Vec3{vertex.tangent.x, vertex.tangent.y, vertex.tangent.z});
             vertex.tangent.x = tangent.x;
             vertex.tangent.y = tangent.y;
             vertex.tangent.z = tangent.z;
