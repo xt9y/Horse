@@ -46,6 +46,13 @@ struct AttributeData {
     std::uint32_t components = 0u;
     bool normalized = false;
     std::vector<double> values;
+
+    AttributeData() = default;
+    explicit AttributeData(std::vector<float> source)
+    {
+        values.reserve(source.size());
+        for (const float value : source) values.push_back(static_cast<double>(value));
+    }
 };
 
 struct Vertex {
@@ -101,6 +108,7 @@ struct NodeData {
     std::int32_t parent = -1;
     std::vector<std::uint32_t> children;
     std::vector<std::uint32_t> parts;
+    std::uint32_t mesh = INVALID_INDEX;
     std::uint32_t skin = INVALID_INDEX;
     std::uint32_t camera = INVALID_INDEX;
     std::uint32_t light = INVALID_INDEX;
