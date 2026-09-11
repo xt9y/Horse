@@ -32,6 +32,17 @@ bool decodeDraco(
     std::string *error = nullptr
 );
 
+bool decodeDracoAny(
+    const std::uint8_t *data,
+    std::size_t size,
+    DracoMesh *mesh,
+    std::string *error = nullptr
+);
+
+#ifdef HORSE_GLTF_DRACO_DISPATCH
+#define decodeDraco decodeDracoAny
+#endif
+
 } // namespace Models::Compression
 
 #endif
