@@ -2,6 +2,7 @@
 
 #include "Models/Compression/Deflate.hpp"
 #include "Models/Compression/Zstd.hpp"
+#include "Models/Images/Uastc.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,6 +21,8 @@ constexpr std::array<std::uint8_t, 12> identifier {{
     0xabu, 0x4bu, 0x54u, 0x58u, 0x20u, 0x32u,
     0x30u, 0xbbu, 0x0du, 0x0au, 0x1au, 0x0au,
 }};
+constexpr std::uint8_t ColorModelEtc1s = 163u;
+constexpr std::uint8_t ColorModelUastc = 166u;
 
 bool fail(std::string *error, const std::string& message)
 {
@@ -51,6 +54,9 @@ struct Header {
     std::uint32_t faces = 0u;
     std::uint32_t levels = 0u;
     std::uint32_t supercompression = 0u;
+    std::uint8_t color_model = 0u;
+    std::uint64_t sgd_offset = 0u;
+    std::uint64_t sgd_length = 0u;
 };
 
 struct Level {
@@ -100,14 +106,24 @@ bool parse(
     const std::uint32_t dfd_length = u32(data + 52u);
     const std::uint32_t kvd_offset = u32(data + 56u);
     const std::uint32_t kvd_length = u32(data + 60u);
-    const std::uint64_t sgd_offset = u64(data + 64u);
-    const std::uint64_t sgd_length = u64(data + 72u);
+    header->sgd_offset = u64(data + 64u);
+    header->sgd_length = u64(data + 72u);
     if (dfd_length != 0u && !checkedRange(dfd_offset, dfd_length, size))
         return fail(error, "KTX2 data format descriptor exceeds file bounds");
     if (kvd_length != 0u && !checkedRange(kvd_offset, kvd_length, size))
         return fail(error, "KTX2 key/value data exceeds file bounds");
-    if (sgd_length != 0u && !checkedRange(sgd_offset, sgd_length, size))
+    if (header->sgd_length != 0u && !checkedRange(header->sgd_offset, header->sgd_length, size))
         return fail(error, "KTX2 supercompression global data exceeds file bounds");
+
+    if (dfd_length != 0u) {
+        if (dfd_length < 28u) return fail(error, "KTX2 basic DFD is truncated");
+        const std::uint32_t total_size = u32(data + dfd_offset);
+        if (total_size < 28u || total_size > dfd_length)
+            return fail(error, "invalid KTX2 DFD total size");
+        header->color_model = data[static_cast<std::size_t>(dfd_offset) + 12u];
+    } else if (header->format == 0u) {
+        return fail(error, "KTX2 transcodable texture has no data format descriptor");
+    }
     return true;
 }
 
@@ -236,6 +252,57 @@ bool expectedLevelSize(const Level& level, std::size_t *out, std::string *error)
     return true;
 }
 
+bool decompressLevel(
+    const Header& header,
+    const Level& base,
+    const std::uint8_t *level_data,
+    std::vector<std::uint8_t> *level,
+    std::string *error)
+{
+    if (!level_data || !level) return fail(error, "invalid KTX2 level output");
+    if (base.length > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+        return fail(error, "KTX2 compressed level exceeds addressable memory");
+    if (header.supercompression == 0u) {
+        level->assign(level_data, level_data + static_cast<std::size_t>(base.length));
+        return true;
+    }
+
+    std::size_t expected = 0u;
+    if (!expectedLevelSize(base, &expected, error)) return false;
+    if (header.supercompression == 3u) {
+        Compression::InflateOptions options;
+        options.max_output = expected == 0u ? 256u * 1024u * 1024u : expected;
+        if (!Compression::inflateZlib(
+                level_data,
+                static_cast<std::size_t>(base.length),
+                level,
+                error,
+                options))
+            return false;
+        if (expected != 0u && level->size() != expected)
+            return fail(error, "KTX2 zlib level size does not match level index");
+        return true;
+    }
+    if (header.supercompression == 2u) {
+        Compression::ZstdOptions options;
+        options.max_output = expected == 0u ? 256u * 1024u * 1024u : expected;
+        options.max_window = std::max<std::size_t>(options.max_output, 8u * 1024u * 1024u);
+        if (!Compression::decompressZstd(
+                level_data,
+                static_cast<std::size_t>(base.length),
+                level,
+                error,
+                options))
+            return false;
+        if (expected != 0u && level->size() != expected)
+            return fail(error, "KTX2 Zstd level size does not match level index");
+        return true;
+    }
+    if (header.supercompression == 1u)
+        return fail(error, "KTX2 BasisLZ requires the Horse ETC1S/Basis decoder");
+    return fail(error, "unsupported KTX2 supercompression scheme: " + std::to_string(header.supercompression));
+}
+
 } // namespace
 
 bool matches(const std::uint8_t *data, std::size_t size)
@@ -254,52 +321,36 @@ bool decode(
     Header header;
     Level base;
     if (!parse(data, size, &header, &base, error)) return false;
-    if (header.format == 0u) {
-        return fail(
-            error,
-            header.supercompression == 1u
-                ? "KTX2 BasisLZ/ETC1S requires the Horse Basis transcoder"
-                : "KTX2 VK_FORMAT_UNDEFINED requires a transcodable DFD format decoder"
-        );
+    if (header.depth > 1u || header.layers > 1u || header.faces != 1u)
+        return fail(error, "Horse image textures require a non-array 1D/2D KTX2 image");
+    if (header.width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
+        std::max(header.height, 1u) > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+        return fail(error, "KTX2 dimensions exceed Horse image limits");
+
+    if (header.format == 0u && header.color_model == ColorModelEtc1s) {
+        if (header.supercompression != 1u)
+            return fail(error, "KTX2 ETC1S requires BasisLZ supercompression");
+        return fail(error, "KTX2 ETC1S/BasisLZ requires the Horse ETC1S decoder");
     }
+    if (header.format == 0u && header.color_model == ColorModelUastc &&
+        header.supercompression != 0u && header.supercompression != 2u)
+        return fail(error, "KTX2 UASTC permits only NONE or Zstandard supercompression");
+    if (header.format == 0u && header.color_model != ColorModelUastc)
+        return fail(error, "unsupported KTX2 transcodable DFD color model: " + std::to_string(header.color_model));
 
     const std::uint8_t *level_data = data + static_cast<std::size_t>(base.offset);
     std::vector<std::uint8_t> level;
-    if (header.supercompression == 0u) {
-        level.assign(level_data, level_data + static_cast<std::size_t>(base.length));
-    } else if (header.supercompression == 3u) {
-        std::size_t expected = 0u;
-        if (!expectedLevelSize(base, &expected, error)) return false;
-        Compression::InflateOptions options;
-        options.max_output = expected == 0u ? 256u * 1024u * 1024u : expected;
-        if (!Compression::inflateZlib(
-            level_data,
-            static_cast<std::size_t>(base.length),
-            &level,
-            error,
-            options
-        )) return false;
-        if (expected != 0u && level.size() != expected)
-            return fail(error, "KTX2 zlib level size does not match level index");
-    } else if (header.supercompression == 2u) {
-        std::size_t expected = 0u;
-        if (!expectedLevelSize(base, &expected, error)) return false;
-        Compression::ZstdOptions options;
-        options.max_output = expected == 0u ? 256u * 1024u * 1024u : expected;
-        options.max_window = std::max<std::size_t>(options.max_output, 8u * 1024u * 1024u);
-        if (!Compression::decompressZstd(
-            level_data,
-            static_cast<std::size_t>(base.length),
-            &level,
-            error,
-            options
-        )) return false;
-        if (expected != 0u && level.size() != expected)
-            return fail(error, "KTX2 Zstd level size does not match level index");
-    } else if (header.supercompression == 1u) {
-        return fail(error, "KTX2 BasisLZ requires the Horse Basis transcoder");
-    } else {
-        return fail(error, "unsupported KTX2 supercompression scheme: " + std::to_string(header.supercompression));
+    if (!decompressLevel(header, base, level_data, &level, error)) return false;
+
+    if (header.format == 0u && header.color_model == ColorModelUastc) {
+        return Uastc::decodeImage(
+            level.data(),
+            level.size(),
+            static_cast<int>(header.width),
+            static_cast<int>(std::max(header.height, 1u)),
+            image,
+            error
+        );
     }
     return rgba(header, level, image, error);
 }
