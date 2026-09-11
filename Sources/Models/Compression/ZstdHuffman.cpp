@@ -237,8 +237,9 @@ bool decodeHuffmanStream(
     output->clear();
     output->reserve(regenerated_size);
     if (regenerated_size == 0u) {
-        if (size != 0u) return fail(error, "nonempty Zstd Huffman stream for zero literals");
-        return true;
+        if (size == 0u) return true;
+        if (size == 1u && data && data[0] == 1u) return true;
+        return fail(error, "invalid Zstd Huffman marker-only stream for zero literals");
     }
 
     ReverseBits bits;
