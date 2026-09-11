@@ -4,6 +4,7 @@
 
 #include "Models/Core/Texture.hpp"
 #include "Renderer/FontPass.hpp"
+#include "Renderer/Frame/Metal/FrameMetal.hpp"
 #include "Renderer/GlobalIlluminationMetal.hpp"
 #include "Renderer/RayTracer/RayTracerMetalShaders.hpp"
 #include "Renderer/Systems/MetalSceneResources.hpp"
@@ -51,19 +52,15 @@ struct RayTracer::Impl {
     Systems::MetalSceneResources resources;
     std::vector<Systems::Scene::RenderItem> render_items;
     std::vector<std::uint32_t> visibility_mask;
+    Frame::Metal::Presenter presenter;
 
     LWMGLLibrary shader_library = nullptr;
     LWMGLFunction trace_function = nullptr;
-    LWMGLFunction present_vertex_function = nullptr;
-    LWMGLFunction present_fragment_function = nullptr;
     LWMGLComputePipeline trace_pipeline = nullptr;
-    LWMGLRenderPipeline present_pipeline = nullptr;
     LWMGLTexture output_texture = nullptr;
     LWMGLTexture primary_depth = nullptr;
     LWMGLSampler material_sampler = nullptr;
-    LWMGLSampler present_sampler = nullptr;
     LWMGLBuffer trace_uniform_buffer = nullptr;
-    LWMGLBuffer present_uniform_buffer = nullptr;
     LWMGLBuffer acceleration_vertex_buffer = nullptr;
     LWMGLAccelerationStructure acceleration_structure = nullptr;
 
@@ -113,31 +110,18 @@ struct RayTracer::Impl {
         );
         if (!shader_library) return false;
         trace_function = Metal.createFunction(shader_library, "raytrace_kernel");
-        present_vertex_function = Metal.createFunction(shader_library, "present_vertex");
-        present_fragment_function = Metal.createFunction(shader_library, "present_fragment");
-        if (!trace_function || !present_vertex_function || !present_fragment_function) return false;
+        if (!trace_function) return false;
         trace_pipeline = Metal.createComputePipeline(trace_function);
-        present_pipeline = Metal.createRenderPipeline(
-            present_vertex_function,
-            present_fragment_function,
-            LWMGL_BGRA8_UNORM
-        );
-        return trace_pipeline && present_pipeline;
+        return trace_pipeline != nullptr;
     }
 
     void destroyPrograms()
     {
         if (trace_pipeline) Metal.destroyComputePipeline(trace_pipeline);
-        if (present_pipeline) Metal.destroyRenderPipeline(present_pipeline);
         if (trace_function) Metal.destroyFunction(trace_function);
-        if (present_vertex_function) Metal.destroyFunction(present_vertex_function);
-        if (present_fragment_function) Metal.destroyFunction(present_fragment_function);
         if (shader_library) Metal.destroyLibrary(shader_library);
         trace_pipeline = nullptr;
-        present_pipeline = nullptr;
         trace_function = nullptr;
-        present_vertex_function = nullptr;
-        present_fragment_function = nullptr;
         shader_library = nullptr;
     }
 
@@ -149,23 +133,14 @@ struct RayTracer::Impl {
             LWMGL_ADDRESS_REPEAT,
             LWMGL_ADDRESS_REPEAT
         };
-        const LWMGLSamplerDesc present_desc = {
-            LWMGL_FILTER_LINEAR,
-            LWMGL_FILTER_LINEAR,
-            LWMGL_ADDRESS_CLAMP,
-            LWMGL_ADDRESS_CLAMP
-        };
         material_sampler = Metal.createSampler(&material_desc);
-        present_sampler = Metal.createSampler(&present_desc);
-        return material_sampler && present_sampler;
+        return material_sampler != nullptr;
     }
 
     void destroySamplers()
     {
         if (material_sampler) Metal.destroySampler(material_sampler);
-        if (present_sampler) Metal.destroySampler(present_sampler);
         material_sampler = nullptr;
-        present_sampler = nullptr;
     }
 
     bool createUniformBuffers()
@@ -174,23 +149,15 @@ struct RayTracer::Impl {
             sizeof(Systems::MetalTraceUniforms),
             LWMGL_STORAGE_SHARED
         };
-        const LWMGLBufferDesc present_desc = {
-            sizeof(Systems::MetalPresentUniforms),
-            LWMGL_STORAGE_SHARED
-        };
         Systems::MetalTraceUniforms trace{};
-        Systems::MetalPresentUniforms present{};
         trace_uniform_buffer = Metal.createBuffer(&trace_desc, &trace);
-        present_uniform_buffer = Metal.createBuffer(&present_desc, &present);
-        return trace_uniform_buffer && present_uniform_buffer;
+        return trace_uniform_buffer != nullptr;
     }
 
     void destroyUniformBuffers()
     {
         if (trace_uniform_buffer) Metal.destroyBuffer(trace_uniform_buffer);
-        if (present_uniform_buffer) Metal.destroyBuffer(present_uniform_buffer);
         trace_uniform_buffer = nullptr;
-        present_uniform_buffer = nullptr;
     }
 
     bool createTargets()
@@ -356,21 +323,7 @@ struct RayTracer::Impl {
         return true;
     }
 
-    bool beginClearDrawable(LWMGLCommand& out_command)
-    {
-        out_command = nullptr;
-        LWMGLCommand command = Metal.begin();
-        if (!command) return false;
-        const LWMGLClearColor clear = {0.0, 0.0, 0.0, 1.0};
-        if (Metal.beginRenderToDrawable(command, clear, 1) != 0) {
-            Metal.destroyCommand(command);
-            return false;
-        }
-        out_command = command;
-        return true;
-    }
-
-    bool dispatchAndCompose(
+    bool dispatch(
         const Systems::CameraState& camera,
         const Systems::LightState& light,
         const GlobalIllumination::Field *global_illumination,
@@ -398,10 +351,6 @@ struct RayTracer::Impl {
         trace.counts[3] = (has_alpha_cutouts ? 1 : 0) | (visibility_all ? 2 : 0);
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
-        Systems::MetalPresentUniforms present{};
-        present.exposure[0] = settings.exposure;
-        if (Metal.uploadBuffer(present_uniform_buffer, 0u, &present, sizeof present) != 0) return false;
-
         LWMGLCommand command = Metal.begin();
         if (!command) return false;
         bool ok = Metal.beginCompute(command) == 0;
@@ -421,16 +370,8 @@ struct RayTracer::Impl {
         ) == 0;
         if (ok) ok = Metal.endEncoding(command) == 0;
 
-        const LWMGLClearColor clear = {0.0, 0.0, 0.0, 1.0};
-        if (ok) ok = Metal.beginRenderToDrawable(command, clear, 1) == 0;
-        if (ok) ok = Metal.setRenderPipeline(command, present_pipeline) == 0;
-        if (ok) ok = Metal.setFragmentBuffer(command, present_uniform_buffer, 0u, 0u) == 0;
-        if (ok) ok = Metal.setFragmentTexture(command, output_texture, 0u) == 0;
-        if (ok) ok = Metal.setFragmentSampler(command, present_sampler, 0u) == 0;
-        if (ok) ok = Metal.draw(command, 0u, 3u) == 0;
-
         if (!ok) {
-            std::fprintf(stderr, "[RayTracer]: Metal frame failed: %s\n", lwmglGetLastError());
+            std::fprintf(stderr, "[RayTracer]: Metal trace failed: %s\n", lwmglGetLastError());
             Metal.destroyCommand(command);
             return false;
         }
@@ -477,6 +418,7 @@ bool RayTracer::init()
         Metal.resize(
             static_cast<std::uint32_t>(impl_->width),
             static_cast<std::uint32_t>(impl_->height)) != 0 ||
+        !impl_->presenter.init() ||
         !impl_->createPrograms() ||
         !impl_->createSamplers() ||
         !impl_->createUniformBuffers() ||
@@ -568,10 +510,7 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
     output.depth_texture = nullptr;
 
     if (!impl_->active()) {
-        LWMGLCommand command = nullptr;
-        if (!impl_->beginClearDrawable(command)) return false;
-        output.command = command;
-        return true;
+        return Frame::Metal::beginClear(output);
     }
 
     const int previous_width = impl_->trace_width;
@@ -585,33 +524,27 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
     if (!impl_->syncSceneIfNeeded(world) || !impl_->syncVisibilityIfNeeded(world)) return false;
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
     if (!camera.valid || impl_->scene.triangles().empty()) {
-        LWMGLCommand command = nullptr;
-        if (!impl_->beginClearDrawable(command)) return false;
-        output.command = command;
-        return true;
+        return Frame::Metal::beginClear(output);
     }
     const Systems::LightState light = Systems::lightState(Systems::Scene::lightState(world));
 
     LWMGLCommand command = nullptr;
-    if (!impl_->dispatchAndCompose(camera, light, output.global_illumination, command)) return false;
+    if (!impl_->dispatch(camera, light, output.global_illumination, command)) return false;
     output.command = command;
     output.depth = Internal::DepthSource::LinearTexture;
+    output.color_texture = impl_->output_texture;
     output.depth_texture = impl_->primary_depth;
     return true;
 }
 
+bool RayTracer::compose(Internal::FrameOutput& output)
+{
+    return impl_->presenter.compose(output);
+}
+
 void RayTracer::present(Internal::FrameOutput& output)
 {
-    LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
-    if (!command) return;
-    bool ok = Metal.present(command) == 0;
-    if (ok) ok = Metal.commit(command) == 0;
-    if (ok) ok = Metal.wait(command) == 0;
-    if (!ok) {
-        std::fprintf(stderr, "[RayTracer]: Metal presentation failed: %s\n", lwmglGetLastError());
-    }
-    Metal.destroyCommand(command);
-    output.command = nullptr;
+    Frame::Metal::present(output);
 }
 
 void RayTracer::shutdown()
@@ -628,6 +561,7 @@ void RayTracer::shutdown()
     impl_->destroyUniformBuffers();
     impl_->destroySamplers();
     impl_->destroyPrograms();
+    impl_->presenter.shutdown();
     if (Metal.isCreated()) Metal.destroy();
     impl_->render_items.clear();
     impl_->visibility_mask.clear();

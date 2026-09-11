@@ -16,6 +16,8 @@ void IRenderer::render(const Ecs::World& world)
     Internal::FrameOutput output;
     output.global_illumination = GlobalIllumination::update(world);
     if (!renderScene(world, output)) return;
+    if (post_process_ && !post_process_->process(output)) return;
+    if (!compose(output)) return;
     Debug::Internal::render(world, output);
     Internal::renderFonts(world, output);
     UI::Internal::render(output);

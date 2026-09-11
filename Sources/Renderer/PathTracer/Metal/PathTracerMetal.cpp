@@ -4,6 +4,7 @@
 
 #include "Models/Core/Texture.hpp"
 #include "Renderer/FontPass.hpp"
+#include "Renderer/Frame/Metal/FrameMetal.hpp"
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/GlobalIlluminationMetal.hpp"
 #include "Renderer/PathTracer/PathTracerMetalShaders.hpp"
@@ -79,19 +80,19 @@ struct PathTracer::Impl {
     Systems::ProgressiveState progressive;
     std::vector<Systems::Scene::RenderItem> render_items;
     std::vector<std::uint32_t> visibility_mask;
+    Frame::Metal::Presenter presenter;
 
     LWMGLLibrary shader_library = nullptr;
     LWMGLFunction trace_function = nullptr;
-    LWMGLFunction present_vertex_function = nullptr;
-    LWMGLFunction present_fragment_function = nullptr;
+    LWMGLFunction resolve_function = nullptr;
     LWMGLComputePipeline trace_pipeline = nullptr;
-    LWMGLRenderPipeline present_pipeline = nullptr;
+    LWMGLComputePipeline resolve_pipeline = nullptr;
     LWMGLTexture accumulation = nullptr;
+    LWMGLTexture resolved = nullptr;
     LWMGLTexture primary_depth = nullptr;
     LWMGLSampler material_sampler = nullptr;
-    LWMGLSampler present_sampler = nullptr;
     LWMGLBuffer trace_uniform_buffer = nullptr;
-    LWMGLBuffer present_uniform_buffer = nullptr;
+    LWMGLBuffer resolve_uniform_buffer = nullptr;
     LWMGLBuffer acceleration_vertex_buffer = nullptr;
     LWMGLAccelerationStructure acceleration_structure = nullptr;
 
@@ -131,32 +132,25 @@ struct PathTracer::Impl {
         if (!shader_library) return false;
 
         trace_function = Metal.createFunction(shader_library, "trace_kernel");
-        present_vertex_function = Metal.createFunction(shader_library, "present_vertex");
-        present_fragment_function = Metal.createFunction(shader_library, "present_fragment");
-        if (!trace_function || !present_vertex_function || !present_fragment_function) return false;
+        resolve_function = Metal.createFunction(shader_library, "resolve_pathtrace_kernel");
+        if (!trace_function || !resolve_function) return false;
 
         trace_pipeline = Metal.createComputePipeline(trace_function);
-        present_pipeline = Metal.createRenderPipeline(
-            present_vertex_function,
-            present_fragment_function,
-            LWMGL_BGRA8_UNORM
-        );
-        return trace_pipeline && present_pipeline;
+        resolve_pipeline = Metal.createComputePipeline(resolve_function);
+        return trace_pipeline && resolve_pipeline;
     }
 
     void destroyPrograms()
     {
         if (trace_pipeline) Metal.destroyComputePipeline(trace_pipeline);
-        if (present_pipeline) Metal.destroyRenderPipeline(present_pipeline);
+        if (resolve_pipeline) Metal.destroyComputePipeline(resolve_pipeline);
         if (trace_function) Metal.destroyFunction(trace_function);
-        if (present_vertex_function) Metal.destroyFunction(present_vertex_function);
-        if (present_fragment_function) Metal.destroyFunction(present_fragment_function);
+        if (resolve_function) Metal.destroyFunction(resolve_function);
         if (shader_library) Metal.destroyLibrary(shader_library);
         trace_pipeline = nullptr;
-        present_pipeline = nullptr;
+        resolve_pipeline = nullptr;
         trace_function = nullptr;
-        present_vertex_function = nullptr;
-        present_fragment_function = nullptr;
+        resolve_function = nullptr;
         shader_library = nullptr;
     }
 
@@ -168,23 +162,14 @@ struct PathTracer::Impl {
             LWMGL_ADDRESS_REPEAT,
             LWMGL_ADDRESS_REPEAT
         };
-        const LWMGLSamplerDesc present_desc = {
-            LWMGL_FILTER_LINEAR,
-            LWMGL_FILTER_LINEAR,
-            LWMGL_ADDRESS_CLAMP,
-            LWMGL_ADDRESS_CLAMP
-        };
         material_sampler = Metal.createSampler(&material_desc);
-        present_sampler = Metal.createSampler(&present_desc);
-        return material_sampler && present_sampler;
+        return material_sampler != nullptr;
     }
 
     void destroySamplers()
     {
         if (material_sampler) Metal.destroySampler(material_sampler);
-        if (present_sampler) Metal.destroySampler(present_sampler);
         material_sampler = nullptr;
-        present_sampler = nullptr;
     }
 
     bool createUniformBuffers()
@@ -193,23 +178,23 @@ struct PathTracer::Impl {
             sizeof(Systems::MetalTraceUniforms),
             LWMGL_STORAGE_SHARED
         };
-        const LWMGLBufferDesc present_desc = {
-            sizeof(Systems::MetalPresentUniforms),
+        const LWMGLBufferDesc resolve_desc = {
+            sizeof(Systems::MetalResolveUniforms),
             LWMGL_STORAGE_SHARED
         };
         Systems::MetalTraceUniforms trace{};
-        Systems::MetalPresentUniforms present{};
+        Systems::MetalResolveUniforms resolve{};
         trace_uniform_buffer = Metal.createBuffer(&trace_desc, &trace);
-        present_uniform_buffer = Metal.createBuffer(&present_desc, &present);
-        return trace_uniform_buffer && present_uniform_buffer;
+        resolve_uniform_buffer = Metal.createBuffer(&resolve_desc, &resolve);
+        return trace_uniform_buffer && resolve_uniform_buffer;
     }
 
     void destroyUniformBuffers()
     {
         if (trace_uniform_buffer) Metal.destroyBuffer(trace_uniform_buffer);
-        if (present_uniform_buffer) Metal.destroyBuffer(present_uniform_buffer);
+        if (resolve_uniform_buffer) Metal.destroyBuffer(resolve_uniform_buffer);
         trace_uniform_buffer = nullptr;
-        present_uniform_buffer = nullptr;
+        resolve_uniform_buffer = nullptr;
     }
 
     bool createTraceTargets()
@@ -226,6 +211,20 @@ struct PathTracer::Impl {
         accumulation = Metal.createTexture(&accumulation_desc);
         if (!accumulation) return false;
 
+        const LWMGLTextureDesc resolved_desc = {
+            static_cast<std::uint32_t>(trace_width),
+            static_cast<std::uint32_t>(trace_height),
+            LWMGL_RGBA16_FLOAT,
+            LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE,
+            LWMGL_STORAGE_PRIVATE
+        };
+        resolved = Metal.createTexture(&resolved_desc);
+        if (!resolved) {
+            Metal.destroyTexture(accumulation);
+            accumulation = nullptr;
+            return false;
+        }
+
         const LWMGLTextureDesc depth_desc = {
             static_cast<std::uint32_t>(trace_width),
             static_cast<std::uint32_t>(trace_height),
@@ -235,7 +234,9 @@ struct PathTracer::Impl {
         };
         primary_depth = Metal.createTexture(&depth_desc);
         if (!primary_depth) {
+            Metal.destroyTexture(resolved);
             Metal.destroyTexture(accumulation);
+            resolved = nullptr;
             accumulation = nullptr;
             return false;
         }
@@ -246,8 +247,10 @@ struct PathTracer::Impl {
     void destroyTraceTargets()
     {
         if (primary_depth) Metal.destroyTexture(primary_depth);
+        if (resolved) Metal.destroyTexture(resolved);
         if (accumulation) Metal.destroyTexture(accumulation);
         primary_depth = nullptr;
+        resolved = nullptr;
         accumulation = nullptr;
         progressive.reset();
     }
@@ -397,28 +400,14 @@ struct PathTracer::Impl {
         return true;
     }
 
-    bool beginClearDrawable(LWMGLCommand& out_command)
-    {
-        out_command = nullptr;
-        LWMGLCommand command = Metal.begin();
-        if (!command) return false;
-        const LWMGLClearColor clear = {0.0, 0.0, 0.0, 1.0};
-        if (Metal.beginRenderToDrawable(command, clear, 1) != 0) {
-            Metal.destroyCommand(command);
-            return false;
-        }
-        out_command = command;
-        return true;
-    }
-
-    bool dispatchAndCompose(
+    bool dispatchAndResolve(
         const Systems::CameraState& camera,
         const Systems::LightState& light,
         const GlobalIllumination::Field *global_illumination,
         LWMGLCommand& out_command)
     {
         out_command = nullptr;
-        if (!resources.ready() || !acceleration_structure || !accumulation || !primary_depth)
+        if (!resources.ready() || !acceleration_structure || !accumulation || !resolved || !primary_depth)
             return false;
 
         Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
@@ -446,13 +435,12 @@ struct PathTracer::Impl {
         trace.counts[3] = (has_alpha_cutouts ? 1 : 0) | (visibility_all ? 2 : 0);
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
-        Systems::MetalPresentUniforms present{};
-        present.exposure[0] = settings.exposure;
-        present.exposure[1] = progressive.cameraMoving() ? 1.0f : 0.0f;
+        Systems::MetalResolveUniforms resolve{};
         const std::uint32_t moving_grid = static_cast<std::uint32_t>(std::max(settings.moving_phase_grid, 1));
-        present.exposure[2] = static_cast<float>(moving_grid);
-        present.exposure[3] = static_cast<float>(progressive.frameIndex() % (moving_grid * moving_grid));
-        if (Metal.uploadBuffer(present_uniform_buffer, 0u, &present, sizeof present) != 0) return false;
+        resolve.params[0] = progressive.cameraMoving() ? 1u : 0u;
+        resolve.params[1] = moving_grid;
+        resolve.params[2] = progressive.frameIndex() % (moving_grid * moving_grid);
+        if (Metal.uploadBuffer(resolve_uniform_buffer, 0u, &resolve, sizeof resolve) != 0) return false;
 
         LWMGLCommand command = Metal.begin();
         if (!command) return false;
@@ -474,16 +462,21 @@ struct PathTracer::Impl {
         ) == 0;
         if (ok) ok = Metal.endEncoding(command) == 0;
 
-        const LWMGLClearColor clear = {0.0, 0.0, 0.0, 1.0};
-        if (ok) ok = Metal.beginRenderToDrawable(command, clear, 1) == 0;
-        if (ok) ok = Metal.setRenderPipeline(command, present_pipeline) == 0;
-        if (ok) ok = Metal.setFragmentBuffer(command, present_uniform_buffer, 0u, 0u) == 0;
-        if (ok) ok = Metal.setFragmentTexture(command, accumulation, 0u) == 0;
-        if (ok) ok = Metal.setFragmentSampler(command, present_sampler, 0u) == 0;
-        if (ok) ok = Metal.draw(command, 0u, 3u) == 0;
+        if (ok) ok = Metal.beginCompute(command) == 0;
+        if (ok) ok = Metal.setComputePipeline(command, resolve_pipeline) == 0;
+        if (ok) ok = Metal.setBuffer(command, resolve_uniform_buffer, 0u, 0u) == 0;
+        if (ok) ok = Metal.setTexture(command, accumulation, 0u) == 0;
+        if (ok) ok = Metal.setTexture(command, resolved, 1u) == 0;
+        if (ok) ok = Metal.dispatch(
+            command,
+            static_cast<std::uint32_t>(trace_width),
+            static_cast<std::uint32_t>(trace_height),
+            1u
+        ) == 0;
+        if (ok) ok = Metal.endEncoding(command) == 0;
 
         if (!ok) {
-            std::fprintf(stderr, "[PathTracer]: Metal frame composition failed: %s\n", lwmglGetLastError());
+            std::fprintf(stderr, "[PathTracer]: Metal trace/resolve failed: %s\n", lwmglGetLastError());
             Metal.destroyCommand(command);
             return false;
         }
@@ -533,6 +526,7 @@ bool PathTracer::init()
         Metal.resize(
             static_cast<std::uint32_t>(impl_->width),
             static_cast<std::uint32_t>(impl_->height)) != 0 ||
+        !impl_->presenter.init() ||
         !impl_->createPrograms() ||
         !impl_->createSamplers() ||
         !impl_->createUniformBuffers() ||
@@ -647,10 +641,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     output.depth_texture = nullptr;
 
     if (!impl_->active()) {
-        LWMGLCommand command = nullptr;
-        if (!impl_->beginClearDrawable(command)) return false;
-        output.command = command;
-        return true;
+        return Frame::Metal::beginClear(output);
     }
 
     const int previous_width = impl_->trace_width;
@@ -664,10 +655,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     if (!impl_->syncSceneIfNeeded(world) || !impl_->syncVisibilityIfNeeded(world)) return false;
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
     if (!camera.valid || impl_->scene.triangles().empty()) {
-        LWMGLCommand command = nullptr;
-        if (!impl_->beginClearDrawable(command)) return false;
-        output.command = command;
-        return true;
+        return Frame::Metal::beginClear(output);
     }
     const Systems::LightState light = Systems::lightState(Systems::Scene::lightState(world));
 
@@ -678,28 +666,23 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     );
 
     LWMGLCommand command = nullptr;
-    if (!impl_->dispatchAndCompose(camera, light, output.global_illumination, command)) return false;
+    if (!impl_->dispatchAndResolve(camera, light, output.global_illumination, command)) return false;
 
     output.command = command;
     output.depth = Internal::DepthSource::LinearTexture;
+    output.color_texture = impl_->resolved;
     output.depth_texture = impl_->primary_depth;
     return true;
 }
 
+bool PathTracer::compose(Internal::FrameOutput& output)
+{
+    return impl_->presenter.compose(output);
+}
+
 void PathTracer::present(Internal::FrameOutput& output)
 {
-    LWMGLCommand command = static_cast<LWMGLCommand>(output.command);
-    if (!command) return;
-
-    bool ok = Metal.present(command) == 0;
-    if (ok) ok = Metal.commit(command) == 0;
-    if (ok) ok = Metal.wait(command) == 0;
-    if (!ok) {
-        std::fprintf(stderr, "[PathTracer]: Metal presentation failed: %s\n", lwmglGetLastError());
-    }
-
-    Metal.destroyCommand(command);
-    output.command = nullptr;
+    Frame::Metal::present(output);
 }
 
 void PathTracer::shutdown()
@@ -717,6 +700,7 @@ void PathTracer::shutdown()
     impl_->destroyUniformBuffers();
     impl_->destroySamplers();
     impl_->destroyPrograms();
+    impl_->presenter.shutdown();
     if (Metal.isCreated()) Metal.destroy();
 
     impl_->render_items.clear();

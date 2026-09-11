@@ -1,42 +1,65 @@
 #ifndef HORSE_RENDERER_POST_PROCESS_HPP
 #define HORSE_RENDERER_POST_PROCESS_HPP
 
-#include "Ecs/Ecs.hpp"
-
+#include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
-namespace Renderer {
+namespace Renderer::PostProcess {
 
-enum class AntiAliasing : std::uint8_t {
+enum class GraphicsApi : std::uint8_t {
+    OpenGL,
+    Metal,
+};
+
+enum class DepthSource : std::uint8_t {
     None,
-    Fxaa,
+    Native,
+    LinearTexture,
 };
 
-struct PostProcessComponent {
-    bool enabled = true;
-    float exposure = 1.0f;
-    bool bloom = false;
-    float bloom_threshold = 1.0f;
-    float bloom_intensity = 0.12f;
-    bool motion_blur = false;
-    float motion_blur_strength = 0.5f;
-    std::uint8_t motion_blur_samples = 8u;
-    AntiAliasing anti_aliasing = AntiAliasing::Fxaa;
+struct Frame {
+    GraphicsApi api = GraphicsApi::OpenGL;
+    DepthSource depth = DepthSource::None;
+    int width = 1;
+    int height = 1;
+    void *command = nullptr;
+    void *color_texture = nullptr;
+    void *depth_texture = nullptr;
+    void *velocity_texture = nullptr;
 };
 
-struct PostProcessState {
-    float exposure = 1.0f;
-    bool bloom = false;
-    float bloom_threshold = 1.0f;
-    float bloom_intensity = 0.12f;
-    bool motion_blur = false;
-    float motion_blur_strength = 0.5f;
-    std::uint8_t motion_blur_samples = 8u;
-    AntiAliasing anti_aliasing = AntiAliasing::Fxaa;
+class Pass {
+public:
+    virtual ~Pass() = default;
+    virtual bool process(Frame& frame) = 0;
+    virtual void shutdown() {}
 };
 
-PostProcessState postProcessState(const Ecs::World& world);
+class Pipeline {
+public:
+    template <typename T, typename... Args>
+    T& add(Args&&... args)
+    {
+        static_assert(std::is_base_of_v<Pass, T>);
+        auto pass = std::make_unique<T>(std::forward<Args>(args)...);
+        T& reference = *pass;
+        passes_.push_back(std::move(pass));
+        return reference;
+    }
 
-} // namespace Renderer
+    bool process(Frame& frame);
+    void shutdown();
+    void clear();
+    std::size_t count() const { return passes_.size(); }
+
+private:
+    std::vector<std::unique_ptr<Pass>> passes_;
+};
+
+} // namespace Renderer::PostProcess
 
 #endif

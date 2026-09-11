@@ -56,6 +56,7 @@ public:
 
 protected:
     bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) override;
+    bool compose(Internal::FrameOutput& output) override;
     void present(Internal::FrameOutput& output) override;
 
 private:

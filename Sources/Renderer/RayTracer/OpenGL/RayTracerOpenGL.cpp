@@ -3,6 +3,7 @@
 #include "Renderer/RayTracer/RayTracer.hpp"
 
 #include "Renderer/FontPass.hpp"
+#include "Renderer/Frame/OpenGL/FrameOpenGL.hpp"
 #include "Renderer/GlobalIlluminationOpenGL.hpp"
 #include "Renderer/PathTracer/PathTracerShaders.hpp"
 #include "Renderer/Systems/OpenGL/Program.hpp"
@@ -83,13 +84,6 @@ struct RayTracer::Impl {
         std::array<GLint, Systems::OpenGLSceneResources::MaximumTextureSlots> textures{};
     };
 
-    struct PresentUniforms {
-        GLint accumulation = -1;
-        GLint phase_count = -1;
-        GLint camera_moving = -1;
-        GLint exposure = -1;
-    };
-
     RayTracerSettings settings{};
     bool initialized = false;
     int width = 1;
@@ -108,11 +102,9 @@ struct RayTracer::Impl {
     std::vector<std::uint32_t> visibility_mask;
 
     Systems::OpenGL::Program trace_program;
-    Systems::OpenGL::Program present_program;
     GLuint output = 0u;
     GLuint primary_depth = 0u;
     TraceUniforms trace_uniforms{};
-    PresentUniforms present_uniforms{};
 
     bool active() const
     {
@@ -213,26 +205,12 @@ struct RayTracer::Impl {
             setInt(trace_uniforms.textures[slot], static_cast<int>(slot));
         }
 
-        present_uniforms.accumulation = present_program.uniform("uAccumulation");
-        present_uniforms.phase_count = present_program.uniform("uPhaseCount");
-        present_uniforms.camera_moving = present_program.uniform("uCameraMoving");
-        present_uniforms.exposure = present_program.uniform("uExposure");
-        present_program.use();
-        setInt(present_uniforms.accumulation, 0);
         Systems::OpenGL::unbindProgram();
     }
 
     bool createPrograms()
     {
         if (!trace_program.createCompute(PathTracerShaders::trace, "RayTracer")) return false;
-        if (!present_program.createGraphics(
-                PathTracerShaders::present_vertex,
-                PathTracerShaders::present_fragment,
-                "RayTracer"))
-        {
-            trace_program.destroy();
-            return false;
-        }
         cacheUniforms();
         return true;
     }
@@ -240,7 +218,6 @@ struct RayTracer::Impl {
     void destroyPrograms()
     {
         trace_program.destroy();
-        present_program.destroy();
     }
 
     bool syncSceneIfNeeded(const Ecs::World& world)
@@ -342,29 +319,6 @@ struct RayTracer::Impl {
         Systems::OpenGL::unbindProgram();
     }
 
-    void compose()
-    {
-        glViewport(0, 0, width, height);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_LIGHTING);
-        glDisable(GL_BLEND);
-
-        present_program.use();
-        GLModern.glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, output);
-        setFloat(present_uniforms.phase_count, 1.0f);
-        setInt(present_uniforms.camera_moving, 0);
-        setFloat(present_uniforms.exposure, settings.exposure);
-
-        glBegin(GL_TRIANGLES);
-        glVertex2f(-1.0f, -1.0f);
-        glVertex2f(3.0f, -1.0f);
-        glVertex2f(-1.0f, 3.0f);
-        glEnd();
-
-        Systems::OpenGL::unbindProgram();
-    }
 };
 
 RayTracer::RayTracer() : impl_(new Impl) {}
@@ -485,13 +439,19 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
 
     Internal::bindGlobalIlluminationOpenGL(output.global_illumination);
     impl_->dispatch(camera, light);
-    impl_->compose();
 
     output.depth = Internal::DepthSource::LinearTexture;
+    output.color_texture = reinterpret_cast<void*>(static_cast<std::uintptr_t>(impl_->output));
     output.depth_texture = reinterpret_cast<void*>(
         static_cast<std::uintptr_t>(impl_->primary_depth)
     );
     return true;
+}
+
+bool RayTracer::compose(Internal::FrameOutput& output)
+{
+    if (!output.color_texture) return true;
+    return Frame::OpenGL::presentTexture(output.color_texture, output.width, output.height);
 }
 
 void RayTracer::present(Internal::FrameOutput& output)

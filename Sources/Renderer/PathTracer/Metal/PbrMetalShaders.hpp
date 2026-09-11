@@ -27,7 +27,7 @@ struct TraceUniforms {
     uint4 frame;
     uint4 path_policy;
 };
-struct PresentUniforms { float4 exposure; };
+struct ResolveUniforms { uint4 params; };
 struct Hit {
     bool found;
     float distance;
@@ -47,7 +47,6 @@ struct Surface {
     float ao;
     float clearcoat;
 };
-struct PresentOut { float4 position [[position]]; float2 uv; };
 
 constant uint NO_TEXTURE = 31u;
 constant float PI = 3.14159265358979323846f;
@@ -655,17 +654,7 @@ kernel void trace_kernel(
     accumulation.write(float4(previous.rgb + sample_radiance, previous.a + float(sample_count)), pixel);
 }
 
-vertex PresentOut present_vertex(uint id [[vertex_id]])
-{
-    float2 position = id == 0u ? float2(-1.0f, -1.0f) :
-        (id == 1u ? float2(3.0f, -1.0f) : float2(-1.0f, 3.0f));
-    PresentOut out;
-    out.position = float4(position, 0.0f, 1.0f);
-    out.uv = position * 0.5f + 0.5f;
-    return out;
-}
-
-float4 reconstructSparseSample(texture2d<float> accumulation, int2 pixel, int2 size, int phase_grid, int phase)
+float4 reconstructSparseSample(texture2d<float, access::read> accumulation, int2 pixel, int2 size, int phase_grid, int phase)
 {
     pixel = clamp(pixel, int2(0), size - int2(1));
     int grid = max(phase_grid, 1);
@@ -690,27 +679,29 @@ float4 reconstructSparseSample(texture2d<float> accumulation, int2 pixel, int2 s
     return sum <= 1.0e-6f ? s00 : (s00 * w00 + s10 * w10 + s01 * w01 + s11 * w11) / sum;
 }
 
-fragment float4 present_fragment(
-    PresentOut in [[stage_in]],
-    constant PresentUniforms& uniforms [[buffer(0)]],
-    texture2d<float> accumulation [[texture(0)]],
-    sampler accumulation_sampler [[sampler(0)]])
+kernel void resolve_pathtrace_kernel(
+    constant ResolveUniforms& uniforms [[buffer(0)]],
+    texture2d<float, access::read> accumulation [[texture(0)]],
+    texture2d<float, access::write> resolved [[texture(1)]],
+    uint2 pixel [[thread_position_in_grid]])
 {
-    float2 sample_uv = float2(in.uv.x, 1.0f - in.uv.y);
-    int2 size = int2(accumulation.get_width(), accumulation.get_height());
-    int2 pixel = clamp(int2(sample_uv * float2(size)), int2(0), size - int2(1));
-    float4 value = uniforms.exposure.y > 0.5f
-        ? reconstructSparseSample(accumulation, pixel, size, int(uniforms.exposure.z), int(uniforms.exposure.w))
-        : accumulation.sample(accumulation_sampler, sample_uv);
-    float3 linear_color = max(value.rgb / max(value.a, 1.0f), float3(0.0f));
-    linear_color *= max(uniforms.exposure.x, 0.0f);
-    float3 mapped = clamp(
-        (linear_color * (2.51f * linear_color + 0.03f)) /
-        (linear_color * (2.43f * linear_color + 0.59f) + 0.14f),
-        float3(0.0f), float3(1.0f));
-    mapped = pow(mapped, float3(1.0f / 2.2f));
-    return float4(mapped, 1.0f);
+    uint2 size = uint2(resolved.get_width(), resolved.get_height());
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    int2 ipixel = int2(pixel);
+    int2 isize = int2(size);
+    float4 value = uniforms.params.x != 0u
+        ? reconstructSparseSample(
+            accumulation,
+            ipixel,
+            isize,
+            int(max(uniforms.params.y, 1u)),
+            int(uniforms.params.z))
+        : accumulation.read(pixel);
+    float samples = max(value.a, 1.0f);
+    resolved.write(float4(max(value.rgb / samples, float3(0.0f)), 1.0f), pixel);
 }
+
 )MSL";
 
 } // namespace Renderer::PbrMetalShaders

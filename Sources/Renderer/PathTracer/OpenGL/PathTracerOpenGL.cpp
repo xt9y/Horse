@@ -3,6 +3,7 @@
 #include "Renderer/PathTracer/PathTracer.hpp"
 
 #include "Renderer/FontPass.hpp"
+#include "Renderer/Frame/OpenGL/FrameOpenGL.hpp"
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/GlobalIlluminationOpenGL.hpp"
 #include "Renderer/PathTracer/PathTracerShaders.hpp"
@@ -111,12 +112,10 @@ struct PathTracer::Impl {
         std::array<GLint, Systems::OpenGLSceneResources::MaximumTextureSlots> textures{};
     };
 
-    struct PresentUniforms {
-        GLint accumulation = -1;
+    struct ResolveUniforms {
         GLint camera_moving = -1;
         GLint moving_phase_grid = -1;
         GLint frame_index = -1;
-        GLint exposure = -1;
     };
 
     PathTracerSettings settings{};
@@ -138,11 +137,12 @@ struct PathTracer::Impl {
     std::vector<std::uint32_t> visibility_mask;
 
     Systems::OpenGL::Program trace_program;
-    Systems::OpenGL::Program present_program;
+    Systems::OpenGL::Program resolve_program;
     GLuint accumulation = 0u;
+    GLuint resolved = 0u;
     GLuint primary_depth = 0u;
     TraceUniforms trace_uniforms{};
-    PresentUniforms present_uniforms{};
+    ResolveUniforms resolve_uniforms{};
 
     bool active() const
     {
@@ -200,8 +200,15 @@ struct PathTracer::Impl {
     bool createTraceTargets()
     {
         if (!createFloatTexture(accumulation, GL_LINEAR)) return false;
-        if (!createFloatTexture(primary_depth, GL_NEAREST)) {
+        if (!createFloatTexture(resolved, GL_LINEAR)) {
             glDeleteTextures(1, &accumulation);
+            accumulation = 0u;
+            return false;
+        }
+        if (!createFloatTexture(primary_depth, GL_NEAREST)) {
+            glDeleteTextures(1, &resolved);
+            glDeleteTextures(1, &accumulation);
+            resolved = 0u;
             accumulation = 0u;
             return false;
         }
@@ -212,8 +219,10 @@ struct PathTracer::Impl {
     void destroyTraceTargets()
     {
         if (accumulation != 0u) glDeleteTextures(1, &accumulation);
+        if (resolved != 0u) glDeleteTextures(1, &resolved);
         if (primary_depth != 0u) glDeleteTextures(1, &primary_depth);
         accumulation = 0u;
+        resolved = 0u;
         primary_depth = 0u;
         progressive.reset();
     }
@@ -254,23 +263,16 @@ struct PathTracer::Impl {
             setInt(trace_uniforms.textures[slot], static_cast<int>(slot));
         }
 
-        present_uniforms.accumulation = present_program.uniform("uAccumulation");
-        present_uniforms.camera_moving = present_program.uniform("uCameraMoving");
-        present_uniforms.moving_phase_grid = present_program.uniform("uMovingPhaseGrid");
-        present_uniforms.frame_index = present_program.uniform("uFrameIndex");
-        present_uniforms.exposure = present_program.uniform("uExposure");
-        present_program.use();
-        setInt(present_uniforms.accumulation, 0);
+        resolve_uniforms.camera_moving = resolve_program.uniform("uCameraMoving");
+        resolve_uniforms.moving_phase_grid = resolve_program.uniform("uMovingPhaseGrid");
+        resolve_uniforms.frame_index = resolve_program.uniform("uFrameIndex");
         Systems::OpenGL::unbindProgram();
     }
 
     bool createPrograms()
     {
         if (!trace_program.createCompute(PathTracerShaders::trace, "PathTracer")) return false;
-        if (!present_program.createGraphics(
-                PathTracerShaders::present_vertex,
-                PathTracerShaders::present_fragment,
-                "PathTracer"))
+        if (!resolve_program.createCompute(PathTracerShaders::resolve, "PathTracer resolve"))
         {
             trace_program.destroy();
             return false;
@@ -282,7 +284,7 @@ struct PathTracer::Impl {
     void destroyPrograms()
     {
         trace_program.destroy();
-        present_program.destroy();
+        resolve_program.destroy();
     }
 
     bool syncSceneIfNeeded(const Ecs::World& world)
@@ -391,25 +393,20 @@ struct PathTracer::Impl {
         progressive.advance(static_cast<std::uint32_t>(samples));
     }
 
-    void compose()
+    void resolve()
     {
-        glViewport(0, 0, width, height);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_LIGHTING);
-        glDisable(GL_BLEND);
-        present_program.use();
-        GLModern.glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, accumulation);
-        setInt(present_uniforms.camera_moving, progressive.cameraMoving() ? 1 : 0);
-        setInt(present_uniforms.moving_phase_grid, settings.moving_phase_grid);
-        setInt(present_uniforms.frame_index, static_cast<int>(progressive.frameIndex()));
-        setFloat(present_uniforms.exposure, settings.exposure);
-        glBegin(GL_TRIANGLES);
-        glVertex2f(-1.0f, -1.0f);
-        glVertex2f(3.0f, -1.0f);
-        glVertex2f(-1.0f, 3.0f);
-        glEnd();
+        resolve_program.use();
+        setInt(resolve_uniforms.camera_moving, progressive.cameraMoving() ? 1 : 0);
+        setInt(resolve_uniforms.moving_phase_grid, settings.moving_phase_grid);
+        setInt(resolve_uniforms.frame_index, static_cast<int>(progressive.frameIndex()));
+        GL42.glBindImageTexture(0u, accumulation, 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA32F);
+        GL42.glBindImageTexture(1u, resolved, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA32F);
+        GL43.glDispatchCompute(
+            static_cast<GLuint>((trace_width + 7) / 8),
+            static_cast<GLuint>((trace_height + 7) / 8),
+            1u
+        );
+        GL42.glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
         Systems::OpenGL::unbindProgram();
     }
 };
@@ -540,13 +537,22 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 
     Internal::bindGlobalIlluminationOpenGL(output.global_illumination);
     impl_->dispatch(camera, light);
-    impl_->compose();
+    impl_->resolve();
 
     output.depth = Internal::DepthSource::LinearTexture;
+    output.color_texture = reinterpret_cast<void*>(
+        static_cast<std::uintptr_t>(impl_->resolved)
+    );
     output.depth_texture = reinterpret_cast<void*>(
         static_cast<std::uintptr_t>(impl_->primary_depth)
     );
     return true;
+}
+
+bool PathTracer::compose(Internal::FrameOutput& output)
+{
+    if (!output.color_texture) return true;
+    return Frame::OpenGL::presentTexture(output.color_texture, output.width, output.height);
 }
 
 void PathTracer::present(Internal::FrameOutput& output)

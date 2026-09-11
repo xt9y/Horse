@@ -22,8 +22,8 @@ struct alignas(16) MetalTraceUniforms {
     std::array<std::uint32_t, 4> path_policy{};
 };
 
-struct alignas(16) MetalPresentUniforms {
-    std::array<float, 4> exposure{};
+struct alignas(16) MetalResolveUniforms {
+    std::array<std::uint32_t, 4> params{};
 };
 
 MetalTraceUniforms makeMetalTraceUniforms(
@@ -43,7 +43,7 @@ MetalTraceUniforms makeMetalTraceUniforms(
 );
 
 static_assert(sizeof(MetalTraceUniforms) == 160u);
-static_assert(sizeof(MetalPresentUniforms) == 16u);
+static_assert(sizeof(MetalResolveUniforms) == 16u);
 
 } // namespace Renderer::Systems
 

@@ -2,6 +2,7 @@
 #define RW_ENGINE_RENDERER_RENDERER_HPP
 
 #include "Ecs/Ecs.hpp"
+#include "Renderer/PostProcess.hpp"
 
 #include <cstdint>
 
@@ -13,24 +14,10 @@ struct Field;
 
 namespace Internal {
 
-enum class GraphicsApi : std::uint8_t {
-    OpenGL,
-    Metal,
-};
+using GraphicsApi = PostProcess::GraphicsApi;
+using DepthSource = PostProcess::DepthSource;
 
-enum class DepthSource : std::uint8_t {
-    None,
-    Native,
-    LinearTexture,
-};
-
-struct FrameOutput {
-    GraphicsApi api = GraphicsApi::OpenGL;
-    DepthSource depth = DepthSource::None;
-    int width = 1;
-    int height = 1;
-    void *command = nullptr;
-    void *depth_texture = nullptr;
+struct FrameOutput : PostProcess::Frame {
     const GlobalIllumination::Field *global_illumination = nullptr;
 };
 
@@ -44,6 +31,7 @@ public:
     virtual bool activate() { return initialized(); }
     virtual void deactivate() {}
     virtual void resize(int width, int height) = 0;
+    void setPostProcessPipeline(PostProcess::Pipeline *pipeline) { post_process_ = pipeline; }
     void render(const Ecs::World& world);
     virtual void shutdown() = 0;
 
@@ -53,7 +41,11 @@ public:
 
 protected:
     virtual bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) = 0;
+    virtual bool compose(Internal::FrameOutput& output) = 0;
     virtual void present(Internal::FrameOutput& output) = 0;
+
+private:
+    PostProcess::Pipeline *post_process_ = nullptr;
 };
 
 } // namespace Renderer

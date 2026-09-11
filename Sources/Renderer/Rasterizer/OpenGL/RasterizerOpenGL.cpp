@@ -3,11 +3,10 @@
 #include "Camera.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Environment.hpp"
+#include "Renderer/Frame/OpenGL/FrameOpenGL.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/GlobalIllumination.hpp"
 #include "Renderer/Math.hpp"
-#include "Renderer/PostProcess.hpp"
-#include "Renderer/PostProcess/OpenGL/PostProcessOpenGL.hpp"
 #include "Renderer/Rasterizer/RasterizerShaders.hpp"
 #include "Renderer/Systems/OpenGL/Program.hpp"
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
@@ -197,7 +196,7 @@ struct Rasterizer::Impl {
     int width = 1, height = 1;
     bool environment_specular_texture_supported = false;
     Systems::OpenGL::TextureCache textures;
-    PostProcess::OpenGL::Pipeline post_process;
+    Frame::OpenGL::Target frame_target;
     std::vector<Systems::Scene::RenderItem> render_items;
     std::unordered_set<Ecs::Entity> viewport_visible;
     bool viewport_filter_valid = false;
@@ -662,13 +661,11 @@ struct Rasterizer::Impl {
         const Math::Mat4 view = cameraView(camera);
         current_view_projection = Math::multiply(projection,view);
         if (!history_valid) previous_view_projection = current_view_projection;
-        if (!post_process.begin()) return false;
         const EnvironmentState environment = environmentState(world); renderSky(camera,environment,camera_state);
         glMatrixMode(GL_PROJECTION); glLoadMatrixf(projection.data()); glMatrixMode(GL_MODELVIEW); glLoadMatrixf(view.data());
         glDisable(GL_LIGHTING); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE); main_program.use();
         bindGlobalState(light,gi,camera,environment); drawGeometry(false); Systems::OpenGL::unbindProgram();
         GLModern.glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,0u); glDisable(GL_BLEND);
-        if (!post_process.present(postProcessState(world))) return false;
         previous_view_projection = current_view_projection; previous_camera = camera_state; history_valid = true;
         return true;
     }
@@ -690,38 +687,39 @@ bool Rasterizer::init()
     if (!impl_->createPrograms()) { impl_->destroyPrograms(); return false; }
     if (impl_->fallbackTexture() == 0u) { impl_->destroyPrograms(); return false; }
     impl_->loadShadowFramebufferApi();
-    impl_->post_process.resize(impl_->width,impl_->height);
-    if (!impl_->post_process.init()) { std::fprintf(stderr,"[Rasterizer]: HDR post-process framebuffer unavailable\n"); impl_->destroyPrograms(); return false; }
+    impl_->frame_target.resize(impl_->width,impl_->height);
+    if (!impl_->frame_target.init()) { std::fprintf(stderr,"[Rasterizer]: frame target unavailable\n"); impl_->destroyPrograms(); return false; }
     glEnable(GL_DEPTH_TEST); glDepthFunc(GL_LEQUAL); glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glDisable(GL_LIGHTING); glShadeModel(GL_SMOOTH);
     impl_->applyClearColor(); glViewport(0,0,impl_->width,impl_->height); impl_->initialized=true;
-    std::fprintf(stderr,"[Rasterizer]: OpenGL PBR + HDR post-process backend active\n"); return true;
+    std::fprintf(stderr,"[Rasterizer]: OpenGL PBR backend active\n"); return true;
 }
 
 void Rasterizer::resize(int width,int height)
 {
     impl_->width=std::max(width,1); impl_->height=std::max(height,1);
-    if (impl_->initialized) { impl_->post_process.resize(impl_->width,impl_->height); glViewport(0,0,impl_->width,impl_->height); impl_->history_valid=false; }
+    if (impl_->initialized) { impl_->frame_target.resize(impl_->width,impl_->height); glViewport(0,0,impl_->width,impl_->height); impl_->history_valid=false; }
 }
 
 bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
 {
     if (!impl_->initialized) return false;
+    if (!impl_->frame_target.begin()) return false;
     bool ok=true;
     if (!impl_->settings.enabled) { impl_->applyClearColor(); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); }
     else ok=impl_->draw(world,output.global_illumination);
     if (!ok) return false;
     output.api=Internal::GraphicsApi::OpenGL;
-    output.depth=impl_->settings.enabled && impl_->post_process.depthCopiedToDefault() ? Internal::DepthSource::Native : Internal::DepthSource::None;
     output.width=impl_->width; output.height=impl_->height;
-    output.depth_texture=reinterpret_cast<void*>(static_cast<std::uintptr_t>(impl_->post_process.depthTexture()));
+    impl_->frame_target.finish(output);
     return true;
 }
+bool Rasterizer::compose(Internal::FrameOutput& output) { return impl_ && impl_->frame_target.compose(output); }
 void Rasterizer::present(Internal::FrameOutput& output) { (void)output; }
 
 void Rasterizer::shutdown()
 {
     if (!impl_ || !impl_->initialized) return;
-    Internal::shutdownFonts(Internal::GraphicsApi::OpenGL); impl_->post_process.shutdown(); impl_->clearTextures(); impl_->clearGiTextures(); impl_->clearShadowTextures(); impl_->destroyPrograms();
+    Internal::shutdownFonts(Internal::GraphicsApi::OpenGL); impl_->frame_target.shutdown(); impl_->clearTextures(); impl_->clearGiTextures(); impl_->clearShadowTextures(); impl_->destroyPrograms();
     impl_->render_items.clear(); impl_->viewport_visible.clear(); impl_->previous_models.clear(); impl_->previous_model_valid.clear(); impl_->viewport_filter_valid=false; impl_->history_valid=false; impl_->initialized=false;
 }
 

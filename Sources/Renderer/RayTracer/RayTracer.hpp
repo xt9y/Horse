@@ -8,7 +8,6 @@ namespace Renderer {
 struct RayTracerSettings {
     bool enabled = false;
     int resolution_divisor = 0;
-    float exposure = 0.0f;
 };
 
 class RayTracer final : public IRenderer {
@@ -30,15 +29,14 @@ public:
     void setEnabled(bool enabled) override;
 
     void setResolutionDivisor(int divisor) { settings().resolution_divisor = divisor; }
-    void setExposure(float exposure) { settings().exposure = exposure; }
     int resolutionDivisor() const { return settings().resolution_divisor; }
-    float exposure() const { return settings().exposure; }
 
     RayTracerSettings& settings();
     const RayTracerSettings& settings() const;
 
 protected:
     bool renderScene(const Ecs::World& world, Internal::FrameOutput& output) override;
+    bool compose(Internal::FrameOutput& output) override;
     void present(Internal::FrameOutput& output) override;
 
 private:

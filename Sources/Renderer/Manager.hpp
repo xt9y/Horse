@@ -29,6 +29,7 @@ public:
         auto renderer = std::make_unique<T>(std::forward<Args>(args)...);
         T& reference = *renderer;
         IRenderer *base = renderer.get();
+        base->setPostProcessPipeline(post_process_);
         entries_.push_back(Entry{
             std::move(name),
             std::move(renderer),
@@ -52,6 +53,14 @@ public:
         }
     }
 
+    void setPostProcessPipeline(PostProcess::Pipeline *pipeline)
+    {
+        post_process_ = pipeline;
+        for (Entry& entry : entries_) {
+            if (entry.renderer) entry.renderer->setPostProcessPipeline(pipeline);
+        }
+    }
+
     bool initialize()
     {
         active_ = invalidIndex();
@@ -71,6 +80,7 @@ public:
 
     void shutdown()
     {
+        if (post_process_) post_process_->shutdown();
         if (Entry *entry = activeEntry()) {
             if (entry->deactivate) entry->deactivate();
         }
@@ -183,6 +193,7 @@ private:
 
     std::vector<Entry> entries_;
     std::size_t active_ = invalidIndex();
+    PostProcess::Pipeline *post_process_ = nullptr;
 };
 
 } // namespace Renderer
