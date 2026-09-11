@@ -34,6 +34,12 @@ struct Accessor {
     int sparse_indices_component = 0;
     int sparse_values_view = -1;
     std::size_t sparse_values_offset = 0u;
+
+    // Optional decoded storage used by self-owned compression extensions.
+    // When populated, the regular accessor API consumes these values before
+    // looking at bufferView data, so importers do not need a second mesh path.
+    std::vector<double> decoded_values;
+    std::vector<std::uint32_t> decoded_unsigned;
 };
 
 struct Context {
