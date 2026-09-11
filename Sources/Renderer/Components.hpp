@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 
+#include <array>
 #include <cstdint>
 
 namespace Renderer {
@@ -29,6 +30,13 @@ struct Transform {
     Vec3 position {0.0f, 0.0f, 0.0f};
     Vec3 rotation {0.0f, 0.0f, 0.0f};
     Vec3 scale {1.0f, 1.0f, 1.0f};
+    std::array<float, 16> matrix_override {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f,
+    };
+    bool matrix_override_enabled = false;
 };
 
 struct Parent {
