@@ -5,6 +5,7 @@
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
 
+#include <cstdint>
 #include <vector>
 
 namespace Renderer::Scenes::Scene {
@@ -44,6 +45,7 @@ struct MeshState {
 
 struct RenderItem {
     Ecs::Entity entity = Ecs::INVALID_ENTITY;
+    std::uint32_t instance_index = UINT32_MAX;
     TransformState transform{};
     MeshState mesh_component{};
     const Models::MeshData* mesh = nullptr;
