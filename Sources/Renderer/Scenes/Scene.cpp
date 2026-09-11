@@ -4,6 +4,7 @@
 #include "Models/Core/Texture.hpp"
 #include "Renderer/Hierarchy.hpp"
 #include "Renderer/Lod.hpp"
+#include "Renderer/Math.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -59,6 +60,29 @@ MeshComponent selectedMesh(
     return selected;
 }
 
+void appendItem(
+    const Ecs::World& world,
+    Ecs::Entity entity,
+    std::uint32_t instance_index,
+    const MeshComponent& base,
+    const Transform& transform,
+    const CameraState& camera,
+    std::vector<RenderItem>& out)
+{
+    const MeshComponent selected = selectedMesh(world, entity, base, transform.position, camera);
+    const Models::MeshData* mesh = Models::mesh(selected.mesh);
+    if (!mesh) return;
+
+    out.push_back(RenderItem{
+        .entity = entity,
+        .instance_index = instance_index,
+        .transform = TransformState{transform, true},
+        .mesh_component = MeshState{selected, true},
+        .mesh = mesh,
+        .material = Models::material(selected.material),
+    });
+}
+
 } // namespace
 
 CameraState cameraState(const Ecs::World& world)
@@ -110,23 +134,28 @@ void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
         if (!mesh_component || !transform) continue;
 
         const Transform world_transform = resolvedTransform(world, entity, *transform);
-        const MeshComponent selected = selectedMesh(
-            world,
-            entity,
-            *mesh_component,
-            world_transform.position,
-            camera
-        );
-        const Models::MeshData* mesh = Models::mesh(selected.mesh);
-        if (!mesh) continue;
+        const InstanceComponent* instances = world.get<InstanceComponent>(entity);
+        if (!instances) {
+            appendItem(world, entity, UINT32_MAX, *mesh_component, world_transform, camera, out);
+            continue;
+        }
 
-        out.push_back(RenderItem{
-            .entity = entity,
-            .transform = TransformState{world_transform, true},
-            .mesh_component = MeshState{selected, true},
-            .mesh = mesh,
-            .material = Models::material(selected.material),
-        });
+        const Math::Mat4 base = Math::modelMatrix(world_transform);
+        for (std::size_t index = 0u; index < instances->matrices.size(); ++index) {
+            Transform instanced{};
+            instanced.matrix_override = Math::multiply(base, instances->matrices[index]);
+            instanced.matrix_override_enabled = true;
+            instanced.position = Math::transformPoint(instanced.matrix_override, {0.0f, 0.0f, 0.0f});
+            appendItem(
+                world,
+                entity,
+                static_cast<std::uint32_t>(index),
+                *mesh_component,
+                instanced,
+                camera,
+                out
+            );
+        }
     }
 
     std::stable_partition(
