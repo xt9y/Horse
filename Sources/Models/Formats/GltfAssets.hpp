@@ -10,7 +10,7 @@
 namespace Models::Formats::GltfAssets {
 
 struct TextureRecord {
-    int source = -1;
+    std::vector<int> sources;
     int sampler = -1;
 };
 
