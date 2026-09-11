@@ -133,7 +133,19 @@ bool worldMatrix(const Ecs::World& world, Ecs::Entity entity, Math::Mat4 *out)
 
 bool worldTransform(const Ecs::World& world, Ecs::Entity entity, Transform *out)
 {
-    if (!out) return false;
+    if (!out || !world.alive(entity)) return false;
+
+    const Transform *local = world.get<Transform>(entity);
+    if (!local) return false;
+
+    const Parent *relationship = world.get<Parent>(entity);
+    if (!relationship || relationship->entity == Ecs::INVALID_ENTITY ||
+        !world.alive(relationship->entity) || !world.has<Transform>(relationship->entity))
+    {
+        *out = *local;
+        return true;
+    }
+
     Math::Mat4 matrix{};
     if (!worldMatrix(world, entity, &matrix)) return false;
     *out = decompose(matrix);
