@@ -13,6 +13,12 @@ class ReverseBits {
 public:
     bool reset(const std::uint8_t *data, std::size_t size, std::string *error = nullptr);
     bool read(unsigned int count, std::uint32_t *out, std::string *error = nullptr);
+    bool readPadded(
+        unsigned int count,
+        std::uint32_t *out,
+        bool *overflow,
+        std::string *error = nullptr
+    );
     bool empty() const { return bit_position_ == 0u; }
     std::size_t remaining() const { return bit_position_; }
 
@@ -36,6 +42,12 @@ bool initializeFseState(
 
 bool fseSymbol(const FseState& state, std::uint16_t *symbol, std::string *error = nullptr);
 bool updateFseState(FseState *state, ReverseBits *bits, std::string *error = nullptr);
+bool updateFseStatePadded(
+    FseState *state,
+    ReverseBits *bits,
+    bool *overflow,
+    std::string *error = nullptr
+);
 
 } // namespace Models::Compression::ZstdInternal
 
