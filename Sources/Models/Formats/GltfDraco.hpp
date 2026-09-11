@@ -1,6 +1,8 @@
 #ifndef HORSE_MODELS_FORMATS_GLTF_DRACO_HPP
 #define HORSE_MODELS_FORMATS_GLTF_DRACO_HPP
 
+#define HORSE_GLTF_DRACO_DISPATCH 1
+
 #include "Models/Formats/Registry.hpp"
 
 #include <string>
