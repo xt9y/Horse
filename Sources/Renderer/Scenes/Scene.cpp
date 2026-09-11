@@ -11,9 +11,11 @@
 namespace Renderer::Scenes::Scene {
 namespace {
 
-bool usesAlphaTexture(const RenderItem& item)
+bool usesAlpha(const RenderItem& item)
 {
     if (!item.material) return false;
+    if (item.material->alpha_mode == Models::AlphaMode::Blend || item.material->opacity < 0.999f)
+        return true;
     if (item.material->opacity_texture != Models::INVALID_TEXTURE) return true;
     if (item.material->diffuse_texture == Models::INVALID_TEXTURE) return false;
     const Models::TextureAsset* texture = Models::texture(item.material->diffuse_texture);
@@ -127,7 +129,11 @@ void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
         });
     }
 
-    std::stable_partition(out.begin(), out.end(), usesAlphaTexture);
+    std::stable_partition(
+        out.begin(),
+        out.end(),
+        [](const RenderItem& item) { return !usesAlpha(item); }
+    );
 }
 
 } // namespace Renderer::Scenes::Scene
