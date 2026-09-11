@@ -120,6 +120,7 @@ Mat4 rotationZ(float degrees)
 
 Mat4 modelMatrix(const Transform& transform)
 {
+    if (transform.matrix_override_enabled) return transform.matrix_override;
     return multiply(
         multiply(
             multiply(
@@ -137,6 +138,11 @@ Mat4 modelMatrix(const Transform& transform)
 
 Mat4 inverseModelMatrix(const Transform& transform)
 {
+    if (transform.matrix_override_enabled) {
+        Mat4 result{};
+        return inverseMatrix(transform.matrix_override, &result) ? result : identityMatrix();
+    }
+
     const float x = std::abs(transform.scale.x) > 1.0e-8f ? 1.0f / transform.scale.x : 0.0f;
     const float y = std::abs(transform.scale.y) > 1.0e-8f ? 1.0f / transform.scale.y : 0.0f;
     const float z = std::abs(transform.scale.z) > 1.0e-8f ? 1.0f / transform.scale.z : 0.0f;
