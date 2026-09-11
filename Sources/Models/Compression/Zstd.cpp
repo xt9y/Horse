@@ -1,5 +1,7 @@
 #include "Models/Compression/Zstd.hpp"
 
+#include "Models/Compression/ZstdBlock.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -121,14 +123,14 @@ bool parseFrameHeader(
     if (fcs_size > size - cursor) return fail(error, "truncated Zstd frame content size");
 
     std::uint64_t content_size = 0u;
-    bool has_content_size = fcs_size != 0u;
+    const bool has_content_size = fcs_size != 0u;
     if (has_content_size) {
         content_size = unsignedLe(data + cursor, fcs_size);
         if (fcs_size == 2u) content_size += 256u;
         cursor += fcs_size;
     }
     if (single_segment) window_size = content_size;
-    if (window_size == 0u && !single_segment)
+    if (window_size == 0u && (!single_segment || content_size != 0u))
         return fail(error, "invalid zero Zstd window size");
     if (window_size > options.max_window)
         return fail(error, "Zstd frame window exceeds configured limit");
@@ -140,16 +142,6 @@ bool parseFrameHeader(
     header->content_size = content_size;
     header->has_content_size = has_content_size;
     return true;
-}
-
-bool decodeCompressedBlock(
-    const std::uint8_t *,
-    std::size_t,
-    std::size_t,
-    std::vector<std::uint8_t> *,
-    std::string *error)
-{
-    return fail(error, "Zstd compressed block entropy decoder is not implemented yet");
 }
 
 bool decodeFrame(
@@ -174,6 +166,10 @@ bool decodeFrame(
     if (block_maximum == 0u && (!header.has_content_size || header.content_size != 0u))
         return fail(error, "invalid Zstd block maximum size");
 
+    ZstdInternal::BlockState block_state;
+    block_state.frame_output_begin = frame_output_begin;
+    block_state.window_size = static_cast<std::size_t>(header.window_size);
+
     bool last = false;
     do {
         if (size - cursor < 3u) return fail(error, "truncated Zstd block header");
@@ -196,7 +192,15 @@ bool decodeFrame(
             ++cursor;
         } else {
             if (block_size > size - cursor) return fail(error, "truncated Zstd compressed block");
-            if (!decodeCompressedBlock(data + cursor, block_size, block_maximum, output, error)) return false;
+            if (!ZstdInternal::decodeCompressedBlock(
+                    data + cursor,
+                    block_size,
+                    block_maximum,
+                    options.max_output,
+                    &block_state,
+                    output,
+                    error))
+                return false;
             cursor += block_size;
         }
     } while (!last);
@@ -241,10 +245,10 @@ bool decompressZstd(
             continue;
         }
         if (magic != ZstdMagic) return fail(error, "invalid Zstd frame magic");
-        std::size_t consumed = 0u;
-        if (!decodeFrame(data + cursor, size - cursor, &consumed, output, options, error)) return false;
-        if (consumed == 0u || consumed > size - cursor) return fail(error, "invalid Zstd frame length");
-        cursor += consumed;
+        std::size_t frame_bytes = 0u;
+        if (!decodeFrame(data + cursor, size - cursor, &frame_bytes, output, options, error)) return false;
+        if (frame_bytes == 0u || frame_bytes > size - cursor) return fail(error, "invalid Zstd frame length");
+        cursor += frame_bytes;
     }
     return true;
 }
