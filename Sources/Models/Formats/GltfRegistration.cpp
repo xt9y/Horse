@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <utility>
 
 namespace Models::Formats {
 namespace {
