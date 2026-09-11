@@ -2,6 +2,7 @@
 #define HORSE_MODELS_IMAGES_WEBP_VP8_FRAME_HPP
 
 #include "Models/Images/WebpVp8Bits.hpp"
+#include "Models/Images/WebpVp8Tables.hpp"
 
 #include <array>
 #include <cstddef>
@@ -52,6 +53,7 @@ struct KeyFrame {
     LoopFilter filter;
     Quantizer quantizer;
     bool refresh_entropy = false;
+    CoeffProbabilities coefficient_probabilities = DefaultCoeffProbabilities;
     bool coefficient_skip_enabled = false;
     std::uint8_t coefficient_skip_probability = 0u;
     BoolDecoder header;
