@@ -10,6 +10,7 @@
 #include "Renderer/Systems/SceneCache.hpp"
 #include "Renderer/Systems/Uniforms.hpp"
 #include "Renderer/Trace/Metal/TraceScene.hpp"
+#include "Renderer/Trace/Metal/TextureSet.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <lwmgl/lwmgl.h>
@@ -36,10 +37,12 @@ struct RayTracer::Impl {
     LWMGLLibrary shader_library = nullptr;
     LWMGLFunction trace_function = nullptr;
     LWMGLComputePipeline trace_pipeline = nullptr;
-    LWMGLTexture output_texture = nullptr;
-    LWMGLTexture primary_depth = nullptr;
+    Trace::Metal::TextureSet targets;
     LWMGLSampler material_sampler = nullptr;
     LWMGLBuffer trace_uniform_buffer = nullptr;
+
+    static constexpr std::size_t OutputTarget = 0u;
+    static constexpr std::size_t PrimaryDepthTarget = 1u;
 
     bool active() const { return initialized && settings.enabled; }
 
@@ -120,40 +123,15 @@ struct RayTracer::Impl {
 
     bool createTargets()
     {
-        if (trace_width <= 0 || trace_height <= 0) return false;
-
-        const LWMGLTextureDesc output_desc = {
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
-            LWMGL_RGBA16_FLOAT,
-            LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE,
-            LWMGL_STORAGE_PRIVATE
-        };
-        output_texture = Metal.createTexture(&output_desc);
-        if (!output_texture) return false;
-
-        const LWMGLTextureDesc depth_desc = {
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
-            LWMGL_RGBA32_FLOAT,
-            LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE,
-            LWMGL_STORAGE_PRIVATE
-        };
-        primary_depth = Metal.createTexture(&depth_desc);
-        if (!primary_depth) {
-            Metal.destroyTexture(output_texture);
-            output_texture = nullptr;
-            return false;
-        }
-        return true;
+        return targets.create(trace_width, trace_height, {
+            {LWMGL_RGBA16_FLOAT, LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE},
+            {LWMGL_RGBA32_FLOAT, LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE},
+        });
     }
 
     void destroyTargets()
     {
-        if (primary_depth) Metal.destroyTexture(primary_depth);
-        if (output_texture) Metal.destroyTexture(output_texture);
-        primary_depth = nullptr;
-        output_texture = nullptr;
+        targets.clear();
     }
 
     bool dispatch(
@@ -163,6 +141,8 @@ struct RayTracer::Impl {
         LWMGLCommand& out_command)
     {
         out_command = nullptr;
+        const LWMGLTexture output_texture = targets.texture(OutputTarget);
+        const LWMGLTexture primary_depth = targets.texture(PrimaryDepthTarget);
         if (!trace_scene.accelerationStructure() || !output_texture || !primary_depth)
             return false;
 
@@ -369,8 +349,8 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
     if (!impl_->dispatch(camera, light, output.global_illumination, command)) return false;
     output.command = command;
     output.depth = Internal::DepthSource::LinearTexture;
-    output.color_texture = impl_->output_texture;
-    output.depth_texture = impl_->primary_depth;
+    output.color_texture = impl_->targets.texture(Impl::OutputTarget);
+    output.depth_texture = impl_->targets.texture(Impl::PrimaryDepthTarget);
     return true;
 }
 

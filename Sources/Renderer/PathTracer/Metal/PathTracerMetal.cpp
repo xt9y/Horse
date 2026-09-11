@@ -12,6 +12,7 @@
 #include "Renderer/Systems/SceneCache.hpp"
 #include "Renderer/Systems/Uniforms.hpp"
 #include "Renderer/Trace/Metal/TraceScene.hpp"
+#include "Renderer/Trace/Metal/TextureSet.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <lwmgl/lwmgl.h>
@@ -66,12 +67,14 @@ struct PathTracer::Impl {
     LWMGLFunction resolve_function = nullptr;
     LWMGLComputePipeline trace_pipeline = nullptr;
     LWMGLComputePipeline resolve_pipeline = nullptr;
-    LWMGLTexture accumulation = nullptr;
-    LWMGLTexture resolved = nullptr;
-    LWMGLTexture primary_depth = nullptr;
+    Trace::Metal::TextureSet targets;
     LWMGLSampler material_sampler = nullptr;
     LWMGLBuffer trace_uniform_buffer = nullptr;
     LWMGLBuffer resolve_uniform_buffer = nullptr;
+
+    static constexpr std::size_t AccumulationTarget = 0u;
+    static constexpr std::size_t ResolvedTarget = 1u;
+    static constexpr std::size_t PrimaryDepthTarget = 2u;
 
     bool active() const
     {
@@ -176,45 +179,15 @@ struct PathTracer::Impl {
 
     bool createTraceTargets()
     {
-        if (trace_width <= 0 || trace_height <= 0) return false;
-
-        const LWMGLTextureDesc accumulation_desc = {
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
-            LWMGL_RGBA32_FLOAT,
-            LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_READ | LWMGL_TEXTURE_WRITE,
-            LWMGL_STORAGE_PRIVATE
-        };
-        accumulation = Metal.createTexture(&accumulation_desc);
-        if (!accumulation) return false;
-
-        const LWMGLTextureDesc resolved_desc = {
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
-            LWMGL_RGBA16_FLOAT,
-            LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE,
-            LWMGL_STORAGE_PRIVATE
-        };
-        resolved = Metal.createTexture(&resolved_desc);
-        if (!resolved) {
-            Metal.destroyTexture(accumulation);
-            accumulation = nullptr;
-            return false;
-        }
-
-        const LWMGLTextureDesc depth_desc = {
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
-            LWMGL_RGBA32_FLOAT,
-            LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE,
-            LWMGL_STORAGE_PRIVATE
-        };
-        primary_depth = Metal.createTexture(&depth_desc);
-        if (!primary_depth) {
-            Metal.destroyTexture(resolved);
-            Metal.destroyTexture(accumulation);
-            resolved = nullptr;
-            accumulation = nullptr;
+        if (!targets.create(trace_width, trace_height, {
+                {
+                    LWMGL_RGBA32_FLOAT,
+                    LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_READ | LWMGL_TEXTURE_WRITE
+                },
+                {LWMGL_RGBA16_FLOAT, LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE},
+                {LWMGL_RGBA32_FLOAT, LWMGL_TEXTURE_SAMPLED | LWMGL_TEXTURE_WRITE},
+            }))
+        {
             return false;
         }
         progressive.reset();
@@ -223,12 +196,7 @@ struct PathTracer::Impl {
 
     void destroyTraceTargets()
     {
-        if (primary_depth) Metal.destroyTexture(primary_depth);
-        if (resolved) Metal.destroyTexture(resolved);
-        if (accumulation) Metal.destroyTexture(accumulation);
-        primary_depth = nullptr;
-        resolved = nullptr;
-        accumulation = nullptr;
+        targets.clear();
         progressive.reset();
     }
 
@@ -239,6 +207,9 @@ struct PathTracer::Impl {
         LWMGLCommand& out_command)
     {
         out_command = nullptr;
+        const LWMGLTexture accumulation = targets.texture(AccumulationTarget);
+        const LWMGLTexture resolved = targets.texture(ResolvedTarget);
+        const LWMGLTexture primary_depth = targets.texture(PrimaryDepthTarget);
         if (!trace_scene.accelerationStructure() || !accumulation || !resolved || !primary_depth)
             return false;
 
@@ -507,8 +478,8 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 
     output.command = command;
     output.depth = Internal::DepthSource::LinearTexture;
-    output.color_texture = impl_->resolved;
-    output.depth_texture = impl_->primary_depth;
+    output.color_texture = impl_->targets.texture(Impl::ResolvedTarget);
+    output.depth_texture = impl_->targets.texture(Impl::PrimaryDepthTarget);
     return true;
 }
 
