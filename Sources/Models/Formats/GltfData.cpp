@@ -1,5 +1,7 @@
 #include "Models/Formats/GltfData.hpp"
 
+#include "Models/Compression/Meshopt.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -139,10 +141,9 @@ Layout layout(std::string_view type, int component_type)
     if (result.components == 0u || result.component_size == 0u) return {};
 
     const std::size_t raw_column = result.rows * result.component_size;
-    if (result.columns > 1u && result.component_size < 4u)
-        result.column_stride = align4(raw_column);
-    else
-        result.column_stride = raw_column;
+    result.column_stride = result.columns > 1u && result.component_size < 4u
+        ? align4(raw_column)
+        : raw_column;
     result.element_size = result.columns * result.column_stride;
     return result;
 }
@@ -210,10 +211,8 @@ float asFloat(const std::uint8_t *data, int type, bool normalized)
                 ? static_cast<float>(static_cast<double>(value) / 4294967295.0)
                 : static_cast<float>(value);
         }
-        case 5126:
-            return scalar<float>(data);
-        default:
-            return 0.0f;
+        case 5126: return scalar<float>(data);
+        default: return 0.0f;
     }
 }
 
@@ -235,7 +234,8 @@ bool requiredBytes(std::size_t count, std::size_t stride, std::size_t element, s
         *out = 0u;
         return true;
     }
-    if (count - 1u > (std::numeric_limits<std::size_t>::max() - element) / stride) return false;
+    if (stride == 0u || count - 1u > (std::numeric_limits<std::size_t>::max() - element) / stride)
+        return false;
     *out = (count - 1u) * stride + element;
     return true;
 }
@@ -271,6 +271,43 @@ bool sparseRanges(
         values,
         error
     );
+}
+
+bool multiplication(std::size_t a, std::size_t b, std::size_t *out)
+{
+    if (!out) return false;
+    if (a != 0u && b > std::numeric_limits<std::size_t>::max() / a) return false;
+    *out = a * b;
+    return true;
+}
+
+bool meshoptMode(std::string_view name, Compression::MeshoptMode *out)
+{
+    if (!out) return false;
+    if (name == "ATTRIBUTES") *out = Compression::MeshoptMode::Attributes;
+    else if (name == "TRIANGLES") *out = Compression::MeshoptMode::Triangles;
+    else if (name == "INDICES") *out = Compression::MeshoptMode::Indices;
+    else return false;
+    return true;
+}
+
+bool meshoptFilter(std::string_view name, Compression::MeshoptFilter *out)
+{
+    if (!out) return false;
+    if (name.empty() || name == "NONE") *out = Compression::MeshoptFilter::None;
+    else if (name == "OCTAHEDRAL") *out = Compression::MeshoptFilter::Octahedral;
+    else if (name == "QUATERNION") *out = Compression::MeshoptFilter::Quaternion;
+    else if (name == "EXPONENTIAL") *out = Compression::MeshoptFilter::Exponential;
+    else return false;
+    return true;
+}
+
+const Value *meshoptExtension(const Value& source)
+{
+    const Value *extensions = source.get("extensions");
+    return extensions && extensions->is(Type::Object)
+        ? extensions->get("EXT_meshopt_compression")
+        : nullptr;
 }
 
 } // namespace
@@ -388,12 +425,17 @@ bool loadBuffers(Context *context, const std::vector<std::uint8_t>& binary, std:
     for (const Value& source : buffers->array) {
         if (!source.is(Type::Object)) return fail(error, "invalid glTF buffer object");
         const std::size_t declared = GltfJson::sizeValue(source.get("byteLength"));
+        if (declared == 0u) return fail(error, "glTF buffer byteLength must be nonzero");
         std::vector<std::uint8_t> bytes;
+        bool available = true;
         const Value *uri = source.get("uri");
         if (!uri) {
-            if (used_binary || binary.empty()) return fail(error, "glTF buffer has no URI or GLB BIN chunk");
-            bytes = binary;
-            used_binary = true;
+            if (!used_binary && !binary.empty()) {
+                bytes = binary;
+                used_binary = true;
+            } else {
+                available = false;
+            }
         } else if (!uri->is(Type::String)) {
             return fail(error, "glTF buffer URI must be a string");
         } else if (uri->string.starts_with("data:")) {
@@ -403,7 +445,8 @@ bool loadBuffers(Context *context, const std::vector<std::uint8_t>& binary, std:
             if (!decodeUriPath(uri->string, &decoded, error)) return false;
             if (!readFile(context->directory / std::filesystem::path(decoded), &bytes, error)) return false;
         }
-        if (bytes.size() < declared) return fail(error, "glTF buffer is shorter than declared byteLength");
+        if (available && bytes.size() < declared)
+            return fail(error, "glTF buffer is shorter than declared byteLength");
         context->buffers.push_back(std::move(bytes));
     }
     return true;
@@ -429,11 +472,79 @@ bool loadViews(Context *context, std::string *error)
         if (view.buffer < 0 || static_cast<std::size_t>(view.buffer) >= context->buffers.size())
             return fail(error, "glTF bufferView references invalid buffer");
         if (view.length == 0u) return fail(error, "glTF bufferView byteLength must be nonzero");
-        if (view.stride != 0u && (view.stride < 4u || view.stride > 252u || (view.stride % 4u) != 0u))
-            return fail(error, "invalid glTF bufferView byteStride");
-        const auto& buffer = context->buffers[static_cast<std::size_t>(view.buffer)];
-        if (view.offset > buffer.size() || view.length > buffer.size() - view.offset)
-            return fail(error, "glTF bufferView exceeds buffer bounds");
+
+        const Value *meshopt = meshoptExtension(source);
+        if (meshopt) {
+            if (!meshopt->is(Type::Object)) return fail(error, "EXT_meshopt_compression must be an object");
+            const int compressed_buffer = GltfJson::integer(meshopt->get("buffer"));
+            const std::size_t compressed_offset = GltfJson::sizeValue(meshopt->get("byteOffset"));
+            const std::size_t compressed_length = GltfJson::sizeValue(meshopt->get("byteLength"));
+            const std::size_t compressed_stride = GltfJson::sizeValue(meshopt->get("byteStride"));
+            const std::size_t count = GltfJson::sizeValue(meshopt->get("count"));
+            const std::string mode_name = GltfJson::stringValue(meshopt->get("mode"));
+            const std::string filter_name = GltfJson::stringValue(meshopt->get("filter"), "NONE");
+            if (compressed_buffer < 0 || static_cast<std::size_t>(compressed_buffer) >= context->buffers.size())
+                return fail(error, "EXT_meshopt_compression references invalid buffer");
+            if (compressed_length == 0u || compressed_stride == 0u || count == 0u)
+                return fail(error, "EXT_meshopt_compression has invalid byteLength, byteStride, or count");
+
+            Compression::MeshoptMode mode{};
+            Compression::MeshoptFilter filter{};
+            if (!meshoptMode(mode_name, &mode)) return fail(error, "EXT_meshopt_compression has unsupported mode: " + mode_name);
+            if (!meshoptFilter(filter_name, &filter)) return fail(error, "EXT_meshopt_compression has unsupported filter: " + filter_name);
+            if (mode == Compression::MeshoptMode::Attributes) {
+                if ((compressed_stride % 4u) != 0u || compressed_stride > 256u)
+                    return fail(error, "EXT_meshopt_compression ATTRIBUTES has invalid byteStride");
+            } else if (compressed_stride != 2u && compressed_stride != 4u) {
+                return fail(error, "EXT_meshopt_compression index mode requires byteStride 2 or 4");
+            }
+            if (mode == Compression::MeshoptMode::Triangles && (count % 3u) != 0u)
+                return fail(error, "EXT_meshopt_compression TRIANGLES count is not divisible by three");
+            if (mode != Compression::MeshoptMode::Attributes && filter != Compression::MeshoptFilter::None)
+                return fail(error, "EXT_meshopt_compression index modes cannot use filters");
+            if (filter == Compression::MeshoptFilter::Octahedral && compressed_stride != 4u && compressed_stride != 8u)
+                return fail(error, "EXT_meshopt_compression OCTAHEDRAL requires byteStride 4 or 8");
+            if (filter == Compression::MeshoptFilter::Quaternion && compressed_stride != 8u)
+                return fail(error, "EXT_meshopt_compression QUATERNION requires byteStride 8");
+            if (filter == Compression::MeshoptFilter::Exponential && (compressed_stride % 4u) != 0u)
+                return fail(error, "EXT_meshopt_compression EXPONENTIAL requires byteStride divisible by four");
+            if (view.stride != 0u && view.stride != compressed_stride)
+                return fail(error, "EXT_meshopt_compression byteStride does not match parent bufferView");
+
+            std::size_t expected_length = 0u;
+            if (!multiplication(count, compressed_stride, &expected_length) || expected_length != view.length)
+                return fail(error, "EXT_meshopt_compression decompressed size does not match parent bufferView");
+            const auto& compressed = context->buffers[static_cast<std::size_t>(compressed_buffer)];
+            if (compressed_offset > compressed.size() || compressed_length > compressed.size() - compressed_offset)
+                return fail(error, "EXT_meshopt_compression source range exceeds buffer bounds");
+
+            std::vector<std::uint8_t> decoded;
+            if (!Compression::decodeMeshopt(
+                    compressed.data() + compressed_offset,
+                    compressed_length,
+                    count,
+                    compressed_stride,
+                    mode,
+                    filter,
+                    &decoded,
+                    error))
+                return false;
+            if (decoded.size() != expected_length)
+                return fail(error, "EXT_meshopt_compression decoder returned unexpected output size");
+            if (context->buffers.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max()))
+                return fail(error, "too many synthetic glTF buffers after Meshopt decompression");
+            view.buffer = static_cast<int>(context->buffers.size());
+            view.offset = 0u;
+            view.length = decoded.size();
+            view.stride = compressed_stride;
+            context->buffers.push_back(std::move(decoded));
+        } else {
+            if (view.stride != 0u && (view.stride < 4u || view.stride > 252u || (view.stride % 4u) != 0u))
+                return fail(error, "invalid glTF bufferView byteStride");
+            const auto& buffer = context->buffers[static_cast<std::size_t>(view.buffer)];
+            if (view.offset > buffer.size() || view.length > buffer.size() - view.offset)
+                return fail(error, "glTF bufferView exceeds buffer bounds or references an unavailable fallback buffer");
+        }
         context->views.push_back(view);
     }
     return true;
