@@ -2,16 +2,14 @@
 
 #include "Renderer/RayTracer/RayTracer.hpp"
 
-#include "Models/Core/Texture.hpp"
 #include "Renderer/FontPass.hpp"
 #include "Renderer/Frame/Metal/FrameMetal.hpp"
 #include "Renderer/GlobalIlluminationMetal.hpp"
 #include "Renderer/RayTracer/RayTracerMetalShaders.hpp"
-#include "Renderer/Systems/MetalSceneResources.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
-#include "Renderer/Visibility/Visibility.hpp"
 #include "Renderer/Systems/Uniforms.hpp"
+#include "Renderer/Trace/Metal/TraceScene.hpp"
 
 #include <lwcgl/lwcgl.h>
 #include <lwmgl/lwmgl.h>
@@ -20,38 +18,19 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <limits>
 #include <string>
-#include <vector>
 
 namespace Renderer {
 
 struct RayTracer::Impl {
-    struct PackedPosition {
-        float x;
-        float y;
-        float z;
-    };
-
-    static_assert(sizeof(PackedPosition) == 12u);
-
     RayTracerSettings settings{};
     bool initialized = false;
-    bool has_alpha_cutouts = true;
     int width = 1;
     int height = 1;
     int trace_width = 1;
     int trace_height = 1;
-    std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
-    std::uint64_t scene_signature = 0u;
-    std::uint64_t visibility_signature = 0u;
-    std::uint64_t visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
-    bool visibility_all = true;
 
-    Systems::SceneCache scene;
-    Systems::MetalSceneResources resources;
-    std::vector<Systems::Scene::RenderItem> render_items;
-    std::vector<std::uint32_t> visibility_mask;
+    Trace::Metal::TraceScene trace_scene;
     Frame::Metal::Presenter presenter;
 
     LWMGLLibrary shader_library = nullptr;
@@ -61,8 +40,6 @@ struct RayTracer::Impl {
     LWMGLTexture primary_depth = nullptr;
     LWMGLSampler material_sampler = nullptr;
     LWMGLBuffer trace_uniform_buffer = nullptr;
-    LWMGLBuffer acceleration_vertex_buffer = nullptr;
-    LWMGLAccelerationStructure acceleration_structure = nullptr;
 
     bool active() const { return initialized && settings.enabled; }
 
@@ -81,25 +58,6 @@ struct RayTracer::Impl {
         }
         trace_width = std::max(width / divisor, 1);
         trace_height = std::max(height / divisor, 1);
-    }
-
-    void updateAlphaCutoutState()
-    {
-        has_alpha_cutouts = false;
-        for (const Systems::Scene::RenderItem& item : render_items) {
-            const Models::MaterialData *material = item.material;
-            if (!material) continue;
-            if (material->opacity < 1.0f) {
-                has_alpha_cutouts = true;
-                return;
-            }
-            if (material->diffuse_texture == Models::INVALID_TEXTURE) continue;
-            const Models::TextureAsset *texture = Models::texture(material->diffuse_texture);
-            if (texture && texture->image.meaningful_alpha) {
-                has_alpha_cutouts = true;
-                return;
-            }
-        }
     }
 
     bool createPrograms()
@@ -198,131 +156,6 @@ struct RayTracer::Impl {
         output_texture = nullptr;
     }
 
-    void destroyAccelerationStructure()
-    {
-        if (acceleration_structure) Metal.destroyAccelerationStructure(acceleration_structure);
-        if (acceleration_vertex_buffer) Metal.destroyBuffer(acceleration_vertex_buffer);
-        acceleration_structure = nullptr;
-        acceleration_vertex_buffer = nullptr;
-    }
-
-    bool createAccelerationStructure()
-    {
-        destroyAccelerationStructure();
-        if (scene.triangles().empty()) return true;
-
-        std::vector<PackedPosition> positions;
-        positions.reserve(scene.triangles().size() * 3u);
-        for (const Systems::GpuTriangle& triangle : scene.triangles()) {
-            positions.push_back({triangle.p0[0], triangle.p0[1], triangle.p0[2]});
-            positions.push_back({triangle.p1[0], triangle.p1[1], triangle.p1[2]});
-            positions.push_back({triangle.p2[0], triangle.p2[1], triangle.p2[2]});
-        }
-
-        if (positions.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
-            return false;
-
-        const LWMGLBufferDesc vertex_desc = {
-            positions.size() * sizeof(PackedPosition),
-            LWMGL_STORAGE_SHARED
-        };
-        acceleration_vertex_buffer = Metal.createBuffer(&vertex_desc, positions.data());
-        if (!acceleration_vertex_buffer) return false;
-
-        const LWMGLTriangleGeometryDesc geometry = {
-            acceleration_vertex_buffer,
-            0u,
-            static_cast<std::uint32_t>(sizeof(PackedPosition)),
-            static_cast<std::uint32_t>(positions.size()),
-            nullptr,
-            0u,
-            0u,
-            1u
-        };
-        acceleration_structure = Metal.createTriangleAccelerationStructure(&geometry, 1u);
-        if (!acceleration_structure) {
-            Metal.destroyBuffer(acceleration_vertex_buffer);
-            acceleration_vertex_buffer = nullptr;
-            return false;
-        }
-        return true;
-    }
-
-    bool syncSceneIfNeeded(const Ecs::World& world)
-    {
-        const std::uint64_t revision = world.changeRevision();
-        if (revision == world_revision && resources.ready() &&
-            (scene.triangles().empty() || acceleration_structure))
-        {
-            return true;
-        }
-
-        Systems::Scene::collectRenderItems(world, render_items);
-        updateAlphaCutoutState();
-        const std::uint64_t signature = scene.signature(world, render_items);
-        if (signature != scene_signature || !resources.ready() ||
-            (!scene.triangles().empty() && !acceleration_structure))
-        {
-            std::string error;
-            if (!scene.sync(
-                    world,
-                    render_items,
-                    Systems::MetalSceneResources::MaximumTextureSlots,
-                    &error))
-            {
-                std::fprintf(stderr, "[RayTracer]: scene cache failed: %s\n", error.c_str());
-                return false;
-            }
-            if (!resources.sync(scene, &error)) {
-                std::fprintf(stderr, "[RayTracer]: Metal scene upload failed: %s\n", error.c_str());
-                return false;
-            }
-            if (!createAccelerationStructure()) {
-                std::fprintf(
-                    stderr,
-                    "[RayTracer]: Metal acceleration structure failed: %s\n",
-                    lwmglGetLastError()
-                );
-                return false;
-            }
-            scene_signature = signature;
-            visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
-            std::fprintf(
-                stderr,
-                "[RayTracer]: Metal native AS %zu triangles, %zu materials, alpha=%s\n",
-                scene.triangles().size(),
-                scene.materials().size(),
-                has_alpha_cutouts ? "cutout" : "opaque"
-            );
-        }
-        world_revision = revision;
-        return true;
-    }
-
-    bool syncVisibilityIfNeeded(const Ecs::World& world)
-    {
-        const std::uint64_t revision = world.changeRevision();
-        const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
-        const std::uint64_t current_signature =
-            Systems::cameraSignature(camera) ^
-            (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
-            static_cast<std::uint32_t>(height);
-        if (revision == visibility_world_revision && current_signature == visibility_signature)
-            return true;
-
-        const Visibility::Result visibility = Visibility::system().buildEntityMask(
-            world, width, height, visibility_mask);
-        std::string error;
-        if (!resources.syncVisibility(visibility_mask, &error)) {
-            std::fprintf(stderr, "[RayTracer]: Metal visibility upload failed: %s\n", error.c_str());
-            return false;
-        }
-        visibility_all = visibility.culled.empty();
-        visibility_world_revision = revision;
-        visibility_signature = current_signature;
-        return true;
-    }
-
     bool dispatch(
         const Systems::CameraState& camera,
         const Systems::LightState& light,
@@ -330,7 +163,7 @@ struct RayTracer::Impl {
         LWMGLCommand& out_command)
     {
         out_command = nullptr;
-        if (!resources.ready() || !acceleration_structure || !output_texture || !primary_depth)
+        if (!trace_scene.accelerationStructure() || !output_texture || !primary_depth)
             return false;
 
         Systems::MetalTraceUniforms trace = Systems::makeMetalTraceUniforms(
@@ -341,24 +174,26 @@ struct RayTracer::Impl {
             width,
             height,
             0u,
-            scene.triangles().size(),
-            scene.materials().size(),
+            trace_scene.triangleCount(),
+            trace_scene.materialCount(),
             Systems::SceneCache::opacityCutoff(),
             0u,
             false,
             false
         );
-        trace.counts[3] = (has_alpha_cutouts ? 1 : 0) | (visibility_all ? 2 : 0);
+        trace.counts[3] =
+            (trace_scene.hasAlphaCutouts() ? 1 : 0) |
+            (trace_scene.visibilityAll() ? 2 : 0);
         if (Metal.uploadBuffer(trace_uniform_buffer, 0u, &trace, sizeof trace) != 0) return false;
 
         LWMGLCommand command = Metal.begin();
         if (!command) return false;
         bool ok = Metal.beginCompute(command) == 0;
         if (ok) ok = Metal.setComputePipeline(command, trace_pipeline) == 0;
-        if (ok) ok = resources.bind(command, 1u);
+        if (ok) ok = trace_scene.bind(command, 1u);
         if (ok) ok = Metal.setBuffer(command, trace_uniform_buffer, 0u, 3u) == 0;
         if (ok) ok = Internal::bindGlobalIlluminationMetal(command, global_illumination, 4u);
-        if (ok) ok = Metal.setAccelerationStructure(command, acceleration_structure, 5u) == 0;
+        if (ok) ok = Metal.setAccelerationStructure(command, trace_scene.accelerationStructure(), 5u) == 0;
         if (ok) ok = Metal.setTexture(command, output_texture, 0u) == 0;
         if (ok) ok = Metal.setTexture(command, primary_depth, 33u) == 0;
         if (ok) ok = Metal.setSampler(command, material_sampler, 0u) == 0;
@@ -422,7 +257,7 @@ bool RayTracer::init()
         !impl_->createPrograms() ||
         !impl_->createSamplers() ||
         !impl_->createUniformBuffers() ||
-        !impl_->resources.init(&resource_error) ||
+        !impl_->trace_scene.init(&resource_error) ||
         !impl_->createTargets())
     {
         std::fprintf(
@@ -521,9 +356,11 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
         if (!impl_->createTargets()) return false;
     }
 
-    if (!impl_->syncSceneIfNeeded(world) || !impl_->syncVisibilityIfNeeded(world)) return false;
+    const Trace::Metal::TraceScene::SyncResult scene_sync =
+        impl_->trace_scene.sync(world, impl_->width, impl_->height, "RayTracer");
+    if (!scene_sync.ok) return false;
     const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
-    if (!camera.valid || impl_->scene.triangles().empty()) {
+    if (!camera.valid || impl_->trace_scene.triangleCount() == 0u) {
         return Frame::Metal::beginClear(output);
     }
     const Systems::LightState light = Systems::lightState(Systems::Scene::lightState(world));
@@ -554,23 +391,13 @@ void RayTracer::shutdown()
     if (Metal.isCreated()) Metal.waitIdle();
     Internal::shutdownFonts(Internal::GraphicsApi::Metal);
     Internal::shutdownGlobalIlluminationMetal();
-    impl_->destroyAccelerationStructure();
-    impl_->resources.clear();
-    impl_->scene.clear();
+    impl_->trace_scene.clear();
     impl_->destroyTargets();
     impl_->destroyUniformBuffers();
     impl_->destroySamplers();
     impl_->destroyPrograms();
     impl_->presenter.shutdown();
     if (Metal.isCreated()) Metal.destroy();
-    impl_->render_items.clear();
-    impl_->visibility_mask.clear();
-    impl_->has_alpha_cutouts = true;
-    impl_->world_revision = std::numeric_limits<std::uint64_t>::max();
-    impl_->scene_signature = 0u;
-    impl_->visibility_signature = 0u;
-    impl_->visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
-    impl_->visibility_all = true;
     impl_->initialized = false;
 }
 
