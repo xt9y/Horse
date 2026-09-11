@@ -34,6 +34,11 @@ TextureHandle loadTextureMemory(
     std::size_t size,
     std::string *error = nullptr
 );
+TextureHandle registerTextureImage(
+    const std::string& cache_key,
+    Images::Image image,
+    std::string *error = nullptr
+);
 const TextureAsset *texture(TextureHandle handle);
 void clearTextureCache();
 

@@ -4,10 +4,17 @@
 #include "Models/Core/Texture.hpp"
 #include "Models/Core/Types.hpp"
 
+#include <cstdint>
 #include <string>
 #include <unordered_map>
 
 namespace Models {
+
+enum class AlphaMode : std::uint8_t {
+    Opaque,
+    Mask,
+    Blend,
+};
 
 struct MaterialData {
     std::string name;
@@ -22,6 +29,9 @@ struct MaterialData {
     float ior = 1.5f;
     float clearcoat = 0.0f;
     float clearcoat_roughness = 0.1f;
+    AlphaMode alpha_mode = AlphaMode::Opaque;
+    float alpha_cutoff = 0.5f;
+    bool double_sided = false;
 
     std::string texture_path;
     std::string normal_texture_path;

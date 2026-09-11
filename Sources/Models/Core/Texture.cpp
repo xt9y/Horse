@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -31,8 +32,20 @@ std::string normalizedPath(const std::string& path)
         .string();
 }
 
+bool validImage(const Images::Image& image)
+{
+    if (image.width <= 0 || image.height <= 0) return false;
+    const std::size_t width = static_cast<std::size_t>(image.width);
+    const std::size_t height = static_cast<std::size_t>(image.height);
+    if (width > std::numeric_limits<std::size_t>::max() / height) return false;
+    const std::size_t pixels = width * height;
+    if (pixels > std::numeric_limits<std::size_t>::max() / 4u) return false;
+    return image.rgba.size() == pixels * 4u;
+}
+
 TextureHandle store(std::string key, Images::Image image)
 {
+    if (assets().size() >= static_cast<std::size_t>(INVALID_TEXTURE)) return INVALID_TEXTURE;
     const TextureHandle handle = static_cast<TextureHandle>(assets().size());
     assets().push_back({key, std::move(image)});
     cache().emplace(std::move(key), handle);
@@ -41,9 +54,7 @@ TextureHandle store(std::string key, Images::Image image)
 
 bool applyOpacity(Images::Image *color, const Images::Image& opacity, std::string *error)
 {
-    if (!color || color->width <= 0 || color->height <= 0 || color->rgba.empty() ||
-        opacity.width <= 0 || opacity.height <= 0 || opacity.rgba.empty())
-    {
+    if (!color || !validImage(*color) || !validImage(opacity)) {
         if (error) *error = "invalid color or opacity texture image";
         return false;
     }
@@ -73,11 +84,6 @@ bool applyOpacity(Images::Image *color, const Images::Image& opacity, std::strin
             const std::size_t opacity_offset =
                 (static_cast<std::size_t>(opacity_y) * static_cast<std::size_t>(opacity.width) +
                  static_cast<std::size_t>(opacity_x)) * 4u;
-            if (color_offset + 3u >= color->rgba.size() ||
-                opacity_offset + 2u >= opacity.rgba.size())
-            {
-                continue;
-            }
 
             const unsigned int mask =
                 (static_cast<unsigned int>(opacity.rgba[opacity_offset + 0u]) +
@@ -171,6 +177,28 @@ TextureHandle loadTextureMemory(
     Images::Image image;
     if (!Images::loadMemory(data, size, &image, error)) return INVALID_TEXTURE;
     return store(cache_key, std::move(image));
+}
+
+TextureHandle registerTextureImage(
+    const std::string& cache_key,
+    Images::Image image,
+    std::string *error)
+{
+    if (error) error->clear();
+    if (cache_key.empty()) {
+        if (error) *error = "empty texture image cache key";
+        return INVALID_TEXTURE;
+    }
+    if (!validImage(image)) {
+        if (error) *error = "invalid texture image";
+        return INVALID_TEXTURE;
+    }
+
+    const auto found = cache().find(cache_key);
+    if (found != cache().end()) return found->second;
+    const TextureHandle handle = store(cache_key, std::move(image));
+    if (handle == INVALID_TEXTURE && error) *error = "texture handle space exhausted";
+    return handle;
 }
 
 const TextureAsset *texture(TextureHandle handle)
