@@ -1,6 +1,7 @@
 #include "Models/Images/Ktx2.hpp"
 
 #include "Models/Compression/Deflate.hpp"
+#include "Models/Compression/Zstd.hpp"
 
 #include <algorithm>
 #include <array>
@@ -119,31 +120,31 @@ struct Format {
 Format formatInfo(std::uint32_t format)
 {
     switch (format) {
-        case 9u:   // VK_FORMAT_R8_UNORM
-        case 15u:  // VK_FORMAT_R8_SRGB
+        case 9u:
+        case 15u:
             return {1, 1, false};
-        case 16u:  // VK_FORMAT_R8G8_UNORM
-        case 22u:  // VK_FORMAT_R8G8_SRGB
+        case 16u:
+        case 22u:
             return {2, 1, false};
-        case 23u:  // VK_FORMAT_R8G8B8_UNORM
-        case 29u:  // VK_FORMAT_R8G8B8_SRGB
+        case 23u:
+        case 29u:
             return {3, 1, false};
-        case 30u:  // VK_FORMAT_B8G8R8_UNORM
-        case 36u:  // VK_FORMAT_B8G8R8_SRGB
+        case 30u:
+        case 36u:
             return {3, 1, true};
-        case 37u:  // VK_FORMAT_R8G8B8A8_UNORM
-        case 43u:  // VK_FORMAT_R8G8B8A8_SRGB
+        case 37u:
+        case 43u:
             return {4, 1, false};
-        case 44u:  // VK_FORMAT_B8G8R8A8_UNORM
-        case 50u:  // VK_FORMAT_B8G8R8A8_SRGB
+        case 44u:
+        case 50u:
             return {4, 1, true};
-        case 70u:  // VK_FORMAT_R16_UNORM
+        case 70u:
             return {1, 2, false};
-        case 77u:  // VK_FORMAT_R16G16_UNORM
+        case 77u:
             return {2, 2, false};
-        case 84u:  // VK_FORMAT_R16G16B16_UNORM
+        case 84u:
             return {3, 2, false};
-        case 91u:  // VK_FORMAT_R16G16B16A16_UNORM
+        case 91u:
             return {4, 2, false};
         default:
             return {};
@@ -180,11 +181,11 @@ bool rgba(
     const std::uint64_t required = pixels * texel_bytes;
     if (required > level.size()) return fail(error, "KTX2 base level is shorter than its image dimensions");
 
-    image->width = static_cast<int>(header.width);
-    image->height = static_cast<int>(height);
     if (header.width > static_cast<std::uint32_t>(std::numeric_limits<int>::max()) ||
         height > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
         return fail(error, "KTX2 dimensions exceed Horse image limits");
+    image->width = static_cast<int>(header.width);
+    image->height = static_cast<int>(height);
     image->rgba.resize(static_cast<std::size_t>(pixels) * 4u);
     image->meaningful_alpha = false;
 
@@ -226,6 +227,15 @@ bool rgba(
     return true;
 }
 
+bool expectedLevelSize(const Level& level, std::size_t *out, std::string *error)
+{
+    if (!out) return fail(error, "null KTX2 expected-size output");
+    if (level.uncompressed > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()))
+        return fail(error, "KTX2 uncompressed level exceeds addressable memory");
+    *out = static_cast<std::size_t>(level.uncompressed);
+    return true;
+}
+
 } // namespace
 
 bool matches(const std::uint8_t *data, std::size_t size)
@@ -258,13 +268,10 @@ bool decode(
     if (header.supercompression == 0u) {
         level.assign(level_data, level_data + static_cast<std::size_t>(base.length));
     } else if (header.supercompression == 3u) {
+        std::size_t expected = 0u;
+        if (!expectedLevelSize(base, &expected, error)) return false;
         Compression::InflateOptions options;
-        options.max_output = base.uncompressed == 0u
-            ? 256u * 1024u * 1024u
-            : static_cast<std::size_t>(std::min<std::uint64_t>(
-                base.uncompressed,
-                static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())
-            ));
+        options.max_output = expected == 0u ? 256u * 1024u * 1024u : expected;
         if (!Compression::inflateZlib(
             level_data,
             static_cast<std::size_t>(base.length),
@@ -272,10 +279,23 @@ bool decode(
             error,
             options
         )) return false;
-        if (base.uncompressed != 0u && level.size() != base.uncompressed)
+        if (expected != 0u && level.size() != expected)
             return fail(error, "KTX2 zlib level size does not match level index");
     } else if (header.supercompression == 2u) {
-        return fail(error, "KTX2 Zstandard requires the Horse Zstd decoder");
+        std::size_t expected = 0u;
+        if (!expectedLevelSize(base, &expected, error)) return false;
+        Compression::ZstdOptions options;
+        options.max_output = expected == 0u ? 256u * 1024u * 1024u : expected;
+        options.max_window = std::max<std::size_t>(options.max_output, 8u * 1024u * 1024u);
+        if (!Compression::decompressZstd(
+            level_data,
+            static_cast<std::size_t>(base.length),
+            &level,
+            error,
+            options
+        )) return false;
+        if (expected != 0u && level.size() != expected)
+            return fail(error, "KTX2 Zstd level size does not match level index");
     } else if (header.supercompression == 1u) {
         return fail(error, "KTX2 BasisLZ requires the Horse Basis transcoder");
     } else {
