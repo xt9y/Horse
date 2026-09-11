@@ -70,9 +70,12 @@ vec3 aces(vec3 x)
 
 vec3 hdrAt(vec2 uv)
 {
-    vec3 scene = max(texture2D(uScene, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0));
-    vec3 bloom = max(texture2D(uBloom, clamp(uv, vec2(0.0), vec2(1.0))).rgb, vec3(0.0));
-    return scene + bloom * max(uBloomIntensity, 0.0);
+    vec2 sample_uv = clamp(uv, vec2(0.0), vec2(1.0));
+    vec3 scene = max(texture2D(uScene, sample_uv).rgb, vec3(0.0));
+    float bloom_intensity = max(uBloomIntensity, 0.0);
+    if (bloom_intensity <= 0.0) return scene;
+    vec3 bloom = max(texture2D(uBloom, sample_uv).rgb, vec3(0.0));
+    return scene + bloom * bloom_intensity;
 }
 
 vec3 displayAt(vec2 uv)
