@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace Renderer {
 
@@ -46,6 +47,10 @@ struct Parent {
 struct MeshComponent {
     std::uint32_t mesh = UINT32_MAX;
     std::uint32_t material = UINT32_MAX;
+};
+
+struct InstanceComponent {
+    std::vector<std::array<float, 16>> matrices;
 };
 
 struct RenderableComponent {
