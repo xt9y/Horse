@@ -26,6 +26,7 @@ enum class ChangeKind : std::uint8_t {
     Camera,
     Lighting,
     Animation,
+    Audio,
     Count,
 };
 
