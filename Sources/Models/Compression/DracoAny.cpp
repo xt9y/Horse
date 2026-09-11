@@ -1,5 +1,6 @@
 #include "Models/Compression/Draco.hpp"
 #include "Models/Compression/DracoEdgeBreakerComplete.hpp"
+#include "Models/Compression/DracoEdgeBreakerValence.hpp"
 #include "Models/Compression/DracoSequentialComplete.hpp"
 
 #include <cstring>
@@ -31,7 +32,17 @@ bool decodeDracoAny(
         case 0u:
             return decodeDracoSequentialComplete(data, size, mesh, error);
         case 1u:
-            return decodeDracoEdgeBreakerComplete(data, size, mesh, error);
+            if (size < 12u) return fail(error, "truncated Draco EdgeBreaker stream");
+            switch (data[11]) {
+                case 0u:
+                    return decodeDracoEdgeBreakerComplete(data, size, mesh, error);
+                case 2u:
+                    return decodeDracoEdgeBreakerValence(data, size, mesh, error);
+                case 1u:
+                    return fail(error, "legacy predictive Draco EdgeBreaker traversal is not supported");
+                default:
+                    return fail(error, "unknown Draco EdgeBreaker traversal encoding");
+            }
         default:
             return fail(error, "unsupported Draco mesh encoding method");
     }
