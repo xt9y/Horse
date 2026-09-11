@@ -94,7 +94,9 @@ vec3 motionBlurred(vec2 uv)
     if (uMotionBlurEnabled == 0 || uMotionBlurSamples <= 1)
         return hdrAt(uv);
     vec2 velocity = texture2D(uVelocity, uv).xy * max(uMotionBlurStrength, 0.0);
-    int samples = clamp(uMotionBlurSamples, 1, 16);
+    int samples = uMotionBlurSamples;
+    if (samples < 1) samples = 1;
+    if (samples > 16) samples = 16;
     vec3 sum = vec3(0.0);
     float count = 0.0;
     for (int index = 0; index < 16; ++index) {
