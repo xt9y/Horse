@@ -61,6 +61,28 @@ bool ReverseBits::read(unsigned int count, std::uint32_t *out, std::string *erro
     return true;
 }
 
+bool ReverseBits::readPadded(
+    unsigned int count,
+    std::uint32_t *out,
+    bool *overflow,
+    std::string *error)
+{
+    if (!out || !overflow || count > 32u) return fail(error, "invalid padded Zstd reverse bit read");
+    if (count <= bit_position_) {
+        *overflow = false;
+        return read(count, out, error);
+    }
+
+    const unsigned int available = static_cast<unsigned int>(bit_position_);
+    const unsigned int missing = count - available;
+    std::uint32_t partial = 0u;
+    if (available != 0u && !read(available, &partial, error)) return false;
+    if (missing >= 32u && partial != 0u) return fail(error, "Zstd padded reverse bit value overflows");
+    *out = missing == 32u ? 0u : partial << missing;
+    *overflow = true;
+    return true;
+}
+
 bool initializeFseState(
     const FseTable& table,
     ReverseBits *bits,
@@ -93,6 +115,23 @@ bool updateFseState(FseState *state, ReverseBits *bits, std::string *error)
     if (!bits->read(row.bits, &extra, error)) return false;
     const std::uint32_t next = static_cast<std::uint32_t>(row.baseline) + extra;
     if (next >= state->table->rows.size()) return fail(error, "Zstd FSE next state exceeds table");
+    state->state = next;
+    return true;
+}
+
+bool updateFseStatePadded(
+    FseState *state,
+    ReverseBits *bits,
+    bool *overflow,
+    std::string *error)
+{
+    if (!state || !bits || !overflow || !state->table || state->state >= state->table->rows.size())
+        return fail(error, "invalid padded Zstd FSE state update");
+    const FseEntry& row = state->table->rows[state->state];
+    std::uint32_t extra = 0u;
+    if (!bits->readPadded(row.bits, &extra, overflow, error)) return false;
+    const std::uint32_t next = static_cast<std::uint32_t>(row.baseline) + extra;
+    if (next >= state->table->rows.size()) return fail(error, "padded Zstd FSE next state exceeds table");
     state->state = next;
     return true;
 }
