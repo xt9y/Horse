@@ -193,8 +193,6 @@ bool decodeAttributes(
                     prior = static_cast<std::uint8_t>(static_cast<int>(prior) + zigzag8(deltas[index]));
                     (*output)[(first + group_first + index) * stride + byte] = prior;
                 }
-                for (std::size_t index = valid; index < 16u; ++index)
-                    prior = static_cast<std::uint8_t>(static_cast<int>(prior) + zigzag8(deltas[index]));
             }
             previous[byte] = prior;
         }
