@@ -52,8 +52,20 @@ struct RenderItem {
     const Models::MaterialData* material = nullptr;
 };
 
+struct RenderRevision {
+    std::uint64_t structure = 0u;
+    std::uint64_t transform = 0u;
+    std::uint64_t resource = 0u;
+    std::uint64_t animation = 0u;
+    std::uint64_t camera = 0u;
+    std::uint64_t model_resource = 0u;
+
+    bool operator==(const RenderRevision&) const = default;
+};
+
 CameraState cameraState(const Ecs::World& world);
 LightState lightState(const Ecs::World& world);
+RenderRevision renderRevision(const Ecs::World& world);
 void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out);
 
 } // namespace Renderer::Scenes::Scene

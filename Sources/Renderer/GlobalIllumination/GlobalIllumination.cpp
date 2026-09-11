@@ -114,8 +114,9 @@ struct SettingsState {
 
 struct State {
     const Ecs::World *world = nullptr;
-    std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
-    std::uint64_t geometry_signature = 0u;
+    Scenes::Scene::RenderRevision render_revision{};
+    std::uint64_t lighting_revision = 0u;
+    bool revisions_initialized = false;
     std::uint64_t light_signature = 0u;
     std::uint64_t next_field_revision = 1u;
 
@@ -478,34 +479,46 @@ const Field *update(const Ecs::World& world)
         state.world = &world;
     }
 
-    bool geometry_changed = false;
+    bool scene_changed = false;
     bool light_changed = false;
-    const std::uint64_t revision = world.changeRevision();
-    if (revision != state.world_revision) {
-        const bool first_sync = state.world_revision == std::numeric_limits<std::uint64_t>::max();
-        Scenes::Scene::collectRenderItems(world, state.render_items);
-        const std::uint64_t geometry_signature = state.trace_scene.signature(world, state.render_items);
-        const Scenes::LightState light = Scenes::lightState(Scenes::Scene::lightState(world));
-        const std::uint64_t light_signature = Scenes::lightSignature(light);
-
-        geometry_changed = first_sync || geometry_signature != state.geometry_signature;
-        light_changed = first_sync || light_signature != state.light_signature;
-        state.world_revision = revision;
-        state.light = light;
-
-        if (geometry_changed) {
+    const Scenes::Scene::RenderRevision render_revision = Scenes::Scene::renderRevision(world);
+    const std::uint64_t lighting_revision = world.changeRevision(Ecs::ChangeKind::Lighting);
+    const bool render_dirty = !state.revisions_initialized || render_revision != state.render_revision;
+    const bool lighting_dirty = !state.revisions_initialized || lighting_revision != state.lighting_revision;
+    if (render_dirty || lighting_dirty) {
+        const bool first_sync = !state.revisions_initialized;
+        if (render_dirty) {
+            const std::uint64_t previous_geometry_revision = state.trace_scene.cache().geometryRevision();
+            const std::uint64_t previous_resource_revision = state.trace_scene.cache().resourceRevision();
             const Clock::time_point started = Clock::now();
             std::string error;
+            Scenes::Scene::collectRenderItems(world, state.render_items);
             if (!state.trace_scene.build(world, state.render_items, &error)) {
                 std::fprintf(stderr, "[GlobalIllumination]: scene build failed: %s\n", error.c_str());
                 state.trace_scene.clear();
+                scene_changed = true;
+            } else {
+                const bool geometry_changed =
+                    state.trace_scene.cache().geometryRevision() != previous_geometry_revision;
+                const bool resources_changed =
+                    state.trace_scene.cache().resourceRevision() != previous_resource_revision;
+                scene_changed = first_sync || geometry_changed || resources_changed;
+                if (first_sync || geometry_changed) {
+                    state.bvh_depth = state.trace_scene.cache().nodes().empty()
+                        ? 0u
+                        : treeDepth(state.trace_scene.cache().nodes(), 0u);
+                }
             }
             state.scene_build_ms = elapsedMilliseconds(started);
-            state.bvh_depth = state.trace_scene.cache().nodes().empty()
-                ? 0u
-                : treeDepth(state.trace_scene.cache().nodes(), 0u);
-            state.geometry_signature = geometry_signature;
         }
+
+        const Scenes::LightState light = Scenes::lightState(Scenes::Scene::lightState(world));
+        const std::uint64_t light_signature = Scenes::lightSignature(light);
+        light_changed = first_sync || light_signature != state.light_signature;
+        state.render_revision = render_revision;
+        state.lighting_revision = lighting_revision;
+        state.revisions_initialized = true;
+        state.light = light;
         if (light_changed) state.light_signature = light_signature;
     }
 
@@ -534,7 +547,7 @@ const Field *update(const Ecs::World& world)
     const bool photon_changed = !photonSettingsEqual(photon_settings, state.photon_settings);
     state.bounces = bounces;
 
-    if (geometry_changed || light_changed || bounce_changed || photon_changed) {
+    if (scene_changed || light_changed || bounce_changed || photon_changed) {
         state.photon_settings = photon_settings;
         const Clock::time_point started = Clock::now();
         if (photon_settings.enabled) {
@@ -545,7 +558,7 @@ const Field *update(const Ecs::World& world)
         state.photon_build_ms = elapsedMilliseconds(started);
     }
 
-    if (geometry_changed || light_changed || bounce_changed || photon_changed || !state.published.valid()) {
+    if (scene_changed || light_changed || bounce_changed || photon_changed || !state.published.valid()) {
         restartCalculation(intensity);
     }
 

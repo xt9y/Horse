@@ -60,7 +60,7 @@ void FreeController::update(Ecs::World& world, float delta_seconds)
     if (Keyboard.isKeyDown(Keyboard.KEY_D)) move(right, speed);
     if (Keyboard.isKeyDown(Keyboard.KEY_A)) move(right, -speed);
 
-    if (changed) world.markChanged(Ecs::ChangeKind::Transform);
+    if (changed) world.markChanged(Ecs::ChangeKind::Camera);
 }
 
 } // namespace Camera

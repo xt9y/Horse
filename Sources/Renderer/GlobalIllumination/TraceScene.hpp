@@ -33,11 +33,6 @@ public:
         std::string *error = nullptr
     );
 
-    std::uint64_t signature(
-        const Ecs::World& world,
-        const std::vector<Scenes::Scene::RenderItem>& items
-    ) const;
-
     TraceHit traceClosest(
         Vec3 origin,
         Vec3 direction,

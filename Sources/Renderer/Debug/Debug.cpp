@@ -82,7 +82,7 @@ struct Inspector::Impl {
     std::vector<std::pair<Ecs::Entity, bool>> camera_activity;
 
     const Ecs::World *live_world = nullptr;
-    std::uint64_t live_revision = std::numeric_limits<std::uint64_t>::max();
+    Scenes::Scene::RenderRevision live_revision{};
     Scenes::SceneCache live_cache;
     const Scenes::SceneCache *bvh_cache = nullptr;
     std::vector<std::vector<std::uint32_t>> bvh_levels;
@@ -205,7 +205,7 @@ struct Inspector::Impl {
     const Scenes::SceneCache *cacheFor(const Ecs::World& world)
     {
         if (frozen) return &frozen_cache;
-        const std::uint64_t revision = world.changeRevision();
+        const Scenes::Scene::RenderRevision revision = Scenes::Scene::renderRevision(world);
         if (live_world == &world && live_revision == revision) return &live_cache;
 
         std::vector<Scenes::Scene::RenderItem> items;
@@ -385,7 +385,7 @@ void Inspector::unfreeze(Ecs::World& world)
     impl_->frozen_cache.clear();
     impl_->camera_activity.clear();
     impl_->live_world = nullptr;
-    impl_->live_revision = std::numeric_limits<std::uint64_t>::max();
+    impl_->live_revision = {};
     impl_->live_cache.clear();
     impl_->invalidateBvhMetadata();
     world.markChanged();
@@ -418,7 +418,7 @@ void Inspector::clear(Ecs::World *world)
     if (impl_->frozen) return;
     Visibility::system().clearOverride();
     impl_->live_world = nullptr;
-    impl_->live_revision = std::numeric_limits<std::uint64_t>::max();
+    impl_->live_revision = {};
     impl_->live_cache.clear();
     impl_->invalidateBvhMetadata();
     impl_->lines.clear();

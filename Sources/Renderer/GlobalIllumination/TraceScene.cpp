@@ -175,13 +175,6 @@ bool TraceScene::build(
     );
 }
 
-std::uint64_t TraceScene::signature(
-    const Ecs::World& world,
-    const std::vector<Scenes::Scene::RenderItem>& items) const
-{
-    return cache_.signature(world, items);
-}
-
 TraceHit TraceScene::traceClosest(
     Vec3 origin,
     Vec3 direction,

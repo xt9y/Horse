@@ -120,6 +120,23 @@ LightState lightState(const Ecs::World& world)
     return out;
 }
 
+RenderRevision renderRevision(const Ecs::World& world)
+{
+    bool camera_dependent_lod = false;
+    world.each<LodGroup>([&](Ecs::Entity, const LodGroup&) {
+        camera_dependent_lod = true;
+    });
+
+    return {
+        world.changeRevision(Ecs::ChangeKind::Structure),
+        world.changeRevision(Ecs::ChangeKind::Transform),
+        world.changeRevision(Ecs::ChangeKind::Resource),
+        world.changeRevision(Ecs::ChangeKind::Animation),
+        camera_dependent_lod ? world.changeRevision(Ecs::ChangeKind::Camera) : 0u,
+        Models::resourceRevision(),
+    };
+}
+
 void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
 {
     out.clear();

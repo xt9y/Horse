@@ -41,9 +41,8 @@ struct TraceScene::Impl {
     std::vector<Scenes::Scene::RenderItem> render_items;
     std::vector<std::uint32_t> visibility_mask;
 
-    std::uint64_t world_revision = std::numeric_limits<std::uint64_t>::max();
-    std::uint64_t model_resource_revision = std::numeric_limits<std::uint64_t>::max();
-    std::uint64_t visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
+    Scenes::Scene::RenderRevision render_revision{};
+    Scenes::Scene::RenderRevision visibility_render_revision{};
     std::uint64_t visibility_signature = 0u;
     bool has_alpha_cutouts = true;
     bool visibility_all = true;
@@ -122,9 +121,8 @@ struct TraceScene::Impl {
 
     TraceScene::SyncResult syncScene(const Ecs::World& world, const char *owner)
     {
-        const std::uint64_t revision = world.changeRevision();
-        const std::uint64_t resources_revision = Models::resourceRevision();
-        if (revision == world_revision && resources_revision == model_resource_revision &&
+        const Scenes::Scene::RenderRevision revision = Scenes::Scene::renderRevision(world);
+        if (revision == render_revision &&
             resources.ready() && (scene.triangles().empty() || acceleration_structure))
         {
             return {true, false};
@@ -162,7 +160,7 @@ struct TraceScene::Impl {
 
         const bool scene_changed = geometry_changed || resources_changed;
         if (scene_changed) {
-            visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
+            visibility_render_revision = {};
             std::fprintf(
                 stderr,
                 "[%s]: Metal native AS %zu triangles, %zu materials, alpha=%s\n",
@@ -173,20 +171,19 @@ struct TraceScene::Impl {
             );
         }
 
-        world_revision = revision;
-        model_resource_revision = resources_revision;
+        render_revision = revision;
         return {true, scene_changed};
     }
 
     bool syncVisibility(const Ecs::World& world, int width, int height, const char *owner)
     {
-        const std::uint64_t revision = world.changeRevision();
+        const Scenes::Scene::RenderRevision revision = Scenes::Scene::renderRevision(world);
         const Scenes::CameraState camera = Scenes::cameraState(Scenes::Scene::cameraState(world));
         const std::uint64_t current_signature =
             Scenes::cameraSignature(camera) ^
             (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
             static_cast<std::uint32_t>(height);
-        if (revision == visibility_world_revision && current_signature == visibility_signature)
+        if (revision == visibility_render_revision && current_signature == visibility_signature)
             return true;
 
         const Visibility::Result visibility = Visibility::system().buildEntityMask(
@@ -202,7 +199,7 @@ struct TraceScene::Impl {
             return false;
         }
         visibility_all = visibility.culled.empty();
-        visibility_world_revision = revision;
+        visibility_render_revision = revision;
         visibility_signature = current_signature;
         return true;
     }
@@ -214,9 +211,8 @@ struct TraceScene::Impl {
         scene.clear();
         render_items.clear();
         visibility_mask.clear();
-        world_revision = std::numeric_limits<std::uint64_t>::max();
-        model_resource_revision = std::numeric_limits<std::uint64_t>::max();
-        visibility_world_revision = std::numeric_limits<std::uint64_t>::max();
+        render_revision = {};
+        visibility_render_revision = {};
         visibility_signature = 0u;
         has_alpha_cutouts = true;
         visibility_all = true;
