@@ -41,6 +41,13 @@ struct Joint4 {
     std::uint16_t w = 0u;
 };
 
+struct AttributeData {
+    int component_type = 0;
+    std::uint32_t components = 0u;
+    bool normalized = false;
+    std::vector<double> values;
+};
+
 struct Vertex {
     Vec3 position;
     Vec3 normal {0.0f, 0.0f, 1.0f};
@@ -59,6 +66,7 @@ struct MorphTargetData {
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
     std::vector<Vec3> tangents;
+    std::unordered_map<std::string, AttributeData> attributes;
 };
 
 struct MeshData {
@@ -73,6 +81,7 @@ struct MeshData {
     std::vector<std::vector<Vec4>> color_sets;
     std::vector<std::vector<Joint4>> joint_sets;
     std::vector<std::vector<Vec4>> weight_sets;
+    std::unordered_map<std::string, AttributeData> attributes;
     std::vector<MorphTargetData> morph_targets;
     std::vector<float> morph_weights;
     std::vector<std::string> morph_names;
@@ -205,7 +214,7 @@ struct InstanceData {
     std::vector<Vec3> translations;
     std::vector<Quat> rotations;
     std::vector<Vec3> scales;
-    std::unordered_map<std::string, std::vector<float>> attributes;
+    std::unordered_map<std::string, AttributeData> attributes;
 };
 
 ModelHandle load(const std::string& path, std::string *error = nullptr);
