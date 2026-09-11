@@ -321,6 +321,7 @@ bool SceneCache::rebuildResources(
     std::size_t maximum_texture_slots,
     std::string *error)
 {
+    if (error) error->clear();
     materials_.clear();
     texture_handles_.clear();
     material_indices_.clear();
