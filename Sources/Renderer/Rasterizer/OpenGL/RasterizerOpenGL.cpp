@@ -14,6 +14,7 @@
 #include "Renderer/Systems/OpenGL/TextureCache.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
+#include "Renderer/Trace/CameraProjection.hpp"
 #include "Renderer/Visibility/Visibility.hpp"
 
 #include <lwcgl/glmodern.h>
@@ -92,26 +93,60 @@ Math::Mat4 perspectiveMatrix(float fov_degrees, float aspect, float near_plane, 
     };
 }
 
-Math::Mat4 orthographicMatrix(float half_extent, float near_plane, float far_plane)
+Math::Mat4 orthographicMatrix(
+    float half_width,
+    float half_height,
+    float near_plane,
+    float far_plane)
 {
-    const float extent = std::max(half_extent, 1.0e-3f);
+    const float safe_width = std::max(std::abs(half_width), 1.0e-3f);
+    const float safe_height = std::max(std::abs(half_height), 1.0e-3f);
     const float safe_near = std::max(near_plane, 1.0e-4f);
     const float safe_far = std::max(far_plane, safe_near + 1.0e-3f);
     const float range = safe_far - safe_near;
     return {
-        1.0f / extent, 0.0f, 0.0f, 0.0f,
-        0.0f, 1.0f / extent, 0.0f, 0.0f,
+        1.0f / safe_width, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f / safe_height, 0.0f, 0.0f,
         0.0f, 0.0f, -2.0f / range, 0.0f,
         0.0f, 0.0f, -(safe_far + safe_near) / range, 1.0f,
     };
 }
 
-Math::Mat4 cameraView(const Systems::Scene::CameraState& camera)
+Math::Mat4 orthographicMatrix(float half_extent, float near_plane, float far_plane)
 {
-    const Vec3 forward = Math::normalize(Camera::flightDirection(camera.transform.rotation.y, camera.transform.rotation.x));
-    const Vec3 right = Math::normalize(Camera::strafeDirection(camera.transform.rotation.y));
-    const Vec3 up = Math::normalize(Math::cross(right, forward));
-    return Math::viewMatrix(camera.transform.position, forward, right, up);
+    return orthographicMatrix(half_extent, half_extent, near_plane, far_plane);
+}
+
+Math::Mat4 cameraProjectionMatrix(const Systems::CameraState& camera, float viewport_aspect)
+{
+    if (camera.projection == Camera::Projection::Orthographic)
+        return orthographicMatrix(camera.xmag, camera.ymag, camera.near_plane, camera.far_plane);
+
+    const float aspect = camera.aspect_ratio > 1.0e-6f
+        ? camera.aspect_ratio
+        : std::max(viewport_aspect, 1.0e-6f);
+    if (camera.far_plane > camera.near_plane + 1.0e-4f)
+        return perspectiveMatrix(camera.fov_degrees, aspect, camera.near_plane, camera.far_plane);
+    return infinitePerspectiveMatrix(camera.fov_degrees, aspect, camera.near_plane);
+}
+
+Math::Mat4 cameraView(const Systems::CameraState& camera)
+{
+    return Math::viewMatrix(camera.position, camera.forward, camera.right, camera.up);
+}
+
+GLenum primitiveMode(Models::PrimitiveMode mode)
+{
+    switch (mode) {
+        case Models::PrimitiveMode::Points: return GL_POINTS;
+        case Models::PrimitiveMode::Lines: return GL_LINES;
+        case Models::PrimitiveMode::LineLoop: return GL_LINE_LOOP;
+        case Models::PrimitiveMode::LineStrip: return GL_LINE_STRIP;
+        case Models::PrimitiveMode::TriangleStrip: return GL_TRIANGLE_STRIP;
+        case Models::PrimitiveMode::TriangleFan: return GL_TRIANGLE_FAN;
+        case Models::PrimitiveMode::Triangles:
+        default: return GL_TRIANGLES;
+    }
 }
 
 Vec3 lightDirection(const Systems::Scene::LightState& light)
@@ -129,6 +164,11 @@ void hashFloat(std::uint64_t& hash, float value) { hashValue(hash, std::bit_cast
 void hashVec3(std::uint64_t& hash, Vec3 value) { hashFloat(hash, value.x); hashFloat(hash, value.y); hashFloat(hash, value.z); }
 void hashTransform(std::uint64_t& hash, const Transform& transform)
 {
+    hashValue(hash, transform.matrix_override_enabled ? 1u : 0u);
+    if (transform.matrix_override_enabled) {
+        for (float value : transform.matrix_override) hashFloat(hash, value);
+        return;
+    }
     hashVec3(hash, transform.position); hashVec3(hash, transform.rotation); hashVec3(hash, transform.scale);
 }
 void setInt(GLint location, int value) { if (location >= 0) GL20.glUniform1i(location, value); }
@@ -376,7 +416,10 @@ struct Rasterizer::Impl {
         }
         for (const Systems::Scene::RenderItem& item : render_items) {
             const Models::MeshData* mesh = item.mesh;
-            if (!mesh || mesh->indices.empty() || !item.transform) continue;
+            if (!mesh || !item.transform) continue;
+            const std::vector<std::uint32_t>& draw_indices =
+                mesh->source_indices.empty() ? mesh->indices : mesh->source_indices;
+            if (draw_indices.empty()) continue;
             const Math::Mat4 model = Math::modelMatrix(*item.transform);
             if (!shadow_pass && !itemVisible(item, false)) { storeModel(item.entity, model); continue; }
             const Models::MaterialData* material = item.material;
@@ -398,8 +441,8 @@ struct Rasterizer::Impl {
                 if (opacity < 0.999f) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); } else glDisable(GL_BLEND);
             }
             if (opacity_only) glColor4f(1,1,1,1);
-            glPushMatrix(); glMultMatrixf(model.data()); glBegin(GL_TRIANGLES);
-            for (const std::uint32_t index : mesh->indices) {
+            glPushMatrix(); glMultMatrixf(model.data()); glBegin(primitiveMode(mesh->primitive_mode));
+            for (const std::uint32_t index : draw_indices) {
                 if (index >= mesh->vertices.size()) continue;
                 const Models::Vertex& vertex = mesh->vertices[index];
                 glNormal3f(vertex.normal.x, vertex.normal.y, vertex.normal.z); glTexCoord2f(vertex.uv.x, 1.0f - vertex.uv.y);
@@ -449,7 +492,7 @@ struct Rasterizer::Impl {
 
     bool renderDirectionalShadowMap(
         const Systems::Scene::LightState& light,
-        const Systems::Scene::CameraState& camera)
+        const Systems::CameraState& camera)
     {
         if (!light.valid || light.light.type != LightType::Directional ||
             light.light.intensity <= 0.0f || !camera.valid)
@@ -478,19 +521,17 @@ struct Rasterizer::Impl {
 
         const float extent = std::max(settings.directional_shadow_distance, 1.0f);
         std::uint64_t signature = currentShadowSignature(light);
-        hashTransform(signature, camera.transform);
+        const std::uint64_t camera_signature = Systems::cameraSignature(camera);
+        hashValue(signature, static_cast<std::uint32_t>(camera_signature));
+        hashValue(signature, static_cast<std::uint32_t>(camera_signature >> 32u));
         hashFloat(signature, extent);
         if (shadow_valid && shadow_signature == signature) return true;
 
         const Vec3 direction = lightDirection(light);
-        const Vec3 camera_forward = Math::normalize(Camera::flightDirection(
-            camera.transform.rotation.y,
-            camera.transform.rotation.x
-        ));
         const Vec3 center {
-            camera.transform.position.x + camera_forward.x * extent * 0.25f,
-            camera.transform.position.y + camera_forward.y * extent * 0.25f,
-            camera.transform.position.z + camera_forward.z * extent * 0.25f,
+            camera.position.x + camera.forward.x * extent * 0.25f,
+            camera.position.y + camera.forward.y * extent * 0.25f,
+            camera.position.z + camera.forward.z * extent * 0.25f,
         };
         const Vec3 light_position {
             center.x - direction.x * extent * 2.0f,
@@ -530,7 +571,7 @@ struct Rasterizer::Impl {
 
     bool renderShadowMaps(
         const Systems::Scene::LightState& light,
-        const Systems::Scene::CameraState& camera)
+        const Systems::CameraState& camera)
     {
         if (light.valid && light.light.type == LightType::Directional)
             return renderDirectionalShadowMap(light, camera);
@@ -554,11 +595,11 @@ struct Rasterizer::Impl {
     }
 
     void bindGlobalState(const Systems::Scene::LightState& light, const GlobalIllumination::Field *gi,
-        const Systems::Scene::CameraState& camera, const EnvironmentState& environment)
+        const Systems::CameraState& camera, const EnvironmentState& environment)
     {
         int light_type = 0;
         if (light.valid) light_type = light.light.type == LightType::Point ? 1 : (light.light.type == LightType::Directional ? 2 : 3);
-        setInt(main_uniforms.light_type, light_type); setVec3(main_uniforms.camera_position, camera.transform.position);
+        setInt(main_uniforms.light_type, light_type); setVec3(main_uniforms.camera_position, camera.position);
         setVec3(main_uniforms.light_position, light.valid ? light.transform.position : Vec3{}); setVec3(main_uniforms.light_direction, lightDirection(light));
         setVec3(main_uniforms.light_color, light.valid ? light.light.color : Vec3{}); setFloat(main_uniforms.light_intensity, light.valid ? std::max(light.light.intensity,0.0f) : 0.0f);
         setFloat(main_uniforms.light_range, light.valid ? std::max(light.light.range,0.0f) : 0.0f);
@@ -575,17 +616,20 @@ struct Rasterizer::Impl {
         bindEnvironment(environment); GLModern.glActiveTexture(GL_TEXTURE0);
     }
 
-    void renderSky(const Systems::Scene::CameraState& camera, const EnvironmentState& environment, const Systems::CameraState& camera_state)
+    void renderSky(const EnvironmentState& environment, const Systems::CameraState& camera)
     {
-        if (!environment.valid || !camera.valid || !camera_state.valid) return;
+        if (!environment.valid || !camera.valid) return;
         const GLuint texture = static_cast<GLuint>(textureFor(environment.texture));
-        const Systems::CameraState previous = history_valid && previous_camera.valid ? previous_camera : camera_state;
+        const Systems::CameraState previous = history_valid && previous_camera.valid ? previous_camera : camera;
+        const float viewport_aspect = static_cast<float>(width) / static_cast<float>(height);
+        const Trace::CameraProjectionEncoding projection =
+            Trace::cameraProjectionEncoding(camera, viewport_aspect);
         glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_BLEND); sky_program.use();
         setInt(sky_uniforms.has_environment_texture, texture != 0u ? 1 : 0); setVec3(sky_uniforms.sky_color, environment.sky_color);
         setFloat(sky_uniforms.environment_intensity, environment.intensity); setFloat(sky_uniforms.environment_rotation, environment.rotation_degrees * (kPi/180.0f));
-        setVec3(sky_uniforms.camera_forward,camera_state.forward); setVec3(sky_uniforms.camera_right,camera_state.right); setVec3(sky_uniforms.camera_up,camera_state.up);
+        setVec3(sky_uniforms.camera_forward,camera.forward); setVec3(sky_uniforms.camera_right,camera.right); setVec3(sky_uniforms.camera_up,camera.up);
         setVec3(sky_uniforms.previous_camera_forward,previous.forward); setVec3(sky_uniforms.previous_camera_right,previous.right); setVec3(sky_uniforms.previous_camera_up,previous.up);
-        setFloat(sky_uniforms.tan_half_fov,std::tan(camera_state.fov_degrees*(kPi/360.0f))); setFloat(sky_uniforms.aspect,static_cast<float>(width)/static_cast<float>(height));
+        setFloat(sky_uniforms.tan_half_fov,projection.scale); setFloat(sky_uniforms.aspect,projection.aspect);
         GLModern.glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,texture != 0u ? texture : fallbackTexture());
         glBegin(GL_TRIANGLES); glVertex2f(-1,-1); glVertex2f(3,-1); glVertex2f(-1,3); glEnd();
         Systems::OpenGL::unbindProgram(); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE);
@@ -603,20 +647,20 @@ struct Rasterizer::Impl {
     bool draw(const Ecs::World& world, const GlobalIllumination::Field *gi)
     {
         Systems::Scene::collectRenderItems(world,render_items); updateViewportVisibility(world);
-        const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
+        const Systems::CameraState camera = Systems::cameraState(Systems::Scene::cameraState(world));
         if (!camera.valid) { applyClearColor(); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); return true; }
         const Systems::Scene::LightState light = Systems::Scene::lightState(world); renderShadowMaps(light,camera);
-        const Systems::CameraState camera_state = Systems::cameraState(camera);
-        const Math::Mat4 projection = infinitePerspectiveMatrix(camera.fov_degrees,static_cast<float>(width)/static_cast<float>(height),camera.near_plane);
+        const float viewport_aspect = static_cast<float>(width)/static_cast<float>(height);
+        const Math::Mat4 projection = cameraProjectionMatrix(camera,viewport_aspect);
         const Math::Mat4 view = cameraView(camera);
         current_view_projection = Math::multiply(projection,view);
         if (!history_valid) previous_view_projection = current_view_projection;
-        const EnvironmentState environment = environmentState(world); renderSky(camera,environment,camera_state);
+        const EnvironmentState environment = environmentState(world); renderSky(environment,camera);
         glMatrixMode(GL_PROJECTION); glLoadMatrixf(projection.data()); glMatrixMode(GL_MODELVIEW); glLoadMatrixf(view.data());
         glDisable(GL_LIGHTING); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE); main_program.use();
         bindGlobalState(light,gi,camera,environment); drawGeometry(false); Systems::OpenGL::unbindProgram();
         GLModern.glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,0u); glDisable(GL_BLEND);
-        previous_view_projection = current_view_projection; previous_camera = camera_state; history_valid = true;
+        previous_view_projection = current_view_projection; previous_camera = camera; history_valid = true;
         return true;
     }
 };
