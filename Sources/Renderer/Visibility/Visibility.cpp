@@ -2,6 +2,7 @@
 
 #include "Camera.hpp"
 #include "Renderer/Math.hpp"
+#include "Renderer/Scenes/SceneCache.hpp"
 
 #include <algorithm>
 #include <array>
@@ -79,11 +80,26 @@ std::array<Vec3, 8> itemCorners(const Scenes::Scene::RenderItem& item)
 
 std::array<Plane, 6> planes(const Frustum& frustum)
 {
-    const float tangent_vertical = std::tan(frustum.half_vertical_fov_radians);
-    const float tangent_horizontal = tangent_vertical * frustum.aspect;
     const Vec3 near_center = add(frustum.position, multiply(frustum.forward, frustum.near_distance));
     const Vec3 far_center = add(frustum.position, multiply(frustum.forward, frustum.far_distance));
 
+    if (frustum.orthographic) {
+        const Vec3 left = subtract(frustum.position, multiply(frustum.right, frustum.half_width));
+        const Vec3 right = add(frustum.position, multiply(frustum.right, frustum.half_width));
+        const Vec3 bottom = subtract(frustum.position, multiply(frustum.up, frustum.half_height));
+        const Vec3 top = add(frustum.position, multiply(frustum.up, frustum.half_height));
+        return {{
+            plane(frustum.forward, near_center),
+            plane(multiply(frustum.forward, -1.0f), far_center),
+            plane(frustum.right, left),
+            plane(multiply(frustum.right, -1.0f), right),
+            plane(frustum.up, bottom),
+            plane(multiply(frustum.up, -1.0f), top),
+        }};
+    }
+
+    const float tangent_vertical = std::tan(frustum.half_vertical_fov_radians);
+    const float tangent_horizontal = tangent_vertical * frustum.aspect;
     return {{
         plane(frustum.forward, near_center),
         plane(multiply(frustum.forward, -1.0f), far_center),
@@ -132,22 +148,37 @@ void System::clearOverride()
 Frustum System::makeFrustum(const Ecs::World& world, int width, int height) const
 {
     Frustum result;
-    const Scenes::Scene::CameraState camera = Scenes::Scene::cameraState(world);
-    if (!camera.valid || width <= 0 || height <= 0 || far_distance_ <= camera.near_plane)
-        return result;
+    const Scenes::CameraState camera = Scenes::cameraState(Scenes::Scene::cameraState(world));
+    if (!camera.valid || width <= 0 || height <= 0) return result;
 
-    result.position = camera.transform.position;
-    result.forward = Math::normalize(Camera::flightDirection(
-        camera.transform.rotation.y,
-        camera.transform.rotation.x
-    ));
-    result.right = Math::normalize(Camera::strafeDirection(camera.transform.rotation.y));
-    result.up = Math::normalize(Math::cross(result.right, result.forward));
-    result.near_distance = camera.near_plane;
-    result.far_distance = far_distance_;
-    result.half_vertical_fov_radians =
-        std::clamp(camera.fov_degrees, 1.0f, 179.0f) * (pi / 360.0f);
-    result.aspect = static_cast<float>(width) / static_cast<float>(height);
+    const float safe_near = std::max(camera.near_plane, 1.0e-4f);
+    float resolved_far = far_distance_;
+    if (resolved_far <= safe_near && camera.far_plane > safe_near)
+        resolved_far = camera.far_plane;
+    else if (resolved_far > safe_near && camera.far_plane > safe_near)
+        resolved_far = std::min(resolved_far, camera.far_plane);
+    if (resolved_far <= safe_near) return result;
+
+    result.position = camera.position;
+    result.forward = camera.forward;
+    result.right = camera.right;
+    result.up = camera.up;
+    result.near_distance = safe_near;
+    result.far_distance = resolved_far;
+    result.orthographic = camera.projection == Camera::Projection::Orthographic;
+
+    if (result.orthographic) {
+        result.half_width = std::max(std::abs(camera.xmag), 1.0e-6f);
+        result.half_height = std::max(std::abs(camera.ymag), 1.0e-6f);
+        result.aspect = result.half_width / result.half_height;
+    } else {
+        result.half_vertical_fov_radians =
+            std::clamp(camera.fov_degrees, 1.0f, 179.0f) * (pi / 360.0f);
+        result.aspect = camera.aspect_ratio > 1.0e-6f
+            ? camera.aspect_ratio
+            : static_cast<float>(width) / static_cast<float>(height);
+    }
+
     result.valid = true;
     return result;
 }
@@ -252,13 +283,21 @@ std::array<Vec3, 8> System::corners(const Frustum& frustum) const
     std::array<Vec3, 8> result{};
     if (!frustum.valid) return result;
 
-    const float tangent_vertical = std::tan(frustum.half_vertical_fov_radians);
-    const float tangent_horizontal = tangent_vertical * frustum.aspect;
+    float near_half_width = frustum.half_width;
+    float near_half_height = frustum.half_height;
+    float far_half_width = frustum.half_width;
+    float far_half_height = frustum.half_height;
+    if (!frustum.orthographic) {
+        const float tangent_vertical = std::tan(frustum.half_vertical_fov_radians);
+        const float tangent_horizontal = tangent_vertical * frustum.aspect;
+        near_half_width = tangent_horizontal * frustum.near_distance;
+        near_half_height = tangent_vertical * frustum.near_distance;
+        far_half_width = tangent_horizontal * frustum.far_distance;
+        far_half_height = tangent_vertical * frustum.far_distance;
+    }
 
-    const auto fill = [&](std::size_t offset, float distance) {
+    const auto fill = [&](std::size_t offset, float distance, float half_width, float half_height) {
         const Vec3 center = add(frustum.position, multiply(frustum.forward, distance));
-        const float half_width = tangent_horizontal * distance;
-        const float half_height = tangent_vertical * distance;
         const Vec3 horizontal = multiply(frustum.right, half_width);
         const Vec3 vertical = multiply(frustum.up, half_height);
         result[offset + 0u] = subtract(subtract(center, horizontal), vertical);
@@ -267,8 +306,8 @@ std::array<Vec3, 8> System::corners(const Frustum& frustum) const
         result[offset + 3u] = add(subtract(center, horizontal), vertical);
     };
 
-    fill(0u, frustum.near_distance);
-    fill(4u, frustum.far_distance);
+    fill(0u, frustum.near_distance, near_half_width, near_half_height);
+    fill(4u, frustum.far_distance, far_half_width, far_half_height);
     return result;
 }
 
