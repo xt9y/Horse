@@ -11,7 +11,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <numbers>
@@ -677,10 +676,17 @@ struct Runtime::Impl {
             return vectorValue("float3", {r.data[0], r.data[1], r.data[2]});
         }
         if (op == "math/transform") {
-            const Value matrix = input("matrix", b), point = broadcast(a, 4u); const auto m = matrix4(matrix);
-            Value result = point;
-            for (std::size_t row=0; row<4u; ++row) result.data[row]=m[row]*point.data[0]+m[4u+row]*point.data[1]+m[8u+row]*point.data[2]+m[12u+row]*point.data[3];
-            return result;
+            const Value matrix = input("matrix", b);
+            const std::size_t n = InternalMath::matrixDimension(matrix.type);
+            if (n >= 2u && n <= 4u && a.data.size() >= n && matrix.data.size() >= n * n) {
+                Value result = a;
+                result.data.assign(n, 0.0);
+                for (std::size_t row = 0u; row < n; ++row)
+                    for (std::size_t column = 0u; column < n; ++column)
+                        result.data[row] += matrix.data[column * n + row] * a.data[column];
+                return result;
+            }
+            return defaultValue(a.type);
         }
         if (op == "math/slerp" || op == "math/quatSlerp") return quaternionSlerp(a, b, input("t", scalar(0.0)).data[0]);
         if (op == "math/transpose") {
@@ -691,11 +697,46 @@ struct Runtime::Impl {
         if (op == "math/inverse") { Value inverse; const bool valid=invertMatrix(a,&inverse); if(socket=="isValid")return boolean(valid); return valid?inverse:defaultValue(a.type); }
         if (op == "math/matMul") return matrixMultiply(a, b);
         if (op == "math/matCompose") return composeMatrix(input("translation", {}), input("rotation", vectorValue("float4",{0,0,0,1})), input("scale", vectorValue("float3",{1,1,1})));
+        if (op == "math/matDecompose") {
+            const InternalMath::DecomposedTransform decomposed = InternalMath::decomposeTransform(a.data);
+            if (socket == "translation") return vectorValue("float3", {decomposed.translation[0], decomposed.translation[1], decomposed.translation[2]});
+            if (socket == "rotation") return vectorValue("float4", {decomposed.rotation[0], decomposed.rotation[1], decomposed.rotation[2], decomposed.rotation[3]});
+            if (socket == "scale") return vectorValue("float3", {decomposed.scale[0], decomposed.scale[1], decomposed.scale[2]});
+            return {};
+        }
         if (op == "math/quatConjugate") { Value q=broadcast(a,4u); q.data[0]=-q.data[0];q.data[1]=-q.data[1];q.data[2]=-q.data[2];return q; }
         if (op == "math/quatMul") return quaternionMultiply(a,b);
         if (op == "math/quatAngleBetween") { const Value aa=normalized(a),bb=normalized(b);return scalar(2.0*std::acos(std::clamp(std::abs(dot(aa,bb)),0.0,1.0))); }
         if (op == "math/quatFromAxisAngle") { Value axis=normalized(input("axis",a));const double angle=input("angle",b).data[0],s=std::sin(angle*0.5);return vectorValue("float4",{axis.data[0]*s,axis.data[1]*s,axis.data[2]*s,std::cos(angle*0.5)}); }
+        if (op == "math/quatFromAngles") {
+            const InternalMath::Quat q = InternalMath::quatFromAngles(input("x", scalar(0.0)).data[0], input("y", scalar(0.0)).data[0], input("z", scalar(0.0)).data[0], configString(node_index, "order", "yxz"));
+            return vectorValue("float4", {q[0], q[1], q[2], q[3]});
+        }
+        if (op == "math/quatFromDirections") {
+            const Value aa = broadcast(a, 3u), bb = broadcast(b, 3u);
+            const InternalMath::Quat q = InternalMath::quatFromDirections({aa.data[0], aa.data[1], aa.data[2]}, {bb.data[0], bb.data[1], bb.data[2]});
+            return vectorValue("float4", {q[0], q[1], q[2], q[3]});
+        }
+        if (op == "math/quatFromUpForward") {
+            const Value up = broadcast(input("up", {}), 3u), forward = broadcast(input("forward", {}), 3u);
+            const InternalMath::Quat q = InternalMath::quatFromUpForward({up.data[0], up.data[1], up.data[2]}, {forward.data[0], forward.data[1], forward.data[2]});
+            return vectorValue("float4", {q[0], q[1], q[2], q[3]});
+        }
         if (op == "math/quatToAxisAngle") { Value q=normalized(a);const double angle=2.0*std::acos(std::clamp(q.data[3],-1.0,1.0)),s=std::sqrt(std::max(0.0,1.0-q.data[3]*q.data[3]));if(socket=="angle")return scalar(angle);return s<1e-8?vectorValue("float3",{1,0,0}):vectorValue("float3",{q.data[0]/s,q.data[1]/s,q.data[2]/s}); }
+        if (op == "math/rgbToOkLCh") {
+            const InternalMath::Vec3 result = InternalMath::rgbToOkLCh(input("r", scalar(0.0)).data[0], input("g", scalar(0.0)).data[0], input("b", scalar(0.0)).data[0]);
+            if (socket == "l") return scalar(result[0]);
+            if (socket == "c") return scalar(result[1]);
+            if (socket == "h") return scalar(result[2]);
+            return {};
+        }
+        if (op == "math/rgbFromOkLCh") {
+            const InternalMath::Vec3 result = InternalMath::rgbFromOkLCh(input("l", scalar(0.0)).data[0], input("c", scalar(0.0)).data[0], input("h", scalar(0.0)).data[0]);
+            if (socket == "r") return scalar(result[0]);
+            if (socket == "g") return scalar(result[1]);
+            if (socket == "b") return scalar(result[2]);
+            return {};
+        }
         if (op == "math/not") return integerValue(~integer(a));
         if (op == "math/and") return intBinary([](std::uint32_t x,std::uint32_t y){return x&y;});
         if (op == "math/or") return intBinary([](std::uint32_t x,std::uint32_t y){return x|y;});
@@ -707,8 +748,9 @@ struct Runtime::Impl {
         if (op == "math/popcnt") return integerValue(static_cast<std::int32_t>(std::popcount(std::bit_cast<std::uint32_t>(integer(a)))));
 
         if (op.starts_with("math/combine")) {
-            std::vector<double> components;
             const std::size_t count = op == "math/combine2" ? 2u : op == "math/combine3" ? 3u : op == "math/combine4" ? 4u : op == "math/combine2x2" ? 4u : op == "math/combine3x3" ? 9u : op == "math/combine4x4" ? 16u : 0u;
+            if (count == 0u) return {};
+            std::vector<double> components;
             for(char name='a'; components.size()<count && name<='p'; ++name){std::string key(1,name);Value c=input(key,{});if(c.data.empty())break;components.push_back(c.data[0]);}
             if (components.size() != count) return {};
             const std::string type = op == "math/combine2" ? "float2" : op == "math/combine3" ? "float3" : op == "math/combine4" ? "float4" : op == "math/combine2x2" ? "float2x2" : op == "math/combine3x3" ? "float3x3" : "float4x4";
@@ -716,10 +758,15 @@ struct Runtime::Impl {
         }
         if (op.starts_with("math/extract")) {
             int index = configInt(node_index,"index",-1);
-            if (index < 0) {
-                char *end = nullptr;
-                const long parsed = std::strtol(std::string(socket).c_str(), &end, 10);
-                if (end && *end == '\0' && parsed >= 0) index = static_cast<int>(parsed);
+            if (index < 0 && !socket.empty()) {
+                std::size_t parsed = 0u;
+                bool numeric = true;
+                for (const char digit : socket) {
+                    if (digit < '0' || digit > '9') { numeric = false; break; }
+                    parsed = parsed * 10u + static_cast<std::size_t>(digit - '0');
+                    if (parsed > 15u) { numeric = false; break; }
+                }
+                if (numeric) index = static_cast<int>(parsed);
             }
             if (index >= 0 && static_cast<std::size_t>(index) < a.data.size()) return scalar(a.data[static_cast<std::size_t>(index)]);
         }
@@ -818,7 +865,7 @@ struct Runtime::Impl {
         if(op=="event/send"){
             const int event_index=configInt(node_index,"event",configInt(node_index,"index",-1));
             if(event_index<0||static_cast<std::size_t>(event_index)>=events.size())return emit(world,node_index,"out",error);
-            Event event;event.id=events[event_index].id;for(const auto&[socket,type_index]:events[event_index].values)event.values.push_back({socket,value(socket,defaultValue(typeName(static_cast<int>(type_index)))).data});
+            Event event;event.id=events[event_index].id;for(const auto&[socket_name,type_index]:events[event_index].values)event.values.push_back({socket_name,value(socket_name,defaultValue(typeName(static_cast<int>(type_index)))).data});
             emitted_events.push_back(event);++statistics.events;dispatchEvent(world,event,error);return emit(world,node_index,"out",error);
         }
         if(op=="variable/set"){
@@ -907,9 +954,9 @@ struct Runtime::Impl {
         const Json::Value*type_array=graph->get("types");const Json::Value*declaration_array=graph->get("declarations");const Json::Value*node_array=graph->get("nodes");if(!type_array||!type_array->is(Json::Type::Array)||!declaration_array||!declaration_array->is(Json::Type::Array)||!node_array||!node_array->is(Json::Type::Array))return fail(error,"KHR_interactivity graph requires types, declarations, and nodes arrays");if(node_array->array.size()>limits.max_nodes)return fail(error,"KHR_interactivity graph exceeds node limit");
         types.clear();for(const Json::Value&t:type_array->array){if(!t.is(Json::Type::Object))return fail(error,"KHR_interactivity type is invalid");types.push_back(Json::stringValue(t.get("signature")));if(types.back().empty())return fail(error,"KHR_interactivity type signature is empty");}
         declarations.clear();for(const Json::Value&d:declaration_array->array){if(!d.is(Json::Type::Object))return fail(error,"KHR_interactivity declaration is invalid");Declaration declaration;declaration.op=Json::stringValue(d.get("op"));declaration.extension=Json::stringValue(d.get("extension"));if(declaration.op.empty())return fail(error,"KHR_interactivity declaration op is empty");declarations.push_back(std::move(declaration));}
-        nodes.clear();nodes.reserve(node_array->array.size());for(std::size_t i=0u;i<node_array->array.size();++i){const Json::Value&n=node_array->array[i];if(!n.is(Json::Type::Object))return fail(error,"KHR_interactivity node is invalid");const int declaration=Json::integer(n.get("declaration"),-1);if(declaration<0||static_cast<std::size_t>(declaration)>=declarations.size())return fail(error,"KHR_interactivity node declaration is invalid");if(const Json::Value*values=n.get("values");values&&values->is(Json::Type::Object))for(const auto&[_,v]:values->object){if(!v.is(Json::Type::Object))return fail(error,"KHR_interactivity value socket is invalid");const int source=Json::integer(v.get("node"),-1);if(source>=0&&static_cast<std::size_t>(source)>=i)return fail(error,"KHR_interactivity value edge references current/later node");}nodes.push_back(&n);}
+        nodes.clear();nodes.reserve(node_array->array.size());for(std::size_t i=0u;i<node_array->array.size();++i){const Json::Value&n= node_array->array[i];if(!n.is(Json::Type::Object))return fail(error,"KHR_interactivity node is invalid");const int declaration=Json::integer(n.get("declaration"),-1);if(declaration<0||static_cast<std::size_t>(declaration)>=declarations.size())return fail(error,"KHR_interactivity node declaration is invalid");if(const Json::Value*values=n.get("values");values&&values->is(Json::Type::Object))for(const auto&[_,v]:values->object){if(!v.is(Json::Type::Object))return fail(error,"KHR_interactivity value socket is invalid");const int source=Json::integer(v.get("node"),-1);if(source>=0&&static_cast<std::size_t>(source)>=i)return fail(error,"KHR_interactivity value edge references current/later node");}nodes.push_back(&n);}
         variables.clear();variable_names.clear();if(const Json::Value*array=graph->get("variables");array&&array->is(Json::Type::Array))for(std::size_t i=0u;i<array->array.size();++i){const Json::Value&v=array->array[i];if(!v.is(Json::Type::Object))return fail(error,"KHR_interactivity variable is invalid");const int type=Json::integer(v.get("type"),-1);if(type<0||static_cast<std::size_t>(type)>=types.size())return fail(error,"KHR_interactivity variable type is invalid");VariableState state;state.name=Json::stringValue(v.get("name"));state.value=fromJson(typeName(type),v.get("value"));if(!state.name.empty())variable_names[state.name]=variables.size();variables.push_back(std::move(state));}
-        events.clear();event_ids.clear();if(const Json::Value*array=graph->get("events");array&&array->is(Json::Type::Array))for(const Json::Value&e:array->array){if(!e.is(Json::Type::Object))return fail(error,"KHR_interactivity event is invalid");EventDefinition event;event.id=Json::stringValue(e.get("id"));if(const Json::Value*values=e.get("values");values&&values->is(Json::Type::Object))for(const auto&[socket,type_value]:values->object){const int type=Json::integer(&type_value,-1);if(type<0||static_cast<std::size_t>(type)>=types.size())return fail(error,"KHR_interactivity event value type is invalid");event.values[socket]=static_cast<std::size_t>(type);}if(!event.id.empty())event_ids[event.id]=events.size();events.push_back(std::move(event));}
+        events.clear();event_ids.clear();if(const Json::Value*array=graph->get("events");array&&array->is(Json::Type::Array))for(const Json::Value&e:array->array){if(!e.is(Json::Type::Object))return fail(error,"KHR_interactivity event is invalid");EventDefinition event;event.id=Json::stringValue(e.get("id"));if(const Json::Value*values=e.get("values");values&&values->is(Json::Type::Object))for(const auto&[socket_name,type_value]:values->object){const int type=Json::integer(&type_value,-1);if(type<0||static_cast<std::size_t>(type)>=types.size())return fail(error,"KHR_interactivity event value type is invalid");event.values[socket_name]=static_cast<std::size_t>(type);}if(!event.id.empty())event_ids[event.id]=events.size();events.push_back(std::move(event));}
         transient_outputs.assign(nodes.size(),{});return true;
     }
 };
