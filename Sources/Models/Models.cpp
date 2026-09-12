@@ -75,7 +75,13 @@ ModelHandle storeModel(const std::string& key, Formats::Document document)
         const MaterialHandle material_handle = registerMaterial(std::move(source_part.material));
         if (mesh_handle == INVALID_MESH || material_handle == INVALID_MATERIAL)
             return INVALID_MODEL;
-        model.parts.push_back({mesh_handle, material_handle, source_part.node, source_part.primitive});
+        model.parts.push_back({
+            mesh_handle,
+            material_handle,
+            source_part.node,
+            source_part.primitive,
+            source_part.source_material,
+        });
     }
 
     if (document.has_skeleton && !document.skeleton.bones.empty())
@@ -101,7 +107,12 @@ ModelHandle storeModel(const std::string& key, Formats::Document document)
     for (Formats::VariantMaterial& source : document.variant_materials) {
         const MaterialHandle handle = registerMaterial(std::move(source.material));
         if (handle == INVALID_MATERIAL) return INVALID_MODEL;
-        model.variant_mappings.push_back({source.part, handle, std::move(source.variants)});
+        model.variant_mappings.push_back({
+            source.part,
+            handle,
+            std::move(source.variants),
+            source.source_material,
+        });
     }
 
     if (models().size() >= static_cast<std::size_t>(INVALID_MODEL)) return INVALID_MODEL;
