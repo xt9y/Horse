@@ -1,4 +1,5 @@
 #include "Interactivity/Interactivity.hpp"
+#include "Interactivity/Math.hpp"
 
 #include "Models/Formats/GltfJson.hpp"
 #include "Models/Models.hpp"
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <numbers>
@@ -309,13 +311,9 @@ Value matrixValue(const std::array<double, 16>& source)
 
 Value matrixMultiply(const Value& a, const Value& b)
 {
-    const auto aa = matrix4(a), bb = matrix4(b);
-    std::array<double, 16> out{};
-    for (std::size_t column = 0u; column < 4u; ++column)
-        for (std::size_t row = 0u; row < 4u; ++row)
-            for (std::size_t k = 0u; k < 4u; ++k)
-                out[column * 4u + row] += aa[k * 4u + row] * bb[column * 4u + k];
-    return matrixValue(out);
+    std::vector<double> result = InternalMath::multiply(a.type, a.data, b.type, b.data);
+    if (result.empty()) return defaultValue(a.type);
+    return {a.type, std::move(result)};
 }
 
 Value composeMatrix(Value translation, Value rotation, Value scale)
@@ -336,31 +334,9 @@ Value composeMatrix(Value translation, Value rotation, Value scale)
 bool invertMatrix(const Value& source, Value *output)
 {
     if (!output) return false;
-    auto m = matrix4(source);
-    double augmented[4][8]{};
-    for (std::size_t row = 0u; row < 4u; ++row) {
-        for (std::size_t col = 0u; col < 4u; ++col) augmented[row][col] = m[col * 4u + row];
-        augmented[row][row + 4u] = 1.0;
-    }
-    for (std::size_t col = 0u; col < 4u; ++col) {
-        std::size_t pivot = col;
-        for (std::size_t row = col + 1u; row < 4u; ++row)
-            if (std::abs(augmented[row][col]) > std::abs(augmented[pivot][col])) pivot = row;
-        if (std::abs(augmented[pivot][col]) <= 1.0e-14) return false;
-        if (pivot != col) for (std::size_t j = 0u; j < 8u; ++j) std::swap(augmented[pivot][j], augmented[col][j]);
-        const double divisor = augmented[col][col];
-        for (double& item : augmented[col]) item /= divisor;
-        for (std::size_t row = 0u; row < 4u; ++row) {
-            if (row == col) continue;
-            const double factor = augmented[row][col];
-            for (std::size_t j = 0u; j < 8u; ++j) augmented[row][j] -= factor * augmented[col][j];
-        }
-    }
-    std::array<double, 16> inverse{};
-    for (std::size_t row = 0u; row < 4u; ++row)
-        for (std::size_t col = 0u; col < 4u; ++col)
-            inverse[col * 4u + row] = augmented[row][col + 4u];
-    *output = matrixValue(inverse);
+    std::vector<double> result;
+    if (!InternalMath::inverse(source.type, source.data, &result)) return false;
+    *output = {source.type, std::move(result)};
     return true;
 }
 
@@ -562,7 +538,6 @@ struct Runtime::Impl {
         const auto& input,
         std::string *error)
     {
-        (void)node_index;
         (void)error;
         const Value a = input("a", {});
         const Value b = input("b", {});
@@ -709,18 +684,11 @@ struct Runtime::Impl {
         }
         if (op == "math/slerp" || op == "math/quatSlerp") return quaternionSlerp(a, b, input("t", scalar(0.0)).data[0]);
         if (op == "math/transpose") {
-            auto m = matrix4(a), t = m; for(std::size_t c=0;c<4u;++c)for(std::size_t r=0;r<4u;++r)t[c*4u+r]=m[r*4u+c]; return matrixValue(t);
+            std::vector<double> result = InternalMath::transpose(a.type, a.data);
+            return result.empty() ? defaultValue(a.type) : Value{a.type, std::move(result)};
         }
-        if (op == "math/determinant") {
-            const auto m=matrix4(a);
-            const double d=
-                m[0]*(m[5]*(m[10]*m[15]-m[14]*m[11])-m[9]*(m[6]*m[15]-m[14]*m[7])+m[13]*(m[6]*m[11]-m[10]*m[7]))-
-                m[4]*(m[1]*(m[10]*m[15]-m[14]*m[11])-m[9]*(m[2]*m[15]-m[14]*m[3])+m[13]*(m[2]*m[11]-m[10]*m[3]))+
-                m[8]*(m[1]*(m[6]*m[15]-m[14]*m[7])-m[5]*(m[2]*m[15]-m[14]*m[3])+m[13]*(m[2]*m[7]-m[6]*m[3]))-
-                m[12]*(m[1]*(m[6]*m[11]-m[10]*m[7])-m[5]*(m[2]*m[15]-m[14]*m[3])+m[9]*(m[2]*m[7]-m[6]*m[3]));
-            return scalar(d);
-        }
-        if (op == "math/inverse") { Value inverse; const bool valid=invertMatrix(a,&inverse); if(socket=="isValid")return boolean(valid); return valid?inverse:defaultValue("float4x4"); }
+        if (op == "math/determinant") return scalar(InternalMath::determinant(a.type, a.data));
+        if (op == "math/inverse") { Value inverse; const bool valid=invertMatrix(a,&inverse); if(socket=="isValid")return boolean(valid); return valid?inverse:defaultValue(a.type); }
         if (op == "math/matMul") return matrixMultiply(a, b);
         if (op == "math/matCompose") return composeMatrix(input("translation", {}), input("rotation", vectorValue("float4",{0,0,0,1})), input("scale", vectorValue("float3",{1,1,1})));
         if (op == "math/quatConjugate") { Value q=broadcast(a,4u); q.data[0]=-q.data[0];q.data[1]=-q.data[1];q.data[2]=-q.data[2];return q; }
@@ -740,14 +708,20 @@ struct Runtime::Impl {
 
         if (op.starts_with("math/combine")) {
             std::vector<double> components;
-            for (std::size_t i=0u;i<16u;++i) { Value c=input(std::to_string(i), {}); if(c.data.empty()) break; components.push_back(c.data[0]); }
-            if (components.empty()) { for(char name='a';name<='p';++name){std::string key(1,name);Value c=input(key,{});if(c.data.empty())break;components.push_back(c.data[0]);} }
-            std::string type = components.size()==2u?"float2":components.size()==3u?"float3":components.size()==4u?"float4":components.size()==9u?"float3x3":"float4x4";
+            const std::size_t count = op == "math/combine2" ? 2u : op == "math/combine3" ? 3u : op == "math/combine4" ? 4u : op == "math/combine2x2" ? 4u : op == "math/combine3x3" ? 9u : op == "math/combine4x4" ? 16u : 0u;
+            for(char name='a'; components.size()<count && name<='p'; ++name){std::string key(1,name);Value c=input(key,{});if(c.data.empty())break;components.push_back(c.data[0]);}
+            if (components.size() != count) return {};
+            const std::string type = op == "math/combine2" ? "float2" : op == "math/combine3" ? "float3" : op == "math/combine4" ? "float4" : op == "math/combine2x2" ? "float2x2" : op == "math/combine3x3" ? "float3x3" : "float4x4";
             return {type,std::move(components)};
         }
         if (op.starts_with("math/extract")) {
-            const int index = std::max(configInt(node_index,"index",-1), 0);
-            if (!a.data.empty()) return scalar(a.data[std::min<std::size_t>(static_cast<std::size_t>(index),a.data.size()-1u)]);
+            int index = configInt(node_index,"index",-1);
+            if (index < 0) {
+                char *end = nullptr;
+                const long parsed = std::strtol(std::string(socket).c_str(), &end, 10);
+                if (end && *end == '\0' && parsed >= 0) index = static_cast<int>(parsed);
+            }
+            if (index >= 0 && static_cast<std::size_t>(index) < a.data.size()) return scalar(a.data[static_cast<std::size_t>(index)]);
         }
         return {};
     }
