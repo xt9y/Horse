@@ -18,6 +18,11 @@ struct EventValue {
     std::vector<double> value;
 };
 
+struct Event {
+    std::string id;
+    std::vector<EventValue> values;
+};
+
 struct Limits {
     std::size_t max_nodes = 65536u;
     std::size_t max_activations_per_update = 65536u;
@@ -56,6 +61,10 @@ public:
         std::span<const EventValue> values = {},
         std::string *error = nullptr
     );
+
+    bool variable(std::size_t index, std::vector<double> *value) const;
+    bool variable(std::string_view name, std::vector<double> *value) const;
+    bool pollEvent(Event *event);
 
     void reset();
 
