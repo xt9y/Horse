@@ -44,25 +44,7 @@ struct alignas(16) GpuTriangle {
 
 struct alignas(16) GpuMaterial {
     std::array<float, 4> base_color {1.0f, 1.0f, 1.0f, 1.0f};
-    std::array<float, 4> emissive_strength {0.0f, 0.0f, 0.0f, 1.0f};
-    std::array<float, 4> pbr {0.8f, 0.0f, 1.0f, 1.0f};
-    std::array<float, 4> specular {1.0f, 1.0f, 1.0f, 1.0f};
-    std::array<float, 4> clearcoat_sheen{};
-    std::array<float, 4> sheen_thickness{};
-    std::array<float, 4> attenuation {1.0f, 1.0f, 1.0f, 0.0f};
-    std::array<float, 4> diffuse_transmission {1.0f, 1.0f, 1.0f, 0.0f};
-    std::array<float, 4> anisotropy_iridescence {0.0f, 0.0f, 0.0f, 1.3f};
-    std::array<float, 4> iridescence_dispersion_ior {100.0f, 400.0f, 0.0f, 1.5f};
-    // misc: alpha cutoff, unlit, double sided, alpha mode (Opaque=0, Mask=1, Blend=2)
-    std::array<float, 4> misc {0.5f, 0.0f, 0.0f, 0.0f};
-    // Texture slots are -1 when unavailable. These lanes are intentionally explicit rather than
-    // bit-packed so OpenGL and Metal trace backends consume the same lossless material state.
-    std::array<std::int32_t, 4> tex0 {-1, -1, -1, -1}; // base, normal, roughness, metallic
-    std::array<std::int32_t, 4> tex1 {-1, -1, -1, -1}; // AO, emissive, opacity, clearcoat
-    std::array<std::int32_t, 4> tex2 {-1, -1, -1, -1}; // coat roughness, coat normal, sheen color, sheen roughness
-    std::array<std::int32_t, 4> tex3 {-1, -1, -1, -1}; // transmission, thickness, specular, specular color
-    std::array<std::int32_t, 4> tex4 {-1, -1, -1, -1}; // iridescence, iri thickness, anisotropy, diffuse transmission
-    std::array<std::int32_t, 4> tex5 {-1, -1, -1, -1}; // diffuse transmission color, reserved
+    std::array<std::int32_t, 4> data {-1, 0, 0, 0};
 };
 
 struct CameraState {
@@ -94,54 +76,19 @@ struct LightState {
 
 class SceneCache {
 public:
-    static void setLeafSize(std::uint32_t value)
-    {
-        if (leaf_size_ == value) return;
-        leaf_size_ = value;
-        ++config_revision_;
-    }
-    static void setMaximumTriangles(std::size_t value)
-    {
-        if (maximum_triangles_ == value) return;
-        maximum_triangles_ = value;
-        ++config_revision_;
-    }
-    static void setOpacityCutoff(float value)
-    {
-        if (opacity_cutoff_ == value) return;
-        opacity_cutoff_ = value;
-        ++config_revision_;
-    }
-    static void setAlphaThreshold(std::uint8_t value)
-    {
-        if (alpha_threshold_ == value) return;
-        alpha_threshold_ = value;
-        ++config_revision_;
-    }
-
+    static void setLeafSize(std::uint32_t value) { if (leaf_size_ != value) { leaf_size_ = value; ++config_revision_; } }
+    static void setMaximumTriangles(std::size_t value) { if (maximum_triangles_ != value) { maximum_triangles_ = value; ++config_revision_; } }
+    static void setOpacityCutoff(float value) { if (opacity_cutoff_ != value) { opacity_cutoff_ = value; ++config_revision_; } }
+    static void setAlphaThreshold(std::uint8_t value) { if (alpha_threshold_ != value) { alpha_threshold_ = value; ++config_revision_; } }
     static std::uint32_t leafSize() { return leaf_size_; }
     static std::size_t maximumTriangles() { return maximum_triangles_; }
     static float opacityCutoff() { return opacity_cutoff_; }
     static std::uint8_t alphaThreshold() { return alpha_threshold_; }
 
-    bool sync(
-        const Ecs::World& world,
-        const std::vector<Scene::RenderItem>& items,
-        std::size_t maximum_texture_slots,
-        std::string *error = nullptr
-    );
-    bool sync(
-        const Ecs::World& world,
-        std::size_t maximum_texture_slots,
-        std::string *error = nullptr
-    );
-
-    std::uint64_t signature(
-        const Ecs::World& world,
-        const std::vector<Scene::RenderItem>& items
-    ) const;
+    bool sync(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::size_t maximum_texture_slots, std::string *error = nullptr);
+    bool sync(const Ecs::World& world, std::size_t maximum_texture_slots, std::string *error = nullptr);
+    std::uint64_t signature(const Ecs::World& world, const std::vector<Scene::RenderItem>& items) const;
     std::uint64_t resourceSignature(const std::vector<Scene::RenderItem>& items) const;
-
     void clear();
 
     const std::vector<GpuNode>& nodes() const { return nodes_; }
@@ -149,23 +96,14 @@ public:
     const std::vector<GpuMaterial>& materials() const { return materials_; }
     const std::vector<Models::TextureHandle>& textureHandles() const { return texture_handles_; }
     const std::vector<Scene::RenderItem>& renderItems() const { return render_items_; }
-
     std::uint64_t geometryRevision() const { return geometry_revision_; }
     std::uint64_t resourceRevision() const { return resource_revision_; }
     std::uint64_t geometryUpdates() const { return geometry_updates_; }
     std::uint64_t resourceUpdates() const { return resource_updates_; }
 
 private:
-    bool rebuildResources(
-        const std::vector<Scene::RenderItem>& items,
-        std::size_t maximum_texture_slots,
-        std::string *error
-    );
-    bool rebuildGeometry(
-        const Ecs::World& world,
-        const std::vector<Scene::RenderItem>& items,
-        std::string *error
-    );
+    bool rebuildResources(const std::vector<Scene::RenderItem>& items, std::size_t maximum_texture_slots, std::string *error);
+    bool rebuildGeometry(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::string *error);
     std::uint32_t buildNode(std::uint32_t start, std::uint32_t count);
     void clearGeometry();
     void clearResources();
@@ -175,7 +113,6 @@ private:
     inline static float opacity_cutoff_ = 0.0f;
     inline static std::uint8_t alpha_threshold_ = 0u;
     inline static std::uint64_t config_revision_ = 1u;
-
     std::vector<GpuNode> nodes_;
     std::vector<GpuTriangle> triangles_;
     std::vector<GpuMaterial> materials_;
@@ -183,7 +120,6 @@ private:
     std::vector<Scene::RenderItem> render_items_;
     std::unordered_map<Models::MaterialHandle, std::uint32_t> material_indices_;
     Models::TextureHandle environment_texture_ = Models::INVALID_TEXTURE;
-
     std::uint64_t geometry_signature_ = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t resource_signature_ = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t geometry_revision_ = 0u;
@@ -201,7 +137,7 @@ std::uint64_t lightSignature(const LightState& light);
 
 static_assert(sizeof(GpuNode) == 48u);
 static_assert(sizeof(GpuTriangle) == 128u);
-static_assert(sizeof(GpuMaterial) == 272u);
+static_assert(sizeof(GpuMaterial) == 32u);
 
 } // namespace Renderer::Scenes
 
