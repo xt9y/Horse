@@ -510,6 +510,10 @@ struct Runtime::Impl {
             const auto found = transient_outputs[node_index].find(std::string(socket));
             return found != transient_outputs[node_index].end() ? found->second : Value{};
         }
+        if (op == "flow/doN" && socket == "currentCount") {
+            const auto found = transient_outputs[node_index].find("__currentCount");
+            return found != transient_outputs[node_index].end() ? found->second : integerValue(0);
+        }
         if (op == "math/E") return scalar(std::numbers::e);
         if (op == "math/Pi") return scalar(std::numbers::pi);
         if (op == "math/Tau") return scalar(2.0 * std::numbers::pi);
@@ -893,7 +897,14 @@ struct Runtime::Impl {
             const Json::Value* flows=nodes[node_index]->get("flows");if(!flows||!flows->is(Json::Type::Object))return true;std::vector<std::string> order;order.reserve(flows->object.size());for(const auto&[name,_]:flows->object)order.push_back(name);std::sort(order.begin(),order.end(),socketIdLess);for(const std::string&name:order)if(!emit(world,node_index,name,error))return false;return true;
         }
         if(op=="flow/doN"){
-            const int count=std::max(integer(value("n",value("count",{}))),0);for(int i=0;i<count;++i){transient_outputs[node_index]["index"]=integerValue(i);if(!emit(world,node_index,"loopBody",error)&&!emit(world,node_index,"body",error))return false;}return emit(world,node_index,"completed",error);
+            Value& stored=transient_outputs[node_index]["__currentCount"];
+            if(stored.type!="int")stored=integerValue(0);
+            if(input_socket=="reset"){stored=integerValue(0);return true;}
+            const int limit=std::max(integer(value("n",integerValue(0))),0);
+            int count=integer(stored);
+            if(count>=limit)return true;
+            stored=integerValue(++count);
+            return emit(world,node_index,"out",error);
         }
         if(op=="flow/for"){
             int start=integer(value("startIndex",value("start",integerValue(0)))),end=integer(value("endIndex",value("end",integerValue(0)))),step=integer(value("increment",value("step",integerValue(1))));if(step==0)step=1;
