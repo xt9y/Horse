@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Models/Models.hpp"
+#include "Models/Runtime.hpp"
 
 #include <cstdint>
 #include <string>
@@ -10,10 +11,17 @@
 
 namespace Renderer::ModelScene {
 
+struct PartBinding {
+    std::uint32_t part = Models::INVALID_INDEX;
+    Ecs::Entity entity = Ecs::INVALID_ENTITY;
+    Models::MeshHandle mesh = Models::INVALID_MESH;
+    bool dynamic_mesh = false;
+};
+
 struct NodeBinding {
     std::uint32_t node = Models::INVALID_INDEX;
     Ecs::Entity entity = Ecs::INVALID_ENTITY;
-    std::vector<Ecs::Entity> parts;
+    std::vector<PartBinding> parts;
 };
 
 struct Instance {
@@ -21,7 +29,7 @@ struct Instance {
     std::uint32_t scene = Models::INVALID_INDEX;
     std::uint32_t variant = Models::INVALID_INDEX;
     std::vector<NodeBinding> nodes;
-    std::vector<Ecs::Entity> loose_parts;
+    std::vector<PartBinding> loose_parts;
 };
 
 struct Options {
