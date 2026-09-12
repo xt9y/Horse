@@ -99,6 +99,11 @@ CameraState cameraState(const Ecs::World& world)
     out.transform = resolvedTransform(world, entity, *transform);
     out.fov_degrees = camera->fov_degrees;
     out.near_plane = camera->near_plane;
+    out.projection = camera->projection;
+    out.far_plane = camera->far_plane;
+    out.aspect_ratio = camera->aspect_ratio;
+    out.xmag = camera->xmag;
+    out.ymag = camera->ymag;
     out.valid = true;
     return out;
 }
