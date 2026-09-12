@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_MANAGER_HPP
 #define HORSE_RENDERER_MANAGER_HPP
 
+#include "Renderer/GaussianSplat/GaussianSplat.hpp"
 #include "Renderer/Renderer.hpp"
 
 #include <cstddef>
@@ -88,6 +89,7 @@ public:
             if (iterator->renderer) iterator->renderer->shutdown();
             iterator->available = false;
         }
+        GaussianSplat::shutdown();
         active_ = invalidIndex();
     }
 
