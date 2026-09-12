@@ -41,6 +41,11 @@ struct Data {
 
 bool isGaussianSplat(const MeshData& mesh);
 bool decode(const MeshData& mesh, Data *output, std::string *error = nullptr);
+Vec3 evaluateSphericalHarmonics(
+    const Splat& splat,
+    std::uint32_t degree,
+    Vec3 direction
+);
 
 } // namespace Models::GaussianSplat
 
