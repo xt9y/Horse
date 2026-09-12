@@ -15,6 +15,7 @@ struct PartBinding {
     std::uint32_t part = Models::INVALID_INDEX;
     Ecs::Entity entity = Ecs::INVALID_ENTITY;
     Models::MeshHandle mesh = Models::INVALID_MESH;
+    Models::MaterialHandle animated_material = Models::INVALID_MATERIAL;
     bool dynamic_mesh = false;
 };
 
