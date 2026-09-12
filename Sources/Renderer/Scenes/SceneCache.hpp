@@ -1,6 +1,7 @@
 #ifndef RW_ENGINE_RENDERER_SCENES_SCENE_CACHE_HPP
 #define RW_ENGINE_RENDERER_SCENES_SCENE_CACHE_HPP
 
+#include "Camera.hpp"
 #include "Ecs/Ecs.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
@@ -57,6 +58,12 @@ struct CameraState {
     Vec3 right {1.0f, 0.0f, 0.0f};
     Vec3 up {0.0f, 1.0f, 0.0f};
     float fov_degrees = 0.0f;
+    Camera::Projection projection = Camera::Projection::Perspective;
+    float near_plane = 0.0f;
+    float far_plane = 0.0f;
+    float aspect_ratio = 0.0f;
+    float xmag = 1.0f;
+    float ymag = 1.0f;
 };
 
 struct LightState {
