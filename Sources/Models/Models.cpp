@@ -173,6 +173,14 @@ const MeshData *mesh(MeshHandle handle)
     return handle < meshes().size() ? &meshes()[handle] : nullptr;
 }
 
+bool updateMesh(MeshHandle handle, const MeshData& replacement)
+{
+    if (handle >= meshes().size()) return false;
+    meshes()[handle] = replacement;
+    touchResources();
+    return true;
+}
+
 const MaterialData *material(MaterialHandle handle)
 {
     return handle < materials().size() ? &materials()[handle] : nullptr;
