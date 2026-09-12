@@ -593,7 +593,9 @@ struct Runtime::Impl {
         if (op == "math/min") return componentwise(a, b, [](double x, double y) { return std::min(x, y); });
         if (op == "math/max") return componentwise(a, b, [](double x, double y) { return std::max(x, y); });
         if (op == "math/clamp") {
-            const Value low = input("min", input("low", {})), high = input("max", input("high", {}));
+            const Value c = input("c", {});
+            const Value low = componentwise(b, c, [](double x, double y) { return std::min(x, y); });
+            const Value high = componentwise(b, c, [](double x, double y) { return std::max(x, y); });
             return componentwise(componentwise(a, low, [](double x, double l) { return std::max(x, l); }), high, [](double x, double h) { return std::min(x, h); });
         }
         if (op == "math/saturate") return unary(a, [](double x) { return std::clamp(x, 0.0, 1.0); });
@@ -602,13 +604,13 @@ struct Runtime::Impl {
             return componentwise(a, componentwise(componentwise(b, a, [](double x, double y) { return x - y; }), t, [](double x, double y) { return x * y; }), [](double x, double y) { return x + y; });
         }
         if (op == "math/smoothStep") {
-            const Value edge0 = input("edge0", a), edge1 = input("edge1", b), x = input("x", {});
-            Value t = componentwise(componentwise(x, edge0, [](double p, double q) { return p - q; }), componentwise(edge1, edge0, [](double p, double q) { return p - q; }), [](double p, double q) { return std::clamp(p / q, 0.0, 1.0); });
+            const Value x = input("c", {});
+            Value t = componentwise(componentwise(x, a, [](double p, double q) { return p - q; }), componentwise(b, a, [](double p, double q) { return p - q; }), [](double p, double q) { return std::clamp(p / q, 0.0, 1.0); });
             return unary(t, [](double v) { return v * v * (3.0 - 2.0 * v); });
         }
         if (op == "math/eq") {
             if (a.data.size() != b.data.size()) return boolean(false);
-            for (std::size_t i = 0u; i < a.data.size(); ++i) if (a.data[i] != b.data[i] && !(std::isnan(a.data[i]) && std::isnan(b.data[i]))) return boolean(false);
+            for (std::size_t i = 0u; i < a.data.size(); ++i) if (a.data[i] != b.data[i]) return boolean(false);
             return boolean(true);
         }
         if (op == "math/lt") return boolean(!a.data.empty() && !b.data.empty() && a.data[0] < b.data[0]);
