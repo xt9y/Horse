@@ -216,6 +216,20 @@ float asFloat(const std::uint8_t *data, int type, bool normalized)
     }
 }
 
+float decodedUnsignedAsFloat(std::uint32_t value, int type, bool normalized)
+{
+    switch (type) {
+        case 5121:
+            return normalized ? static_cast<float>(value & 0xffu) / 255.0f : static_cast<float>(value & 0xffu);
+        case 5123:
+            return normalized ? static_cast<float>(value & 0xffffu) / 65535.0f : static_cast<float>(value & 0xffffu);
+        case 5125:
+            return normalized ? static_cast<float>(static_cast<double>(value) / 4294967295.0) : static_cast<float>(value);
+        default:
+            return static_cast<float>(value);
+    }
+}
+
 bool asUnsigned(const std::uint8_t *data, int type, std::uint32_t *out)
 {
     if (!out) return false;
@@ -595,10 +609,10 @@ bool loadAccessors(Context *context, std::string *error)
         const Layout value_layout = layout(accessor.type, accessor.component_type);
         if (accessor.count == 0u || value_layout.element_size == 0u)
             return fail(error, "invalid glTF accessor layout");
+        if (accessor.normalized && accessor.component_type == 5126)
+            return fail(error, "floating glTF accessor cannot be normalized");
         if (accessor.view >= 0 && static_cast<std::size_t>(accessor.view) >= context->views.size())
             return fail(error, "glTF accessor references invalid bufferView");
-        if (accessor.view < 0 && !source.get("sparse"))
-            return fail(error, "glTF accessor has neither bufferView nor sparse values");
 
         const Value *sparse = source.get("sparse");
         if (sparse) {
@@ -642,9 +656,28 @@ bool decodeFloats(
         return fail(error, "glTF accessor has unexpected component count");
     if (accessor.count > std::numeric_limits<std::size_t>::max() / value_layout.components)
         return fail(error, "glTF accessor output size overflows");
-    out->assign(accessor.count * value_layout.components, 0.0f);
+    const std::size_t output_size = accessor.count * value_layout.components;
+    out->assign(output_size, 0.0f);
 
-    if (accessor.view >= 0) {
+    const bool decoded = !accessor.decoded_values.empty() || !accessor.decoded_unsigned.empty();
+    if (!accessor.decoded_values.empty()) {
+        if (accessor.decoded_values.size() != output_size)
+            return fail(error, "decoded glTF accessor value count does not match accessor layout");
+        for (std::size_t i = 0u; i < output_size; ++i) {
+            const double value = accessor.decoded_values[i];
+            if (!std::isfinite(value) || value < -static_cast<double>(std::numeric_limits<float>::max()) ||
+                value > static_cast<double>(std::numeric_limits<float>::max()))
+                return fail(error, "decoded glTF accessor contains an invalid floating value");
+            (*out)[i] = static_cast<float>(value);
+        }
+    } else if (!accessor.decoded_unsigned.empty()) {
+        if (accessor.decoded_unsigned.size() != output_size)
+            return fail(error, "decoded glTF unsigned accessor value count does not match accessor layout");
+        for (std::size_t i = 0u; i < output_size; ++i)
+            (*out)[i] = decodedUnsignedAsFloat(accessor.decoded_unsigned[i], accessor.component_type, accessor.normalized);
+    }
+
+    if (!decoded && accessor.view >= 0) {
         const BufferView& view = context.views[static_cast<std::size_t>(accessor.view)];
         const std::size_t stride = view.stride == 0u ? value_layout.element_size : view.stride;
         if (stride < value_layout.element_size) return fail(error, "glTF accessor stride is smaller than element size");
@@ -704,9 +737,34 @@ bool decodeUnsigned(
         return fail(error, "glTF unsigned accessor has unexpected component count");
     if (accessor.count > std::numeric_limits<std::size_t>::max() / value_layout.components)
         return fail(error, "glTF unsigned accessor output size overflows");
-    out->assign(accessor.count * value_layout.components, 0u);
+    const std::size_t output_size = accessor.count * value_layout.components;
+    out->assign(output_size, 0u);
 
-    if (accessor.view >= 0) {
+    const bool decoded = !accessor.decoded_unsigned.empty() || !accessor.decoded_values.empty();
+    if (!accessor.decoded_unsigned.empty()) {
+        if (accessor.decoded_unsigned.size() != output_size)
+            return fail(error, "decoded glTF unsigned accessor value count does not match accessor layout");
+        for (std::size_t i = 0u; i < output_size; ++i) {
+            const std::uint32_t value = accessor.decoded_unsigned[i];
+            if ((accessor.component_type == 5121 && value > UINT8_MAX) ||
+                (accessor.component_type == 5123 && value > UINT16_MAX))
+                return fail(error, "decoded glTF unsigned accessor exceeds component range");
+            (*out)[i] = value;
+        }
+    } else if (!accessor.decoded_values.empty()) {
+        if (accessor.decoded_values.size() != output_size)
+            return fail(error, "decoded glTF accessor value count does not match accessor layout");
+        const double maximum = accessor.component_type == 5121 ? 255.0 :
+            (accessor.component_type == 5123 ? 65535.0 : 4294967295.0);
+        for (std::size_t i = 0u; i < output_size; ++i) {
+            const double value = accessor.decoded_values[i];
+            if (!std::isfinite(value) || value < 0.0 || value > maximum || std::floor(value) != value)
+                return fail(error, "decoded glTF unsigned accessor contains an invalid integer value");
+            (*out)[i] = static_cast<std::uint32_t>(value);
+        }
+    }
+
+    if (!decoded && accessor.view >= 0) {
         const BufferView& view = context.views[static_cast<std::size_t>(accessor.view)];
         const std::size_t stride = view.stride == 0u ? value_layout.element_size : view.stride;
         if (stride < value_layout.element_size) return fail(error, "glTF unsigned accessor stride is too small");
