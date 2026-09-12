@@ -272,13 +272,6 @@ private:
     }
 };
 
-bool number(const Json *value, double *out)
-{
-    if (!value || value->type != Json::Type::Number || !out) return false;
-    *out = value->number;
-    return true;
-}
-
 int integer(const Json *value, int fallback = -1)
 {
     if (!value || value->type != Json::Type::Number) return fallback;

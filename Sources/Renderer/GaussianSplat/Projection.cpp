@@ -200,11 +200,17 @@ bool project(
     output->axis0_y = eigen_y * sigma0;
     output->axis1_x = -eigen_y * sigma1;
     output->axis1_y = eigen_x * sigma1;
-    output->color = Models::GaussianSplat::evaluateSphericalHarmonics(
+    const Vec3 local_view_direction = localViewDirection(model, relative);
+    const Models::Vec3 sh_color = Models::GaussianSplat::evaluateSphericalHarmonics(
         splat,
         spherical_harmonic_degree,
-        localViewDirection(model, relative)
+        Models::Vec3{
+            local_view_direction.x,
+            local_view_direction.y,
+            local_view_direction.z,
+        }
     );
+    output->color = {sh_color.x, sh_color.y, sh_color.z};
     output->opacity = splat.opacity;
     output->ndc_depth = std::clamp(ndcDepth(depth, near_plane, camera.far_plane), -1.0f, 1.0f);
     output->linear_depth = depth;

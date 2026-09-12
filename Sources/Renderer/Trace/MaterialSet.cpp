@@ -49,20 +49,20 @@ void appendAdvancedTextures(
         material.ambient_occlusion_texture,
         material.emissive_texture,
         material.opacity_texture,
-        material.clearcoat_texture,
-        material.clearcoat_roughness_texture,
-        material.clearcoat_normal_texture,
-        material.sheen_color_texture,
-        material.sheen_roughness_texture,
-        material.transmission_texture,
-        material.thickness_texture,
-        material.specular_texture,
-        material.specular_color_texture,
-        material.iridescence_texture,
-        material.iridescence_thickness_texture,
-        material.anisotropy_texture,
-        material.diffuse_transmission_texture,
-        material.diffuse_transmission_color_texture,
+        material.clearcoat_info.texture,
+        material.clearcoat_roughness_info.texture,
+        material.clearcoat_normal_info.texture,
+        material.sheen_color_info.texture,
+        material.sheen_roughness_info.texture,
+        material.transmission_info.texture,
+        material.thickness_info.texture,
+        material.specular_info.texture,
+        material.specular_color_info.texture,
+        material.iridescence_info.texture,
+        material.iridescence_thickness_info.texture,
+        material.anisotropy_info.texture,
+        material.diffuse_transmission_info.texture,
+        material.diffuse_transmission_color_info.texture,
     }};
     for (Models::TextureHandle handle : candidates)
         appendTexture(handle, maximum, handles, seen);
@@ -145,21 +145,21 @@ GpuAdvancedMaterial encode(
     };
     gpu.tex1 = {
         slot(material.ambient_occlusion_texture), slot(material.emissive_texture),
-        slot(material.opacity_texture), slot(material.clearcoat_texture),
+        slot(material.opacity_texture), slot(material.clearcoat_info.texture),
     };
     gpu.tex2 = {
-        slot(material.clearcoat_roughness_texture), slot(material.clearcoat_normal_texture),
-        slot(material.sheen_color_texture), slot(material.sheen_roughness_texture),
+        slot(material.clearcoat_roughness_info.texture), slot(material.clearcoat_normal_info.texture),
+        slot(material.sheen_color_info.texture), slot(material.sheen_roughness_info.texture),
     };
     gpu.tex3 = {
-        slot(material.transmission_texture), slot(material.thickness_texture),
-        slot(material.specular_texture), slot(material.specular_color_texture),
+        slot(material.transmission_info.texture), slot(material.thickness_info.texture),
+        slot(material.specular_info.texture), slot(material.specular_color_info.texture),
     };
     gpu.tex4 = {
-        slot(material.iridescence_texture), slot(material.iridescence_thickness_texture),
-        slot(material.anisotropy_texture), slot(material.diffuse_transmission_texture),
+        slot(material.iridescence_info.texture), slot(material.iridescence_thickness_info.texture),
+        slot(material.anisotropy_info.texture), slot(material.diffuse_transmission_info.texture),
     };
-    gpu.tex5 = {slot(material.diffuse_transmission_color_texture), -1, -1, -1};
+    gpu.tex5 = {slot(material.diffuse_transmission_color_info.texture), -1, -1, -1};
     return gpu;
 }
 
