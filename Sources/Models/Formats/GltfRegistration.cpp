@@ -1,5 +1,5 @@
 #include "Models/Formats/GltfAlpha.hpp"
-#include "Models/Formats/GltfAugment.hpp"
+#include "Models/Formats/GltfAugmentCompressed.hpp"
 #include "Models/Formats/GltfDraco.hpp"
 #include "Models/Formats/Registry.hpp"
 
@@ -18,7 +18,7 @@ bool loadGltf(const std::string& path, Document *output, std::string *error)
         loaded = true;
     }
     return loaded &&
-        GltfAugment::apply(path, output, load_error) &&
+        GltfAugmentCompressed::apply(path, output, load_error) &&
         GltfAlpha::apply(output, load_error);
 }
 
