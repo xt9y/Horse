@@ -9,6 +9,7 @@
 #include "Renderer/Systems/OpenGL/Program.hpp"
 #include "Renderer/Systems/Scene.hpp"
 #include "Renderer/Systems/SceneCache.hpp"
+#include "Renderer/Trace/CameraProjection.hpp"
 #include "Renderer/Trace/OpenGL/TraceScene.hpp"
 
 #include <lwcgl/glmodern.h>
@@ -16,7 +17,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 
@@ -29,8 +29,6 @@
 
 namespace Renderer {
 namespace {
-
-constexpr float kPi = 3.14159265358979323846f;
 
 void setInt(GLint location, int value)
 {
@@ -209,14 +207,18 @@ struct RayTracer::Impl {
 
     void dispatch(const Systems::CameraState& camera, const Systems::LightState& light)
     {
+        const float viewport_aspect = static_cast<float>(width) / static_cast<float>(height);
+        const Trace::CameraProjectionEncoding projection =
+            Trace::cameraProjectionEncoding(camera, viewport_aspect);
+
         trace_program.use();
         setVec2(trace_uniforms.resolution, static_cast<float>(trace_width), static_cast<float>(trace_height));
         setVec3(trace_uniforms.camera_position, camera.position);
         setVec3(trace_uniforms.camera_forward, camera.forward);
         setVec3(trace_uniforms.camera_right, camera.right);
         setVec3(trace_uniforms.camera_up, camera.up);
-        setFloat(trace_uniforms.tan_half_fov, std::tan(camera.fov_degrees * (kPi / 360.0f)));
-        setFloat(trace_uniforms.aspect, static_cast<float>(width) / static_cast<float>(height));
+        setFloat(trace_uniforms.tan_half_fov, projection.scale);
+        setFloat(trace_uniforms.aspect, projection.aspect);
         setInt(trace_uniforms.node_count, static_cast<int>(trace_scene.nodeCount()));
         setInt(trace_uniforms.triangle_count, static_cast<int>(trace_scene.triangleCount()));
         setInt(trace_uniforms.material_count, static_cast<int>(trace_scene.materialCount()));
