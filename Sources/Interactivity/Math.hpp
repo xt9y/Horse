@@ -5,7 +5,6 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <numbers>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -27,9 +26,7 @@ inline std::string matrixType(std::size_t dimension)
     return "float4x4";
 }
 
-inline std::vector<double> transpose(
-    std::string_view type,
-    const std::vector<double>& source)
+inline std::vector<double> transpose(std::string_view type, const std::vector<double>& source)
 {
     const std::size_t n = matrixDimension(type);
     if (n == 0u || source.size() < n * n) return {};
@@ -40,9 +37,7 @@ inline std::vector<double> transpose(
     return result;
 }
 
-inline double determinant(
-    std::string_view type,
-    const std::vector<double>& source)
+inline double determinant(std::string_view type, const std::vector<double>& source)
 {
     const std::size_t n = matrixDimension(type);
     if (n == 0u || source.size() < n * n) return 0.0;
@@ -274,9 +269,7 @@ struct DecomposedTransform {
 inline DecomposedTransform decomposeTransform(const std::vector<double>& matrix)
 {
     DecomposedTransform result;
-    if (matrix.size() < 16u || std::abs(matrix[3]) > 1.0e-12 || std::abs(matrix[7]) > 1.0e-12 ||
-        std::abs(matrix[11]) > 1.0e-12 || std::abs(matrix[15] - 1.0) > 1.0e-12)
-        return result;
+    if (matrix.size() < 16u) return result;
 
     result.translation = {matrix[12], matrix[13], matrix[14]};
     Vec3 x{matrix[0], matrix[1], matrix[2]};
@@ -287,7 +280,9 @@ inline DecomposedTransform decomposeTransform(const std::vector<double>& matrix)
         std::sqrt(dot3(y, y)),
         std::sqrt(dot3(z, z)),
     };
-    if (!(result.scale[0] > 0.0) || !(result.scale[1] > 0.0) || !(result.scale[2] > 0.0)) return result;
+    if (!std::isfinite(result.scale[0]) || !std::isfinite(result.scale[1]) || !std::isfinite(result.scale[2]) ||
+        result.scale[0] == 0.0 || result.scale[1] == 0.0 || result.scale[2] == 0.0)
+        return result;
 
     for (double& item : x) item /= result.scale[0];
     for (double& item : y) item /= result.scale[1];
