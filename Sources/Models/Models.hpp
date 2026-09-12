@@ -101,6 +101,7 @@ struct ModelPart {
     MaterialHandle material = INVALID_MATERIAL;
     std::uint32_t node = INVALID_INDEX;
     std::uint32_t primitive = 0u;
+    std::uint32_t source_material = INVALID_INDEX;
 };
 
 struct NodeData {
@@ -215,6 +216,7 @@ struct VariantMappingData {
     std::uint32_t part = INVALID_INDEX;
     MaterialHandle material = INVALID_MATERIAL;
     std::vector<std::uint32_t> variants;
+    std::uint32_t source_material = INVALID_INDEX;
 };
 
 struct InstanceData {
