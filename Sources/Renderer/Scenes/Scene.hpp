@@ -73,6 +73,7 @@ CameraState cameraState(const Ecs::World& world);
 LightState lightState(const Ecs::World& world);
 RenderRevision renderRevision(const Ecs::World& world);
 void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out);
+void collectGaussianItems(const Ecs::World& world, std::vector<RenderItem>& out);
 
 } // namespace Renderer::Scenes::Scene
 
