@@ -87,6 +87,7 @@ inline std::string compatibleMainFragment()
         "    if (dot(tangent, tangent) <= 1.0e-10) tangent = cross(normal, vec3(1.0, 0.0, 0.0));\n"
         "    return normalize(tangent);\n"
         "}\n"
+        "float distributionGGX(vec3 n, vec3 h, float roughness);\n"
         "float anisotropicDistribution(vec3 n, vec3 h, float roughness)\n"
         "{\n"
         "    float strength = clamp(uAnisotropyStrength, 0.0, 1.0);\n"
