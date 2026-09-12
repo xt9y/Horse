@@ -16,6 +16,7 @@ namespace {
 
 [[maybe_unused]] void retainSequentialCoreHelpers()
 {
+    (void)&decodeSymbols;
     (void)&readPredictionBits;
     (void)&zigzag;
     (void)&littleUnsigned;
