@@ -87,6 +87,60 @@ bool fail(std::string *error, std::string message)
     return false;
 }
 
+std::vector<std::uint16_t> utf16Units(std::string_view value)
+{
+    std::vector<std::uint16_t> units;
+    units.reserve(value.size());
+    for (std::size_t index = 0u; index < value.size();) {
+        const auto byte = static_cast<unsigned char>(value[index]);
+        std::uint32_t codepoint = 0xfffdu;
+        std::size_t length = 1u;
+        if (byte < 0x80u) {
+            codepoint = byte;
+        } else if ((byte & 0xe0u) == 0xc0u && index + 1u < value.size()) {
+            const auto b1 = static_cast<unsigned char>(value[index + 1u]);
+            if ((b1 & 0xc0u) == 0x80u) {
+                codepoint = ((byte & 0x1fu) << 6u) | (b1 & 0x3fu);
+                if (codepoint >= 0x80u) length = 2u;
+                else codepoint = 0xfffdu;
+            }
+        } else if ((byte & 0xf0u) == 0xe0u && index + 2u < value.size()) {
+            const auto b1 = static_cast<unsigned char>(value[index + 1u]);
+            const auto b2 = static_cast<unsigned char>(value[index + 2u]);
+            if ((b1 & 0xc0u) == 0x80u && (b2 & 0xc0u) == 0x80u) {
+                codepoint = ((byte & 0x0fu) << 12u) | ((b1 & 0x3fu) << 6u) | (b2 & 0x3fu);
+                if (codepoint >= 0x800u && !(codepoint >= 0xd800u && codepoint <= 0xdfffu)) length = 3u;
+                else codepoint = 0xfffdu;
+            }
+        } else if ((byte & 0xf8u) == 0xf0u && index + 3u < value.size()) {
+            const auto b1 = static_cast<unsigned char>(value[index + 1u]);
+            const auto b2 = static_cast<unsigned char>(value[index + 2u]);
+            const auto b3 = static_cast<unsigned char>(value[index + 3u]);
+            if ((b1 & 0xc0u) == 0x80u && (b2 & 0xc0u) == 0x80u && (b3 & 0xc0u) == 0x80u) {
+                codepoint = ((byte & 0x07u) << 18u) | ((b1 & 0x3fu) << 12u) | ((b2 & 0x3fu) << 6u) | (b3 & 0x3fu);
+                if (codepoint >= 0x10000u && codepoint <= 0x10ffffu) length = 4u;
+                else codepoint = 0xfffdu;
+            }
+        }
+        index += length;
+        if (codepoint <= 0xffffu) {
+            units.push_back(static_cast<std::uint16_t>(codepoint));
+        } else {
+            codepoint -= 0x10000u;
+            units.push_back(static_cast<std::uint16_t>(0xd800u + (codepoint >> 10u)));
+            units.push_back(static_cast<std::uint16_t>(0xdc00u + (codepoint & 0x3ffu)));
+        }
+    }
+    return units;
+}
+
+bool socketIdLess(std::string_view a, std::string_view b)
+{
+    const std::vector<std::uint16_t> aa = utf16Units(a);
+    const std::vector<std::uint16_t> bb = utf16Units(b);
+    return std::lexicographical_compare(aa.begin(), aa.end(), bb.begin(), bb.end());
+}
+
 std::size_t componentCount(std::string_view type)
 {
     if (type == "float2") return 2u;
@@ -663,7 +717,7 @@ struct Runtime::Impl {
                 m[0]*(m[5]*(m[10]*m[15]-m[14]*m[11])-m[9]*(m[6]*m[15]-m[14]*m[7])+m[13]*(m[6]*m[11]-m[10]*m[7]))-
                 m[4]*(m[1]*(m[10]*m[15]-m[14]*m[11])-m[9]*(m[2]*m[15]-m[14]*m[3])+m[13]*(m[2]*m[11]-m[10]*m[3]))+
                 m[8]*(m[1]*(m[6]*m[15]-m[14]*m[7])-m[5]*(m[2]*m[15]-m[14]*m[3])+m[13]*(m[2]*m[7]-m[6]*m[3]))-
-                m[12]*(m[1]*(m[6]*m[11]-m[10]*m[7])-m[5]*(m[2]*m[11]-m[10]*m[3])+m[9]*(m[2]*m[7]-m[6]*m[3]));
+                m[12]*(m[1]*(m[6]*m[11]-m[10]*m[7])-m[5]*(m[2]*m[15]-m[14]*m[3])+m[9]*(m[2]*m[7]-m[6]*m[3]));
             return scalar(d);
         }
         if (op == "math/inverse") { Value inverse; const bool valid=invertMatrix(a,&inverse); if(socket=="isValid")return boolean(valid); return valid?inverse:defaultValue("float4x4"); }
@@ -813,7 +867,7 @@ struct Runtime::Impl {
             const int selection=integer(value("selection",value("index",{})));if(flow(node_index,std::to_string(selection)))return emit(world,node_index,std::to_string(selection),error);return emit(world,node_index,"default",error);
         }
         if(op=="flow/sequence"){
-            const Json::Value* flows=nodes[node_index]->get("flows");if(!flows||!flows->is(Json::Type::Object))return true;std::vector<std::pair<int,std::string>> order;for(const auto&[name,_]:flows->object){char*end=nullptr;const long n=std::strtol(name.c_str(),&end,10);if(end&&*end=='\0')order.push_back({static_cast<int>(n),name});}std::sort(order.begin(),order.end());for(const auto&[_,name]:order)if(!emit(world,node_index,name,error))return false;return true;
+            const Json::Value* flows=nodes[node_index]->get("flows");if(!flows||!flows->is(Json::Type::Object))return true;std::vector<std::string> order;order.reserve(flows->object.size());for(const auto&[name,_]:flows->object)order.push_back(name);std::sort(order.begin(),order.end(),socketIdLess);for(const std::string&name:order)if(!emit(world,node_index,name,error))return false;return true;
         }
         if(op=="flow/doN"){
             const int count=std::max(integer(value("n",value("count",{}))),0);for(int i=0;i<count;++i){transient_outputs[node_index]["index"]=integerValue(i);if(!emit(world,node_index,"loopBody",error)&&!emit(world,node_index,"body",error))return false;}return emit(world,node_index,"completed",error);
