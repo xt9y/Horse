@@ -72,6 +72,7 @@ bool supportedRequiredExtension(std::string_view name)
         "KHR_materials_variants",
         "EXT_mesh_gpu_instancing",
         "KHR_animation_pointer",
+        "KHR_interactivity",
         "KHR_node_visibility",
         "KHR_node_selectability",
         "KHR_node_hoverability",
