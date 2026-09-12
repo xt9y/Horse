@@ -3,6 +3,7 @@
 #include "Camera.hpp"
 #include "Renderer/Components.hpp"
 #include "Renderer/Math.hpp"
+#include "Renderer/ModelScenePointers.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -379,6 +380,8 @@ bool applyPose(
         if (!updatePartMesh(instance.model, pose, part, error)) return false;
         resources_changed = resources_changed || part.dynamic_mesh;
     }
+
+    if (!Pointers::apply(world, instance, pose, error)) return false;
 
     world.markChanged(Ecs::ChangeKind::Transform);
     world.markChanged(Ecs::ChangeKind::Animation);
