@@ -2,6 +2,7 @@
 
 #include "Camera.hpp"
 #include "Models/Core/Texture.hpp"
+#include "Models/GaussianSplat.hpp"
 #include "Renderer/Hierarchy.hpp"
 #include "Renderer/Lod.hpp"
 #include "Renderer/Math.hpp"
@@ -67,11 +68,12 @@ void appendItem(
     const MeshComponent& base,
     const Transform& transform,
     const CameraState& camera,
+    bool gaussian,
     std::vector<RenderItem>& out)
 {
     const MeshComponent selected = selectedMesh(world, entity, base, transform.position, camera);
     const Models::MeshData* mesh = Models::mesh(selected.mesh);
-    if (!mesh) return;
+    if (!mesh || Models::GaussianSplat::isGaussianSplat(*mesh) != gaussian) return;
 
     out.push_back(RenderItem{
         .entity = entity,
@@ -81,6 +83,46 @@ void appendItem(
         .mesh = mesh,
         .material = Models::material(selected.material),
     });
+}
+
+void collectItems(const Ecs::World& world, bool gaussian, std::vector<RenderItem>& out)
+{
+    out.clear();
+    const CameraState camera = cameraState(world);
+
+    for (const Ecs::Entity entity : world.entities()) {
+        const RenderableComponent* renderable = world.get<RenderableComponent>(entity);
+        if (!renderable || !renderable->visible) continue;
+
+        const MeshComponent* mesh_component = world.get<MeshComponent>(entity);
+        const Transform* transform = world.get<Transform>(entity);
+        if (!mesh_component || !transform) continue;
+
+        const Transform world_transform = resolvedTransform(world, entity, *transform);
+        const InstanceComponent* instances = world.get<InstanceComponent>(entity);
+        if (!instances) {
+            appendItem(world, entity, UINT32_MAX, *mesh_component, world_transform, camera, gaussian, out);
+            continue;
+        }
+
+        const Math::Mat4 base = Math::modelMatrix(world_transform);
+        for (std::size_t index = 0u; index < instances->matrices.size(); ++index) {
+            Transform instanced{};
+            instanced.matrix_override = Math::multiply(base, instances->matrices[index]);
+            instanced.matrix_override_enabled = true;
+            instanced.position = Math::transformPoint(instanced.matrix_override, {0.0f, 0.0f, 0.0f});
+            appendItem(
+                world,
+                entity,
+                static_cast<std::uint32_t>(index),
+                *mesh_component,
+                instanced,
+                camera,
+                gaussian,
+                out
+            );
+        }
+    }
 }
 
 } // namespace
@@ -144,47 +186,17 @@ RenderRevision renderRevision(const Ecs::World& world)
 
 void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
 {
-    out.clear();
-    const CameraState camera = cameraState(world);
-
-    for (const Ecs::Entity entity : world.entities()) {
-        const RenderableComponent* renderable = world.get<RenderableComponent>(entity);
-        if (!renderable || !renderable->visible) continue;
-
-        const MeshComponent* mesh_component = world.get<MeshComponent>(entity);
-        const Transform* transform = world.get<Transform>(entity);
-        if (!mesh_component || !transform) continue;
-
-        const Transform world_transform = resolvedTransform(world, entity, *transform);
-        const InstanceComponent* instances = world.get<InstanceComponent>(entity);
-        if (!instances) {
-            appendItem(world, entity, UINT32_MAX, *mesh_component, world_transform, camera, out);
-            continue;
-        }
-
-        const Math::Mat4 base = Math::modelMatrix(world_transform);
-        for (std::size_t index = 0u; index < instances->matrices.size(); ++index) {
-            Transform instanced{};
-            instanced.matrix_override = Math::multiply(base, instances->matrices[index]);
-            instanced.matrix_override_enabled = true;
-            instanced.position = Math::transformPoint(instanced.matrix_override, {0.0f, 0.0f, 0.0f});
-            appendItem(
-                world,
-                entity,
-                static_cast<std::uint32_t>(index),
-                *mesh_component,
-                instanced,
-                camera,
-                out
-            );
-        }
-    }
-
+    collectItems(world, false, out);
     std::stable_partition(
         out.begin(),
         out.end(),
         [](const RenderItem& item) { return !usesAlpha(item); }
     );
+}
+
+void collectGaussianItems(const Ecs::World& world, std::vector<RenderItem>& out)
+{
+    collectItems(world, true, out);
 }
 
 } // namespace Renderer::Scenes::Scene
