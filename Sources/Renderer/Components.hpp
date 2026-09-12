@@ -57,6 +57,11 @@ struct RenderableComponent {
     bool visible = false;
 };
 
+struct InteractionComponent {
+    bool selectable = true;
+    bool hoverable = true;
+};
+
 enum class LightType {
     Directional,
     Point,
