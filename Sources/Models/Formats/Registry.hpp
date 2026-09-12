@@ -13,6 +13,7 @@ namespace Models::Formats {
 
 struct VariantMaterial {
     std::uint32_t part = INVALID_INDEX;
+    std::uint32_t source_material = INVALID_INDEX;
     MaterialData material;
     std::vector<std::uint32_t> variants;
 };
@@ -22,6 +23,7 @@ struct Part {
     MaterialData material;
     std::uint32_t node = INVALID_INDEX;
     std::uint32_t primitive = 0u;
+    std::uint32_t source_material = INVALID_INDEX;
 };
 
 struct Document {
