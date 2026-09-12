@@ -92,6 +92,20 @@ Math::Mat4 perspectiveMatrix(float fov_degrees, float aspect, float near_plane, 
     };
 }
 
+Math::Mat4 orthographicMatrix(float half_extent, float near_plane, float far_plane)
+{
+    const float extent = std::max(half_extent, 1.0e-3f);
+    const float safe_near = std::max(near_plane, 1.0e-4f);
+    const float safe_far = std::max(far_plane, safe_near + 1.0e-3f);
+    const float range = safe_far - safe_near;
+    return {
+        1.0f / extent, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f / extent, 0.0f, 0.0f,
+        0.0f, 0.0f, -2.0f / range, 0.0f,
+        0.0f, 0.0f, -(safe_far + safe_near) / range, 1.0f,
+    };
+}
+
 Math::Mat4 cameraView(const Systems::Scene::CameraState& camera)
 {
     const Vec3 forward = Math::normalize(Camera::flightDirection(camera.transform.rotation.y, camera.transform.rotation.x));
@@ -149,7 +163,7 @@ struct Rasterizer::Impl {
     };
 
     struct ShadowUniforms {
-        GLint diffuse = -1, has_texture = -1, base_alpha = -1, light_position = -1, shadow_far = -1, alpha_cutoff = -1, model = -1;
+        GLint diffuse = -1, has_texture = -1, base_alpha = -1, light_position = -1, shadow_far = -1, alpha_cutoff = -1, directional = -1, model = -1;
     };
 
     RasterizerSettings settings{};
@@ -225,7 +239,8 @@ struct Rasterizer::Impl {
 #undef S
         shadow_uniforms.diffuse = shadow_program.uniform("uDiffuse"); shadow_uniforms.has_texture = shadow_program.uniform("uHasTexture");
         shadow_uniforms.base_alpha = shadow_program.uniform("uBaseAlpha"); shadow_uniforms.light_position = shadow_program.uniform("uLightPosition");
-        shadow_uniforms.shadow_far = shadow_program.uniform("uShadowFar"); shadow_uniforms.alpha_cutoff = shadow_program.uniform("uAlphaCutoff"); shadow_uniforms.model = shadow_program.uniform("uModel");
+        shadow_uniforms.shadow_far = shadow_program.uniform("uShadowFar"); shadow_uniforms.alpha_cutoff = shadow_program.uniform("uAlphaCutoff");
+        shadow_uniforms.directional = shadow_program.uniform("uDirectional"); shadow_uniforms.model = shadow_program.uniform("uModel");
 
         main_program.use();
         setInt(main_uniforms.diffuse, 0); setInt(main_uniforms.normal_map, kNormalTextureUnit); setInt(main_uniforms.roughness_map, kRoughnessTextureUnit);
@@ -417,7 +432,7 @@ struct Rasterizer::Impl {
         shadow_target.begin();
         glDisable(GL_BLEND); glDisable(GL_LIGHTING); glDisable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
         glViewport(0,0,shadow_target.size(),shadow_target.size()); glClearColor(1,1,1,1);
-        shadow_program.use(); setVec3(shadow_uniforms.light_position, light.transform.position); setFloat(shadow_uniforms.shadow_far, shadow_far);
+        shadow_program.use(); setInt(shadow_uniforms.directional, 0); setVec3(shadow_uniforms.light_position, light.transform.position); setFloat(shadow_uniforms.shadow_far, shadow_far);
         for (int face = 0; face < 6; ++face) {
             const Math::Mat4 view = shadowView(light.transform.position, face);
             shadow_matrices[static_cast<std::size_t>(face)] = Math::multiply(projection, view);
@@ -430,6 +445,96 @@ struct Rasterizer::Impl {
         shadow_target.finish();
         glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glViewport(0,0,width,height); applyClearColor();
         shadow_signature = signature; shadow_valid = true; return true;
+    }
+
+    bool renderDirectionalShadowMap(
+        const Systems::Scene::LightState& light,
+        const Systems::Scene::CameraState& camera)
+    {
+        if (!light.valid || light.light.type != LightType::Directional ||
+            light.light.intensity <= 0.0f || !camera.valid)
+        {
+            shadow_valid = false;
+            return false;
+        }
+
+        const int requested = std::max(settings.shadow_resolution, 1);
+        const int minimum = std::max(settings.minimum_shadow_resolution, 1);
+        const int fallback = std::max(
+            minimum,
+            std::min({std::max(settings.fallback_shadow_resolution, 1), width, height})
+        );
+        const int target = shadow_target.framebufferAvailable() ? requested : fallback;
+        const int previous_size = shadow_target.size();
+        if (!shadow_target.ensure(target)) {
+            if (shadow_target.framebufferAvailable()) {
+                shadow_target.disableFramebuffer();
+                if (!shadow_target.ensure(fallback)) return false;
+            } else {
+                return false;
+            }
+        }
+        if (shadow_target.size() != previous_size) shadow_valid = false;
+
+        const float extent = std::max(settings.directional_shadow_distance, 1.0f);
+        std::uint64_t signature = currentShadowSignature(light);
+        hashTransform(signature, camera.transform);
+        hashFloat(signature, extent);
+        if (shadow_valid && shadow_signature == signature) return true;
+
+        const Vec3 direction = lightDirection(light);
+        const Vec3 camera_forward = Math::normalize(Camera::flightDirection(
+            camera.transform.rotation.y,
+            camera.transform.rotation.x
+        ));
+        const Vec3 center {
+            camera.transform.position.x + camera_forward.x * extent * 0.25f,
+            camera.transform.position.y + camera_forward.y * extent * 0.25f,
+            camera.transform.position.z + camera_forward.z * extent * 0.25f,
+        };
+        const Vec3 light_position {
+            center.x - direction.x * extent * 2.0f,
+            center.y - direction.y * extent * 2.0f,
+            center.z - direction.z * extent * 2.0f,
+        };
+        const Vec3 up_reference = std::abs(direction.y) > 0.95f
+            ? Vec3{0.0f, 0.0f, 1.0f}
+            : Vec3{0.0f, 1.0f, 0.0f};
+        const Vec3 right = Math::normalize(Math::cross(direction, up_reference));
+        const Vec3 up = Math::normalize(Math::cross(right, direction));
+        shadow_far = extent * 4.0f;
+        const Math::Mat4 projection = orthographicMatrix(
+            extent,
+            std::max(settings.shadow_near_plane, 1.0e-4f),
+            shadow_far
+        );
+        const Math::Mat4 view = Math::viewMatrix(light_position, direction, right, up);
+        shadow_matrices.fill(Math::identityMatrix());
+        shadow_matrices[0] = Math::multiply(projection, view);
+
+        shadow_target.unbind(kShadowTextureUnit);
+        const bool offscreen = shadow_target.offscreen();
+        shadow_target.begin();
+        glDisable(GL_BLEND); glDisable(GL_LIGHTING); glDisable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST); glDepthMask(GL_TRUE);
+        glViewport(0,0,shadow_target.size(),shadow_target.size()); glClearColor(1,1,1,1);
+        shadow_program.use(); setInt(shadow_uniforms.directional, 1); setVec3(shadow_uniforms.light_position, light_position); setFloat(shadow_uniforms.shadow_far, shadow_far);
+        if (offscreen) shadow_target.selectFace(0u);
+        glMatrixMode(GL_PROJECTION); glLoadMatrixf(projection.data()); glMatrixMode(GL_MODELVIEW); glLoadMatrixf(view.data());
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); drawGeometry(true);
+        if (!offscreen) shadow_target.captureFace(0u);
+        Systems::OpenGL::unbindProgram();
+        shadow_target.finish();
+        glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glViewport(0,0,width,height); applyClearColor();
+        shadow_signature = signature; shadow_valid = true; return true;
+    }
+
+    bool renderShadowMaps(
+        const Systems::Scene::LightState& light,
+        const Systems::Scene::CameraState& camera)
+    {
+        if (light.valid && light.light.type == LightType::Directional)
+            return renderDirectionalShadowMap(light, camera);
+        return renderLocalShadowMaps(light);
     }
 
     void bindEnvironment(const EnvironmentState& environment)
@@ -464,7 +569,7 @@ struct Rasterizer::Impl {
         if (has_gi && gi) {
             setVec3(main_uniforms.gi_minimum, gi->minimum); setVec3(main_uniforms.gi_maximum, gi->maximum); setFloat(main_uniforms.gi_intensity, std::max(gi->intensity,0.0f));
         } else setFloat(main_uniforms.gi_intensity,0.0f);
-        const bool has_shadow = shadow_valid && (light_type == 1 || light_type == 3); setInt(main_uniforms.has_shadow, has_shadow ? 1 : 0);
+        const bool has_shadow = shadow_valid && light_type != 0; setInt(main_uniforms.has_shadow, has_shadow ? 1 : 0);
         setFloat(main_uniforms.shadow_far, has_shadow ? shadow_far : 1.0f); setFloat(main_uniforms.shadow_texel, has_shadow ? 1.0f/static_cast<float>(shadow_target.size()) : 0.0f);
         if (has_shadow) { shadow_target.bind(kShadowTextureUnit); for (int i=0;i<6;++i) setMatrix(main_uniforms.shadow_matrix[i],shadow_matrices[static_cast<std::size_t>(i)]); }
         bindEnvironment(environment); GLModern.glActiveTexture(GL_TEXTURE0);
@@ -498,9 +603,9 @@ struct Rasterizer::Impl {
     bool draw(const Ecs::World& world, const GlobalIllumination::Field *gi)
     {
         Systems::Scene::collectRenderItems(world,render_items); updateViewportVisibility(world);
-        const Systems::Scene::LightState light = Systems::Scene::lightState(world); renderLocalShadowMaps(light);
         const Systems::Scene::CameraState camera = Systems::Scene::cameraState(world);
         if (!camera.valid) { applyClearColor(); glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT); return true; }
+        const Systems::Scene::LightState light = Systems::Scene::lightState(world); renderShadowMaps(light,camera);
         const Systems::CameraState camera_state = Systems::cameraState(camera);
         const Math::Mat4 projection = infinitePerspectiveMatrix(camera.fov_degrees,static_cast<float>(width)/static_cast<float>(height),camera.near_plane);
         const Math::Mat4 view = cameraView(camera);
@@ -577,6 +682,7 @@ void Rasterizer::setFallbackShadowResolution(int value) { if (impl_) { impl_->se
 void Rasterizer::setMinimumShadowResolution(int value) { if (impl_) { impl_->settings.minimum_shadow_resolution=value; impl_->shadow_valid=false; } }
 void Rasterizer::setShadowNearPlane(float value) { if (impl_) { impl_->settings.shadow_near_plane=value; impl_->shadow_valid=false; } }
 void Rasterizer::setShadowFarScale(float value) { if (impl_) { impl_->settings.shadow_far_scale=value; impl_->shadow_valid=false; } }
+void Rasterizer::setDirectionalShadowDistance(float value) { if (impl_) { impl_->settings.directional_shadow_distance=std::max(value,1.0f); impl_->shadow_valid=false; } }
 void Rasterizer::setClearColor(Vec4 value) { if (impl_) impl_->settings.clear_color=value; }
 bool Rasterizer::viewportCulling() const { return impl_ && impl_->settings.viewport_culling; }
 int Rasterizer::shadowResolution() const { return impl_?impl_->settings.shadow_resolution:0; }
@@ -584,6 +690,7 @@ int Rasterizer::fallbackShadowResolution() const { return impl_?impl_->settings.
 int Rasterizer::minimumShadowResolution() const { return impl_?impl_->settings.minimum_shadow_resolution:0; }
 float Rasterizer::shadowNearPlane() const { return impl_?impl_->settings.shadow_near_plane:0.0f; }
 float Rasterizer::shadowFarScale() const { return impl_?impl_->settings.shadow_far_scale:0.0f; }
+float Rasterizer::directionalShadowDistance() const { return impl_?impl_->settings.directional_shadow_distance:0.0f; }
 Vec4 Rasterizer::clearColor() const { return impl_?impl_->settings.clear_color:Vec4{}; }
 RasterizerSettings& Rasterizer::settings() { return impl_->settings; }
 const RasterizerSettings& Rasterizer::settings() const { return impl_->settings; }

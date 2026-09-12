@@ -143,6 +143,25 @@ float shadowVisibility(vec3 position, vec3 normal, vec3 light_direction)
     if (uHasShadow == 0 || uShadowFar <= 0.0) return 1.0;
     vec3 n = normalize(normal), l = normalize(light_direction);
     float slope = 1.0 - max(dot(n, l), 0.0);
+
+    if (uLightType == 2) {
+        float normal_bias = max(0.0025, uShadowFar * (0.000035 + slope * 0.000045));
+        vec3 receiver_position = position + n * normal_bias;
+        vec4 clip = uShadowMatrix0 * vec4(receiver_position, 1.0);
+        if (abs(clip.w) <= 1.0e-6) return 1.0;
+        vec3 ndc = clip.xyz / clip.w;
+        vec2 uv = ndc.xy * 0.5 + 0.5;
+        if (uv.x <= 0.0 || uv.x >= 1.0 || uv.y <= 0.0 || uv.y >= 1.0 || ndc.z < -1.0 || ndc.z > 1.0)
+            return 1.0;
+        float current = clamp(ndc.z * 0.5 + 0.5, 0.0, 1.0);
+        float depth_bias = 0.0008 + slope * 0.0015;
+        float visibility = 0.0;
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x)
+                visibility += shadowCompare(0, uv + vec2(float(x), float(y)) * uShadowTexel, current, depth_bias);
+        return visibility / 9.0;
+    }
+
     float normal_bias = max(0.001, uShadowFar * (0.0012 + slope * 0.0020));
     vec3 receiver_position = position + n * normal_bias;
     vec3 delta = receiver_position - uLightPosition;
@@ -279,6 +298,7 @@ void main()
             visibility = shadowVisibility(vWorldPosition, normal, light_direction);
         } else if (uLightType == 2) {
             light_direction = normalize(-uLightDirection);
+            visibility = shadowVisibility(vWorldPosition, normal, light_direction);
         }
         direct = pbrDirect(albedo, roughness, metallic, normal, view_direction, light_direction, incoming) * visibility;
     }
@@ -374,6 +394,7 @@ uniform float uBaseAlpha;
 uniform vec3 uLightPosition;
 uniform float uShadowFar;
 uniform float uAlphaCutoff;
+uniform int uDirectional;
 varying vec3 vWorldPosition;
 varying vec2 vUv;
 vec3 encodeDepth(float depth)
@@ -386,7 +407,9 @@ void main()
 {
     vec4 texel = uHasTexture != 0 ? texture2D(uDiffuse, vUv) : vec4(1.0);
     if (clamp(uBaseAlpha * texel.a, 0.0, 1.0) < uAlphaCutoff) discard;
-    float depth = clamp(length(vWorldPosition - uLightPosition) / max(uShadowFar, 1.0e-4), 0.0, 0.999999);
+    float depth = uDirectional != 0
+        ? clamp(gl_FragCoord.z, 0.0, 0.999999)
+        : clamp(length(vWorldPosition - uLightPosition) / max(uShadowFar, 1.0e-4), 0.0, 0.999999);
     gl_FragColor = vec4(encodeDepth(depth), 1.0);
 }
 )GLSL";
