@@ -7,6 +7,8 @@
 #include "Renderer/Scenes/Metal/SceneResources.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
+#include "Renderer/Trace/MaterialSet.hpp"
+#include "Renderer/Trace/Metal/MaterialResources.hpp"
 #include "Renderer/Visibility/Visibility.hpp"
 
 #include <lwmgl/lwmgl.h>
@@ -17,15 +19,9 @@
 #include <vector>
 
 namespace Renderer::Trace::Metal {
-
 namespace {
 
-struct PackedPosition {
-    float x;
-    float y;
-    float z;
-};
-
+struct PackedPosition { float x; float y; float z; };
 static_assert(sizeof(PackedPosition) == 12u);
 
 const char *label(const char *owner)
@@ -38,6 +34,8 @@ const char *label(const char *owner)
 struct TraceScene::Impl {
     Scenes::SceneCache scene;
     Scenes::Metal::SceneResources resources;
+    MaterialSet materials;
+    MaterialResources material_resources;
     std::vector<Scenes::Scene::RenderItem> render_items;
     std::vector<std::uint32_t> visibility_mask;
 
@@ -56,7 +54,9 @@ struct TraceScene::Impl {
         for (const Scenes::Scene::RenderItem& item : render_items) {
             const Models::MaterialData *material = item.material;
             if (!material) continue;
-            if (material->opacity < 1.0f) {
+            if (material->alpha_mode != Models::AlphaMode::Opaque || material->opacity < 1.0f ||
+                material->opacity_texture != Models::INVALID_TEXTURE)
+            {
                 has_alpha_cutouts = true;
                 return;
             }
@@ -81,7 +81,6 @@ struct TraceScene::Impl {
     {
         destroyAccelerationStructure();
         if (scene.triangles().empty()) return true;
-
         std::vector<PackedPosition> positions;
         positions.reserve(scene.triangles().size() * 3u);
         for (const Scenes::GpuTriangle& triangle : scene.triangles()) {
@@ -89,26 +88,13 @@ struct TraceScene::Impl {
             positions.push_back({triangle.p1[0], triangle.p1[1], triangle.p1[2]});
             positions.push_back({triangle.p2[0], triangle.p2[1], triangle.p2[2]});
         }
-
-        if (positions.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
-            return false;
-
-        const LWMGLBufferDesc vertex_desc = {
-            positions.size() * sizeof(PackedPosition),
-            LWMGL_STORAGE_SHARED
-        };
+        if (positions.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) return false;
+        const LWMGLBufferDesc vertex_desc = {positions.size() * sizeof(PackedPosition), LWMGL_STORAGE_SHARED};
         acceleration_vertex_buffer = ::Metal.createBuffer(&vertex_desc, positions.data());
         if (!acceleration_vertex_buffer) return false;
-
         const LWMGLTriangleGeometryDesc geometry = {
-            acceleration_vertex_buffer,
-            0u,
-            static_cast<std::uint32_t>(sizeof(PackedPosition)),
-            static_cast<std::uint32_t>(positions.size()),
-            nullptr,
-            0u,
-            0u,
-            1u
+            acceleration_vertex_buffer, 0u, static_cast<std::uint32_t>(sizeof(PackedPosition)),
+            static_cast<std::uint32_t>(positions.size()), nullptr, 0u, 0u, 1u
         };
         acceleration_structure = ::Metal.createTriangleAccelerationStructure(&geometry, 1u);
         if (!acceleration_structure) {
@@ -122,11 +108,9 @@ struct TraceScene::Impl {
     TraceScene::SyncResult syncScene(const Ecs::World& world, const char *owner)
     {
         const Scenes::Scene::RenderRevision revision = Scenes::Scene::renderRevision(world);
-        if (revision == render_revision &&
-            resources.ready() && (scene.triangles().empty() || acceleration_structure))
-        {
+        if (revision == render_revision && resources.ready() && material_resources.ready() &&
+            (scene.triangles().empty() || acceleration_structure))
             return {true, false};
-        }
 
         Scenes::Scene::collectRenderItems(world, render_items);
         const std::uint64_t previous_geometry_revision = scene.geometryRevision();
@@ -138,9 +122,14 @@ struct TraceScene::Impl {
             return {};
         }
         updateAlphaCutoutState();
-
         if (!resources.sync(scene, &error)) {
             std::fprintf(stderr, "[%s]: Metal scene upload failed: %s\n", label(owner), error.c_str());
+            return {};
+        }
+        if (!materials.sync(scene, Scenes::Metal::SceneResources::MaximumTextureSlots, &error) ||
+            !material_resources.sync(materials, &error))
+        {
+            std::fprintf(stderr, "[%s]: Metal advanced material upload failed: %s\n", label(owner), error.c_str());
             return {};
         }
 
@@ -148,12 +137,7 @@ struct TraceScene::Impl {
         const bool resources_changed = scene.resourceRevision() != previous_resource_revision;
         if (geometry_changed || (!scene.triangles().empty() && !acceleration_structure)) {
             if (!createAccelerationStructure()) {
-                std::fprintf(
-                    stderr,
-                    "[%s]: Metal acceleration structure failed: %s\n",
-                    label(owner),
-                    lwmglGetLastError()
-                );
+                std::fprintf(stderr, "[%s]: Metal acceleration structure failed: %s\n", label(owner), lwmglGetLastError());
                 return {};
             }
         }
@@ -163,14 +147,10 @@ struct TraceScene::Impl {
             visibility_render_revision = {};
             std::fprintf(
                 stderr,
-                "[%s]: Metal native AS %zu triangles, %zu materials, alpha=%s\n",
-                label(owner),
-                scene.triangles().size(),
-                scene.materials().size(),
-                has_alpha_cutouts ? "cutout" : "opaque"
-            );
+                "[%s]: Metal native AS %zu triangles, %zu materials, %zu material textures, alpha=%s\n",
+                label(owner), scene.triangles().size(), scene.materials().size(),
+                materials.textureHandles().size(), has_alpha_cutouts ? "cutout" : "opaque");
         }
-
         render_revision = revision;
         return {true, scene_changed};
     }
@@ -179,23 +159,14 @@ struct TraceScene::Impl {
     {
         const Scenes::Scene::RenderRevision revision = Scenes::Scene::renderRevision(world);
         const Scenes::CameraState camera = Scenes::cameraState(Scenes::Scene::cameraState(world));
-        const std::uint64_t current_signature =
-            Scenes::cameraSignature(camera) ^
+        const std::uint64_t current_signature = Scenes::cameraSignature(camera) ^
             (static_cast<std::uint64_t>(static_cast<std::uint32_t>(width)) << 32u) ^
             static_cast<std::uint32_t>(height);
-        if (revision == visibility_render_revision && current_signature == visibility_signature)
-            return true;
-
-        const Visibility::Result visibility = Visibility::system().buildEntityMask(
-            world, width, height, visibility_mask);
+        if (revision == visibility_render_revision && current_signature == visibility_signature) return true;
+        const Visibility::Result visibility = Visibility::system().buildEntityMask(world, width, height, visibility_mask);
         std::string error;
         if (!resources.syncVisibility(visibility_mask, &error)) {
-            std::fprintf(
-                stderr,
-                "[%s]: Metal visibility upload failed: %s\n",
-                label(owner),
-                error.c_str()
-            );
+            std::fprintf(stderr, "[%s]: Metal visibility upload failed: %s\n", label(owner), error.c_str());
             return false;
         }
         visibility_all = visibility.culled.empty();
@@ -207,6 +178,8 @@ struct TraceScene::Impl {
     void clear()
     {
         destroyAccelerationStructure();
+        material_resources.clear();
+        materials.clear();
         resources.clear();
         scene.clear();
         render_items.clear();
@@ -220,24 +193,11 @@ struct TraceScene::Impl {
 };
 
 TraceScene::TraceScene() : impl_(new Impl) {}
+TraceScene::~TraceScene() { clear(); delete impl_; impl_ = nullptr; }
 
-TraceScene::~TraceScene()
-{
-    clear();
-    delete impl_;
-    impl_ = nullptr;
-}
+bool TraceScene::init(std::string *error) { return impl_ && impl_->resources.init(error); }
 
-bool TraceScene::init(std::string *error)
-{
-    return impl_ && impl_->resources.init(error);
-}
-
-TraceScene::SyncResult TraceScene::sync(
-    const Ecs::World& world,
-    int width,
-    int height,
-    const char *owner)
+TraceScene::SyncResult TraceScene::sync(const Ecs::World& world, int width, int height, const char *owner)
 {
     if (!impl_) return {};
     SyncResult result = impl_->syncScene(world, owner);
@@ -247,38 +207,16 @@ TraceScene::SyncResult TraceScene::sync(
 
 bool TraceScene::bind(LWMGLCommand command, std::uint32_t first_texture_binding) const
 {
-    return impl_ && impl_->resources.bind(command, first_texture_binding);
+    return impl_ && impl_->resources.bind(command, first_texture_binding) &&
+        impl_->material_resources.bind(command, first_texture_binding);
 }
 
-void TraceScene::clear()
-{
-    if (impl_) impl_->clear();
-}
-
-std::size_t TraceScene::triangleCount() const
-{
-    return impl_ ? impl_->scene.triangles().size() : 0u;
-}
-
-std::size_t TraceScene::materialCount() const
-{
-    return impl_ ? impl_->scene.materials().size() : 0u;
-}
-
-bool TraceScene::hasAlphaCutouts() const
-{
-    return impl_ && impl_->has_alpha_cutouts;
-}
-
-bool TraceScene::visibilityAll() const
-{
-    return impl_ && impl_->visibility_all;
-}
-
-LWMGLAccelerationStructure TraceScene::accelerationStructure() const
-{
-    return impl_ ? impl_->acceleration_structure : nullptr;
-}
+void TraceScene::clear() { if (impl_) impl_->clear(); }
+std::size_t TraceScene::triangleCount() const { return impl_ ? impl_->scene.triangles().size() : 0u; }
+std::size_t TraceScene::materialCount() const { return impl_ ? impl_->scene.materials().size() : 0u; }
+bool TraceScene::hasAlphaCutouts() const { return impl_ && impl_->has_alpha_cutouts; }
+bool TraceScene::visibilityAll() const { return impl_ && impl_->visibility_all; }
+LWMGLAccelerationStructure TraceScene::accelerationStructure() const { return impl_ ? impl_->acceleration_structure : nullptr; }
 
 } // namespace Renderer::Trace::Metal
 
