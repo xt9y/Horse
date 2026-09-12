@@ -1,4 +1,0 @@
-#ifndef RW_ENGINE_RENDERER_RAYTRACER_METAL_SHADERS_COMPAT_HPP
-#define RW_ENGINE_RENDERER_RAYTRACER_METAL_SHADERS_COMPAT_HPP
-#include "Renderer/RayTracer/Metal/RayTracerMetalShaders.hpp"
-#endif

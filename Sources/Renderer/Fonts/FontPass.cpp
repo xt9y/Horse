@@ -232,30 +232,13 @@ void renderFonts(const Ecs::World& world, FrameOutput& output)
     collectFontVertices(world, output, batches);
     if (batches.depth.empty() && batches.overlay.empty()) return;
 
-    switch (output.api) {
-        case GraphicsApi::OpenGL:
-            renderFontsOpenGL(batches, output);
-            break;
-        case GraphicsApi::Metal:
-#ifdef __APPLE__
-            renderFontsMetal(batches, output);
-#endif
-            break;
-    }
+    renderFontsSDLGPU(batches, output);
 }
 
 void shutdownFonts(GraphicsApi api)
 {
-    switch (api) {
-        case GraphicsApi::OpenGL:
-            shutdownFontsOpenGL();
-            break;
-        case GraphicsApi::Metal:
-#ifdef __APPLE__
-            shutdownFontsMetal();
-#endif
-            break;
-    }
+    (void)api;
+    shutdownFontsSDLGPU();
 }
 
 } // namespace Renderer::Internal

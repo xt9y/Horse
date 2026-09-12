@@ -11,8 +11,7 @@
 namespace Renderer::PostProcess {
 
 enum class GraphicsApi : std::uint8_t {
-    OpenGL,
-    Metal,
+    SDLGPU,
 };
 
 enum class DepthSource : std::uint8_t {
@@ -22,7 +21,7 @@ enum class DepthSource : std::uint8_t {
 };
 
 struct Frame {
-    GraphicsApi api = GraphicsApi::OpenGL;
+    GraphicsApi api = GraphicsApi::SDLGPU;
     DepthSource depth = DepthSource::None;
     int width = 1;
     int height = 1;

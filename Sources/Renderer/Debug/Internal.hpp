@@ -16,23 +16,13 @@ struct Vertex {
 
 void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output);
 
-void renderOpenGL(
+void renderSDLGPU(
     const std::vector<Vertex>& lines,
     const Math::Mat4& projection,
     const Math::Mat4& view,
     Renderer::Internal::FrameOutput& output
 );
-void shutdownOpenGL();
-
-#ifdef __APPLE__
-void renderMetal(
-    const std::vector<Vertex>& lines,
-    const Math::Mat4& projection,
-    const Math::Mat4& view,
-    Renderer::Internal::FrameOutput& output
-);
-void shutdownMetal();
-#endif
+void shutdownSDLGPU();
 
 } // namespace Renderer::Debug::Internal
 

@@ -1,29 +1,19 @@
 #include "Renderer/GaussianSplat/GaussianSplat.hpp"
 
-#include "Renderer/GaussianSplat/OpenGL/GaussianSplatOpenGL.hpp"
-#ifdef __APPLE__
-#include "Renderer/GaussianSplat/Metal/GaussianSplatMetal.hpp"
-#endif
+#include "Renderer/GaussianSplat/GaussianSplatSDLGPU.hpp"
 
 namespace Renderer::GaussianSplat {
 
 bool render(const Ecs::World& world, Internal::FrameOutput& output)
 {
-    if (output.api == Internal::GraphicsApi::OpenGL)
-        return OpenGL::render(world, output);
-#ifdef __APPLE__
-    if (output.api == Internal::GraphicsApi::Metal)
-        return Metal::render(world, output);
-#endif
+    if (output.api == Internal::GraphicsApi::SDLGPU)
+        return SDLGPU::render(world, output);
     return true;
 }
 
 void shutdown()
 {
-    OpenGL::shutdown();
-#ifdef __APPLE__
-    Metal::shutdown();
-#endif
+    SDLGPU::shutdown();
 }
 
 } // namespace Renderer::GaussianSplat

@@ -7,8 +7,6 @@
 #include "Renderer/ShadingState.hpp"
 #include "UI/Internal.hpp"
 
-#include <lwcgl/lwcgl.h>
-
 namespace Renderer {
 
 void IRenderer::render(const Ecs::World& world)
@@ -24,9 +22,6 @@ void IRenderer::render(const Ecs::World& world)
     Internal::renderFonts(world, output);
     UI::Internal::render(output);
     present(output);
-    if (output.api == Internal::GraphicsApi::OpenGL) {
-        Display.updateNoMessages();
-    }
 }
 
 } // namespace Renderer

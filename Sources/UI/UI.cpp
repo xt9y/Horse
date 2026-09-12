@@ -1,10 +1,14 @@
 #include "UI/UI.hpp"
 
+#include "Input.hpp"
+#include "Renderer/SDLGPU/Context.hpp"
 #include "UI/Internal.hpp"
+#include "Window/Internal.hpp"
 
+#include <SDL3/SDL.h>
+#include <backends/imgui_impl_sdl3.h>
+#include <backends/imgui_impl_sdlgpu3.h>
 #include <imgui.h>
-#include <backends/imgui_impl_glfw.h>
-#include <lwcgl/lwcgl.h>
 
 namespace UI {
 namespace {
@@ -12,62 +16,33 @@ namespace {
 bool ready = false;
 bool frame_active = false;
 bool frame_visible = false;
-Internal::Backend backend = Internal::Backend::None;
-
-Internal::Backend backendFor(Renderer::Internal::GraphicsApi api)
-{
-    switch (api) {
-        case Renderer::Internal::GraphicsApi::OpenGL: return Internal::Backend::OpenGL;
-        case Renderer::Internal::GraphicsApi::Metal: return Internal::Backend::Metal;
-    }
-    return Internal::Backend::None;
-}
-
-bool activateBackend(Internal::Backend requested)
-{
-    if (backend == requested) return true;
-    Internal::shutdownRendererBackend();
-
-    bool ok = false;
-    switch (requested) {
-        case Internal::Backend::OpenGL:
-            ok = Internal::initOpenGL();
-            break;
-        case Internal::Backend::Metal:
-#ifdef __APPLE__
-            ok = Internal::initMetal();
-#endif
-            break;
-        case Internal::Backend::None:
-            ok = true;
-            break;
-    }
-
-    backend = ok ? requested : Internal::Backend::None;
-    return ok;
-}
 
 } // namespace
 
 bool init()
 {
     if (ready) return true;
-    if (!Display.isCreated() || !Display.getNativeWindow()) return false;
+
+    SDL_Window *window = Window::Internal::window();
+    if (!window || !Renderer::SDLGPU::retain()) return false;
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
-    if (!ImGui_ImplGlfw_InitForOther(
-            static_cast<GLFWwindow *>(Display.getNativeWindow()),
-            true))
-    {
+    if (!ImGui_ImplSDL3_InitForSDLGPU(window)) {
         ImGui::DestroyContext();
+        Renderer::SDLGPU::release();
         return false;
     }
 
-    if (!activateBackend(Internal::Backend::OpenGL)) {
-        ImGui_ImplGlfw_Shutdown();
+    ImGui_ImplSDLGPU3_InitInfo info{};
+    info.Device = Renderer::SDLGPU::device();
+    info.ColorTargetFormat = Renderer::SDLGPU::colorFormat();
+    info.MSAASamples = SDL_GPU_SAMPLECOUNT_1;
+    if (!ImGui_ImplSDLGPU3_Init(&info)) {
+        ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
+        Renderer::SDLGPU::release();
         return false;
     }
 
@@ -87,10 +62,11 @@ void shutdown()
     if (ImGui::GetIO().IniFilename)
         ImGui::SaveIniSettingsToDisk(ImGui::GetIO().IniFilename);
 
-    Internal::shutdownRendererBackend();
-    ImGui_ImplGlfw_Shutdown();
+    ImGui_ImplSDLGPU3_Shutdown();
+    ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
-    backend = Internal::Backend::None;
+    Renderer::SDLGPU::release();
+
     frame_visible = false;
     ready = false;
 }
@@ -100,12 +76,15 @@ bool beginFrame()
     if (!ready && !init()) return false;
 
     if (frame_active) ImGui::EndFrame();
-    ImGui_ImplGlfw_NewFrame();
-    if (backend == Internal::Backend::OpenGL)
-        Internal::newFrameOpenGL();
+
+    for (const SDL_Event& event : Window::Internal::events())
+        ImGui_ImplSDL3_ProcessEvent(&event);
+
+    ImGui_ImplSDLGPU3_NewFrame();
+    ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
     frame_active = true;
-    frame_visible = Mouse.isGrabbed() == LWCGL_FALSE;
+    frame_visible = !Input::pointer().captured;
     return frame_visible;
 }
 
@@ -126,23 +105,6 @@ bool wantsKeyboard()
 
 namespace Internal {
 
-void shutdownRendererBackend()
-{
-    switch (backend) {
-        case Backend::OpenGL:
-            shutdownOpenGL();
-            break;
-        case Backend::Metal:
-#ifdef __APPLE__
-            shutdownMetal();
-#endif
-            break;
-        case Backend::None:
-            break;
-    }
-    backend = Backend::None;
-}
-
 void render(Renderer::Internal::FrameOutput& output)
 {
     if (!ready || !frame_active) return;
@@ -152,33 +114,24 @@ void render(Renderer::Internal::FrameOutput& output)
     frame_active = false;
     frame_visible = false;
 
-    const Backend requested = backendFor(output.api);
-    if (requested != backend) {
-        if (!activateBackend(requested)) return;
-#ifdef __APPLE__
-        if (backend == Backend::Metal)
-            (void)prepareMetal(output);
-#endif
-        return;
-    }
-
-    if (!visible) return;
+    if (!visible || output.api != Renderer::Internal::GraphicsApi::SDLGPU) return;
 
     ImDrawData *draw_data = ImGui::GetDrawData();
-    if (!draw_data) return;
+    auto *command = static_cast<SDL_GPUCommandBuffer *>(output.command);
+    auto *color = static_cast<SDL_GPUTexture *>(output.color_texture);
+    if (!draw_data || !command || !color) return;
 
-    switch (backend) {
-        case Backend::OpenGL:
-            renderOpenGL(draw_data);
-            break;
-        case Backend::Metal:
-#ifdef __APPLE__
-            (void)renderMetal(draw_data, output);
-#endif
-            break;
-        case Backend::None:
-            break;
-    }
+    ImGui_ImplSDLGPU3_PrepareDrawData(draw_data, command);
+
+    SDL_GPUColorTargetInfo color_target{};
+    color_target.texture = color;
+    color_target.load_op = SDL_GPU_LOADOP_LOAD;
+    color_target.store_op = SDL_GPU_STOREOP_STORE;
+
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(command, &color_target, 1u, nullptr);
+    if (!pass) return;
+    ImGui_ImplSDLGPU3_RenderDrawData(draw_data, command, pass);
+    SDL_EndGPURenderPass(pass);
 }
 
 } // namespace Internal

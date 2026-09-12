@@ -437,10 +437,7 @@ void clear()
 
 void shutdown()
 {
-    Internal::shutdownOpenGL();
-#ifdef __APPLE__
-    Internal::shutdownMetal();
-#endif
+    Internal::shutdownSDLGPU();
     inspector().clear();
 }
 
@@ -495,16 +492,7 @@ void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
         camera_up
     );
 
-    switch (output.api) {
-        case Renderer::Internal::GraphicsApi::OpenGL:
-            renderOpenGL(state.lines, projection, view, output);
-            break;
-        case Renderer::Internal::GraphicsApi::Metal:
-#ifdef __APPLE__
-            renderMetal(state.lines, projection, view, output);
-#endif
-            break;
-    }
+    renderSDLGPU(state.lines, projection, view, output);
 }
 
 } // namespace Internal

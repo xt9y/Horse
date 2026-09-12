@@ -29,13 +29,8 @@ void collectFontVertices(
 void renderFonts(const Ecs::World& world, FrameOutput& output);
 void shutdownFonts(GraphicsApi api);
 
-void renderFontsOpenGL(const FontBatches& batches, FrameOutput& output);
-void shutdownFontsOpenGL();
-
-#ifdef __APPLE__
-void renderFontsMetal(const FontBatches& batches, FrameOutput& output);
-void shutdownFontsMetal();
-#endif
+void renderFontsSDLGPU(const FontBatches& batches, FrameOutput& output);
+void shutdownFontsSDLGPU();
 
 } // namespace Renderer::Internal
 

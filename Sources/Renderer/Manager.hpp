@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_MANAGER_HPP
 #define HORSE_RENDERER_MANAGER_HPP
 
+#include "Renderer/Debug/Debug.hpp"
 #include "Renderer/GaussianSplat/GaussianSplat.hpp"
 #include "Renderer/Renderer.hpp"
 
@@ -85,11 +86,12 @@ public:
         if (Entry *entry = activeEntry()) {
             if (entry->deactivate) entry->deactivate();
         }
+        Debug::shutdown();
+        GaussianSplat::shutdown();
         for (auto iterator = entries_.rbegin(); iterator != entries_.rend(); ++iterator) {
             if (iterator->renderer) iterator->renderer->shutdown();
             iterator->available = false;
         }
-        GaussianSplat::shutdown();
         active_ = invalidIndex();
     }
 

@@ -1,9 +1,8 @@
 #include "Camera/FreeController.hpp"
 
 #include "Camera.hpp"
+#include "Input.hpp"
 #include "Renderer/Components.hpp"
-
-#include <lwcgl/lwcgl.h>
 
 #include <algorithm>
 
@@ -18,16 +17,15 @@ void FreeController::update(Ecs::World& world, float delta_seconds)
     if (!transform) return;
 
     if (!mouse_initialized_) {
-        Mouse.setGrabbed(LWCGL_TRUE);
-        Mouse.getDX();
-        Mouse.getDY();
+        Input::setPointerCaptured(true);
         mouse_initialized_ = true;
     }
 
     bool changed = false;
-    const bool mouse_grabbed = Mouse.isGrabbed() != LWCGL_FALSE;
-    const int mouse_dx = Mouse.getDX();
-    const int mouse_dy = Mouse.getDY();
+    const Input::Pointer pointer = Input::pointer();
+    const bool mouse_grabbed = pointer.captured;
+    const int mouse_dx = pointer.dx;
+    const int mouse_dy = pointer.dy;
 
     if (mouse_grabbed && (mouse_dx != 0 || mouse_dy != 0)) {
         transform->rotation.y -= static_cast<float>(mouse_dx) * mouse_sensitivity_;
@@ -45,7 +43,7 @@ void FreeController::update(Ecs::World& world, float delta_seconds)
     const Renderer::Vec3 right = strafeDirection(transform->rotation.y);
 
     float speed = speed_ * std::max(delta_seconds, 0.0f);
-    if (Keyboard.isKeyDown(Keyboard.KEY_LSHIFT)) speed *= sprint_multiplier_;
+    if (Input::keyDown(Input::key("Left Shift"))) speed *= sprint_multiplier_;
 
     auto move = [&](const Renderer::Vec3& direction, float amount) {
         if (amount == 0.0f) return;
@@ -55,10 +53,10 @@ void FreeController::update(Ecs::World& world, float delta_seconds)
         changed = true;
     };
 
-    if (Keyboard.isKeyDown(Keyboard.KEY_W)) move(forward, speed);
-    if (Keyboard.isKeyDown(Keyboard.KEY_S)) move(forward, -speed);
-    if (Keyboard.isKeyDown(Keyboard.KEY_D)) move(right, speed);
-    if (Keyboard.isKeyDown(Keyboard.KEY_A)) move(right, -speed);
+    if (Input::keyDown(Input::key("W"))) move(forward, speed);
+    if (Input::keyDown(Input::key("S"))) move(forward, -speed);
+    if (Input::keyDown(Input::key("D"))) move(right, speed);
+    if (Input::keyDown(Input::key("A"))) move(right, -speed);
 
     if (changed) world.markChanged(Ecs::ChangeKind::Camera);
 }
