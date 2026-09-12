@@ -1,7 +1,8 @@
 #include "Renderer/Systems/Uniforms.hpp"
 
+#include "Renderer/Trace/CameraProjection.hpp"
+
 #include <algorithm>
-#include <cmath>
 
 namespace Renderer::Systems {
 
@@ -20,8 +21,13 @@ MetalTraceUniforms makeMetalTraceUniforms(
     bool reset,
     bool camera_moving)
 {
-    constexpr float pi = 3.14159265358979323846f;
     MetalTraceUniforms uniforms{};
+    const float viewport_aspect =
+        static_cast<float>(std::max(output_width, 1)) /
+        static_cast<float>(std::max(output_height, 1));
+    const Trace::CameraProjectionEncoding projection =
+        Trace::cameraProjectionEncoding(camera, viewport_aspect);
+
     uniforms.camera_position = {camera.position.x, camera.position.y, camera.position.z, 0.0f};
     uniforms.camera_forward = {camera.forward.x, camera.forward.y, camera.forward.z, 0.0f};
     uniforms.camera_right = {camera.right.x, camera.right.y, camera.right.z, 0.0f};
@@ -36,12 +42,12 @@ MetalTraceUniforms makeMetalTraceUniforms(
         light.color.x,
         light.color.y,
         light.color.z,
-        std::tan(camera.fov_degrees * (pi / 360.0f))
+        projection.scale
     };
     uniforms.resolution_aspect = {
         static_cast<float>(std::max(trace_width, 1)),
         static_cast<float>(std::max(trace_height, 1)),
-        static_cast<float>(std::max(output_width, 1)) / static_cast<float>(std::max(output_height, 1)),
+        projection.aspect,
         std::clamp(alpha_cutoff, 0.0f, 1.0f)
     };
     uniforms.counts = {
