@@ -44,11 +44,25 @@ struct alignas(16) GpuTriangle {
 
 struct alignas(16) GpuMaterial {
     std::array<float, 4> base_color {1.0f, 1.0f, 1.0f, 1.0f};
-    // data.x: base-color texture slot (-1 if absent)
-    // data.y: six packed 5-bit slots: normal, roughness, metallic, AO, emissive, opacity
-    // data.z: four packed UNORM8 values: roughness, metallic, AO, clearcoat
-    // data.w: emissive RGB UNORM8 plus emissive strength in the high byte (0..16 range)
-    std::array<std::int32_t, 4> data {-1, 0, 0, 0};
+    std::array<float, 4> emissive_strength {0.0f, 0.0f, 0.0f, 1.0f};
+    std::array<float, 4> pbr {0.8f, 0.0f, 1.0f, 1.0f};
+    std::array<float, 4> specular {1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<float, 4> clearcoat_sheen{};
+    std::array<float, 4> sheen_thickness{};
+    std::array<float, 4> attenuation {1.0f, 1.0f, 1.0f, 0.0f};
+    std::array<float, 4> diffuse_transmission {1.0f, 1.0f, 1.0f, 0.0f};
+    std::array<float, 4> anisotropy_iridescence {0.0f, 0.0f, 0.0f, 1.3f};
+    std::array<float, 4> iridescence_dispersion_ior {100.0f, 400.0f, 0.0f, 1.5f};
+    // misc: alpha cutoff, unlit, double sided, alpha mode (Opaque=0, Mask=1, Blend=2)
+    std::array<float, 4> misc {0.5f, 0.0f, 0.0f, 0.0f};
+    // Texture slots are -1 when unavailable. These lanes are intentionally explicit rather than
+    // bit-packed so OpenGL and Metal trace backends consume the same lossless material state.
+    std::array<std::int32_t, 4> tex0 {-1, -1, -1, -1}; // base, normal, roughness, metallic
+    std::array<std::int32_t, 4> tex1 {-1, -1, -1, -1}; // AO, emissive, opacity, clearcoat
+    std::array<std::int32_t, 4> tex2 {-1, -1, -1, -1}; // coat roughness, coat normal, sheen color, sheen roughness
+    std::array<std::int32_t, 4> tex3 {-1, -1, -1, -1}; // transmission, thickness, specular, specular color
+    std::array<std::int32_t, 4> tex4 {-1, -1, -1, -1}; // iridescence, iri thickness, anisotropy, diffuse transmission
+    std::array<std::int32_t, 4> tex5 {-1, -1, -1, -1}; // diffuse transmission color, reserved
 };
 
 struct CameraState {
@@ -187,7 +201,7 @@ std::uint64_t lightSignature(const LightState& light);
 
 static_assert(sizeof(GpuNode) == 48u);
 static_assert(sizeof(GpuTriangle) == 128u);
-static_assert(sizeof(GpuMaterial) == 32u);
+static_assert(sizeof(GpuMaterial) == 272u);
 
 } // namespace Renderer::Scenes
 
