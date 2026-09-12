@@ -563,6 +563,12 @@ CameraState cameraState(const Scene::CameraState& source)
     state.right = normalize(Math::transformVector(model, {1.0f, 0.0f, 0.0f}));
     state.up = normalize(Math::transformVector(model, {0.0f, 1.0f, 0.0f}));
     state.fov_degrees = std::clamp(source.fov_degrees, 1.0f, 179.0f);
+    state.projection = source.projection;
+    state.near_plane = source.near_plane;
+    state.far_plane = source.far_plane;
+    state.aspect_ratio = source.aspect_ratio;
+    state.xmag = source.xmag;
+    state.ymag = source.ymag;
     return state;
 }
 
@@ -595,7 +601,15 @@ std::uint64_t cameraSignature(const CameraState& camera)
     hashValue(hash, camera.valid ? 1u : 0u);
     hashVec3(hash, camera.position);
     hashVec3(hash, camera.forward);
+    hashVec3(hash, camera.right);
+    hashVec3(hash, camera.up);
     hashFloat(hash, camera.fov_degrees);
+    hashValue(hash, static_cast<std::uint32_t>(camera.projection));
+    hashFloat(hash, camera.near_plane);
+    hashFloat(hash, camera.far_plane);
+    hashFloat(hash, camera.aspect_ratio);
+    hashFloat(hash, camera.xmag);
+    hashFloat(hash, camera.ymag);
     return hash;
 }
 
