@@ -27,6 +27,9 @@ struct Frustum {
     float far_distance = 0.0f;
     float half_vertical_fov_radians = 0.0f;
     float aspect = 0.0f;
+    float half_width = 0.0f;
+    float half_height = 0.0f;
+    bool orthographic = false;
     bool valid = false;
 };
 
