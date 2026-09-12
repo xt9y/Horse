@@ -4,7 +4,9 @@
 #include <string>
 
 #define main_fragment horse_pbr_main_fragment
+#define sky_fragment horse_pbr_sky_fragment
 #include "Renderer/Rasterizer/OpenGL/PbrRasterizerShaders.hpp"
+#undef sky_fragment
 #undef main_fragment
 
 namespace Renderer::RasterizerShaders {
@@ -29,10 +31,46 @@ inline std::string compatibleMainFragment()
     return source;
 }
 
+inline std::string projectionAwareSkyFragment()
+{
+    std::string source = horse_pbr_sky_fragment;
+    replaceOnce(
+        source,
+        "    vec3 direction = normalize(uCameraForward + uCameraRight * (ndc.x * uAspect * uTanHalfFov) + uCameraUp * (ndc.y * uTanHalfFov));\n",
+        "    float projection_scale = abs(uTanHalfFov);\n"
+        "    bool orthographic = uTanHalfFov < 0.0;\n"
+        "    vec3 direction = orthographic\n"
+        "        ? normalize(uCameraForward)\n"
+        "        : normalize(uCameraForward + uCameraRight * (ndc.x * uAspect * projection_scale) +\n"
+        "            uCameraUp * (ndc.y * projection_scale));\n"
+    );
+    replaceOnce(
+        source,
+        "    float previous_z = max(dot(direction, uPreviousCameraForward), 1.0e-5);\n"
+        "    vec2 previous_ndc = vec2(\n"
+        "        dot(direction, uPreviousCameraRight) / (previous_z * uAspect * uTanHalfFov),\n"
+        "        dot(direction, uPreviousCameraUp) / (previous_z * uTanHalfFov)\n"
+        "    );\n"
+        "    vec2 velocity = (ndc - previous_ndc) * 0.5;",
+        "    vec2 velocity = vec2(0.0);\n"
+        "    if (!orthographic) {\n"
+        "        float previous_z = max(dot(direction, uPreviousCameraForward), 1.0e-5);\n"
+        "        vec2 previous_ndc = vec2(\n"
+        "            dot(direction, uPreviousCameraRight) / (previous_z * uAspect * projection_scale),\n"
+        "            dot(direction, uPreviousCameraUp) / (previous_z * projection_scale)\n"
+        "        );\n"
+        "        velocity = (ndc - previous_ndc) * 0.5;\n"
+        "    }"
+    );
+    return source;
+}
+
 } // namespace
 
 inline const std::string main_fragment_storage = compatibleMainFragment();
 inline const char *main_fragment = main_fragment_storage.c_str();
+inline const std::string sky_fragment_storage = projectionAwareSkyFragment();
+inline const char *sky_fragment = sky_fragment_storage.c_str();
 
 } // namespace Renderer::RasterizerShaders
 
