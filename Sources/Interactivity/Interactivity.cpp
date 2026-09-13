@@ -296,14 +296,6 @@ Value quaternionSlerp(Value a, Value b, double t)
     return normalized(result);
 }
 
-std::array<double, 16> matrix4(const Value& source)
-{
-    std::array<double, 16> result{};
-    result[0] = result[5] = result[10] = result[15] = 1.0;
-    for (std::size_t i = 0u; i < std::min<std::size_t>(16u, source.data.size()); ++i) result[i] = source.data[i];
-    return result;
-}
-
 Value matrixValue(const std::array<double, 16>& source)
 {
     return {"float4x4", std::vector<double>(source.begin(), source.end())};
@@ -439,6 +431,13 @@ struct Runtime::Impl {
         return Json::boolValue(value, fallback);
     }
 
+    int waitAllInputCount(std::size_t node_index) const
+    {
+        const int count = configInt(node_index, "inputFlows", 0);
+        if (count < 0 || count > 64) return 0;
+        return count;
+    }
+
     std::string configString(std::size_t node_index, std::string_view key, std::string fallback = {}) const
     {
         const Json::Value *value = configuration(node_index, key);
@@ -529,7 +528,7 @@ struct Runtime::Impl {
         }
         if (op == "flow/waitAll" && socket == "remainingInputs") {
             const auto found = transient_outputs[node_index].find("__remainingInputs");
-            return found != transient_outputs[node_index].end() ? found->second : integerValue(std::max(configInt(node_index, "inputFlows", 1), 1));
+            return found != transient_outputs[node_index].end() ? found->second : integerValue(waitAllInputCount(node_index));
         }
         if (op == "flow/multiGate" && socket == "lastIndex") {
             const auto found = transient_outputs[node_index].find("__lastIndex");
@@ -977,7 +976,7 @@ struct Runtime::Impl {
             return emit(world,node_index,outputs[selected],error);
         }
         if(op=="flow/waitAll"){
-            const int input_count=std::max(configInt(node_index,"inputFlows",1),1);
+            const int input_count=waitAllInputCount(node_index);
             Value& remaining=transient_outputs[node_index]["__remainingInputs"];
             if(remaining.type!="int")remaining=integerValue(input_count);
             auto reset=[&](){remaining=integerValue(input_count);for(int i=0;i<input_count;++i)transient_outputs[node_index]["__wait_"+std::to_string(i)]=boolean(false);};
@@ -986,8 +985,8 @@ struct Runtime::Impl {
             if(!numeric)return true;
             const std::string key="__wait_"+std::to_string(parsed);
             if(!truthy(transient_outputs[node_index][key])){transient_outputs[node_index][key]=boolean(true);remaining=integerValue(std::max(integer(remaining)-1,0));}
-            if(integer(remaining)==0)return emit(world,node_index,"out",error);
-            return true;
+            if(integer(remaining)==0)return emit(world,node_index,"completed",error);
+            return emit(world,node_index,"out",error);
         }
         if(op=="animation/start"){
             if(animations.size()>=limits.max_active_animations)return fail(error,"KHR_interactivity animation limit exceeded");const int index=integer(value("animation",integerValue(configInt(node_index,"animation",-1))));if(index<0||static_cast<std::size_t>(index)>=Models::modelAnimationCount(instance->model))return emit(world,node_index,"err",error);AnimationState state;state.id=next_runtime_id++;state.animation=static_cast<std::size_t>(index);state.speed=value("speed",scalar(1)).data[0];state.start=value("startTime",scalar(0)).data[0];state.time=state.start;state.loop=truthy(value("loop",boolean(false)));if(const Models::ModelAnimationData*animation=Models::modelAnimation(instance->model,state.animation))state.end=animation->duration;animations.push_back(state);transient_outputs[node_index]["animationId"]={"ref",{static_cast<double>(state.id)}};return emit(world,node_index,"out",error);
