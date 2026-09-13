@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <limits>
 #include <numbers>
@@ -430,6 +431,14 @@ struct Runtime::Impl {
         return value->is(Json::Type::Number) ? value->number : fallback;
     }
 
+    bool configBool(std::size_t node_index, std::string_view key, bool fallback = false) const
+    {
+        const Json::Value *value = configuration(node_index, key);
+        if (!value) return fallback;
+        if (value->is(Json::Type::Array) && !value->array.empty()) return Json::boolValue(&value->array.front(), fallback);
+        return Json::boolValue(value, fallback);
+    }
+
     std::string configString(std::size_t node_index, std::string_view key, std::string fallback = {}) const
     {
         const Json::Value *value = configuration(node_index, key);
@@ -513,6 +522,18 @@ struct Runtime::Impl {
         if (op == "flow/doN" && socket == "currentCount") {
             const auto found = transient_outputs[node_index].find("__currentCount");
             return found != transient_outputs[node_index].end() ? found->second : integerValue(0);
+        }
+        if (op == "flow/for" && socket == "index") {
+            const auto found = transient_outputs[node_index].find("__forIndex");
+            return found != transient_outputs[node_index].end() ? found->second : integerValue(configInt(node_index, "initialIndex", 0));
+        }
+        if (op == "flow/waitAll" && socket == "remainingInputs") {
+            const auto found = transient_outputs[node_index].find("__remainingInputs");
+            return found != transient_outputs[node_index].end() ? found->second : integerValue(std::max(configInt(node_index, "inputFlows", 1), 1));
+        }
+        if (op == "flow/multiGate" && socket == "lastIndex") {
+            const auto found = transient_outputs[node_index].find("__lastIndex");
+            return found != transient_outputs[node_index].end() ? found->second : integerValue(-1);
         }
         if (op == "math/E") return scalar(std::numbers::e);
         if (op == "math/Pi") return scalar(std::numbers::pi);
@@ -907,8 +928,15 @@ struct Runtime::Impl {
             return emit(world,node_index,"out",error);
         }
         if(op=="flow/for"){
-            int start=integer(value("startIndex",value("start",integerValue(0)))),end=integer(value("endIndex",value("end",integerValue(0)))),step=integer(value("increment",value("step",integerValue(1))));if(step==0)step=1;
-            auto condition=[&](int i){return step>0?i<end:i>end;};for(int i=start;condition(i);i+=step){transient_outputs[node_index]["index"]=integerValue(i);if(!emit(world,node_index,"loopBody",error)&&!emit(world,node_index,"body",error))return false;}return emit(world,node_index,"completed",error);
+            const int start=integer(value("startIndex",integerValue(0)));
+            const int end=integer(value("endIndex",integerValue(0)));
+            transient_outputs[node_index]["__forIndex"]=integerValue(start);
+            for(int index=start;index<end;++index){
+                transient_outputs[node_index]["__forIndex"]=integerValue(index);
+                if(!emit(world,node_index,"loopBody",error)&&!emit(world,node_index,"body",error))return false;
+            }
+            transient_outputs[node_index]["__forIndex"]=integerValue(end);
+            return emit(world,node_index,"completed",error);
         }
         if(op=="flow/while"){
             std::size_t guard=0u;while(truthy(value("condition",{}))){if(++guard>limits.max_activations_per_update)return fail(error,"KHR_interactivity while loop budget exceeded");if(!emit(world,node_index,"loopBody",error)&&!emit(world,node_index,"body",error))return false;}return emit(world,node_index,"completed",error);
@@ -923,10 +951,43 @@ struct Runtime::Impl {
             const double duration=std::max(0.0,value("duration",scalar(0)).data[0]);const std::string key="__last";double last=-std::numeric_limits<double>::infinity();if(const auto it=transient_outputs[node_index].find(key);it!=transient_outputs[node_index].end()&&!it->second.data.empty())last=it->second.data[0];if(time_since_start-last>=duration){transient_outputs[node_index][key]=scalar(time_since_start);return emit(world,node_index,"out",error);}return emit(world,node_index,"err",error);
         }
         if(op=="flow/multiGate"){
-            int count=configInt(node_index,"outputCount",configInt(node_index,"count",1));count=std::max(count,1);int next=integer(transient_outputs[node_index]["__next"]);if(input_socket=="reset")next=0;transient_outputs[node_index]["__next"]=integerValue((next+1)%count);if(flow(node_index,std::to_string(next)))return emit(world,node_index,std::to_string(next),error);return emit(world,node_index,"out",error);
+            const Json::Value* flows=nodes[node_index]->get("flows");
+            std::vector<std::string> outputs;
+            if(flows&&flows->is(Json::Type::Object)){outputs.reserve(flows->object.size());for(const auto&[name,_]:flows->object)outputs.push_back(name);}
+            std::sort(outputs.begin(),outputs.end(),socketIdLess);
+            Value& last=transient_outputs[node_index]["__lastIndex"];
+            if(last.type!="int")last=integerValue(-1);
+            auto reset=[&](){last=integerValue(-1);for(std::size_t i=0u;i<outputs.size();++i)transient_outputs[node_index]["__multiUsed"+std::to_string(i)]=boolean(false);};
+            if(input_socket=="reset"){reset();return true;}
+            if(outputs.empty())return true;
+            const bool is_loop=configBool(node_index,"isLoop",false);
+            const bool is_random=configBool(node_index,"isRandom",false);
+            std::vector<std::size_t> available;
+            available.reserve(outputs.size());
+            for(std::size_t i=0u;i<outputs.size();++i){const auto found=transient_outputs[node_index].find("__multiUsed"+std::to_string(i));if(found==transient_outputs[node_index].end()||!truthy(found->second))available.push_back(i);}
+            if(available.empty()){
+                if(!is_loop)return true;
+                reset();
+                available.resize(outputs.size());for(std::size_t i=0u;i<outputs.size();++i)available[i]=i;
+            }
+            std::size_t selected=available.front();
+            if(is_random){std::uniform_int_distribution<std::size_t> distribution(0u,available.size()-1u);selected=available[distribution(random)];}
+            transient_outputs[node_index]["__multiUsed"+std::to_string(selected)]=boolean(true);
+            last=integerValue(static_cast<std::int32_t>(selected));
+            return emit(world,node_index,outputs[selected],error);
         }
         if(op=="flow/waitAll"){
-            const Json::Value* flows=nodes[node_index]->get("flows");const int input_count=std::max(configInt(node_index,"inputCount",configInt(node_index,"count",flows&&flows->is(Json::Type::Object)?static_cast<int>(flows->object.size()):1)),1);std::string key="__wait_"+std::string(input_socket);transient_outputs[node_index][key]=boolean(true);int received=0;for(const auto&[name,v]:transient_outputs[node_index])if(name.starts_with("__wait_")&&truthy(v))++received;if(received>=input_count){for(auto&[name,v]:transient_outputs[node_index])if(name.starts_with("__wait_"))v=boolean(false);return emit(world,node_index,"out",error);}return true;
+            const int input_count=std::max(configInt(node_index,"inputFlows",1),1);
+            Value& remaining=transient_outputs[node_index]["__remainingInputs"];
+            if(remaining.type!="int")remaining=integerValue(input_count);
+            auto reset=[&](){remaining=integerValue(input_count);for(int i=0;i<input_count;++i)transient_outputs[node_index]["__wait_"+std::to_string(i)]=boolean(false);};
+            if(input_socket=="reset"){reset();return true;}
+            std::size_t parsed=0u;bool numeric=!input_socket.empty();for(const char digit:input_socket){if(digit<'0'||digit>'9'){numeric=false;break;}parsed=parsed*10u+static_cast<std::size_t>(digit-'0');if(parsed>=static_cast<std::size_t>(input_count)){numeric=false;break;}}
+            if(!numeric)return true;
+            const std::string key="__wait_"+std::to_string(parsed);
+            if(!truthy(transient_outputs[node_index][key])){transient_outputs[node_index][key]=boolean(true);remaining=integerValue(std::max(integer(remaining)-1,0));}
+            if(integer(remaining)==0)return emit(world,node_index,"out",error);
+            return true;
         }
         if(op=="animation/start"){
             if(animations.size()>=limits.max_active_animations)return fail(error,"KHR_interactivity animation limit exceeded");const int index=integer(value("animation",integerValue(configInt(node_index,"animation",-1))));if(index<0||static_cast<std::size_t>(index)>=Models::modelAnimationCount(instance->model))return emit(world,node_index,"err",error);AnimationState state;state.id=next_runtime_id++;state.animation=static_cast<std::size_t>(index);state.speed=value("speed",scalar(1)).data[0];state.start=value("startTime",scalar(0)).data[0];state.time=state.start;state.loop=truthy(value("loop",boolean(false)));if(const Models::ModelAnimationData*animation=Models::modelAnimation(instance->model,state.animation))state.end=animation->duration;animations.push_back(state);transient_outputs[node_index]["animationId"]={"ref",{static_cast<double>(state.id)}};return emit(world,node_index,"out",error);
