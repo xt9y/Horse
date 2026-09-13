@@ -629,7 +629,9 @@ struct Runtime::Impl {
         }
         if (op == "math/smoothStep") {
             const Value x = input("c", {});
-            Value t = componentwise(componentwise(x, a, [](double p, double q) { return p - q; }), componentwise(b, a, [](double p, double q) { return p - q; }), [](double p, double q) { return std::clamp(p / q, 0.0, 1.0); });
+            const Value low = componentwise(a, b, [](double p, double q) { return std::min(p, q); });
+            const Value span = componentwise(b, a, [](double p, double q) { return std::abs(p - q); });
+            Value t = componentwise(componentwise(x, low, [](double p, double q) { return p - q; }), span, [](double p, double q) { return std::clamp(p / q, 0.0, 1.0); });
             return unary(t, [](double v) { return v * v * (3.0 - 2.0 * v); });
         }
         if (op == "math/eq") {
