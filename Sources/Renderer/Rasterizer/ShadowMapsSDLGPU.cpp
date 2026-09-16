@@ -525,7 +525,7 @@ bool ShadowMaps::update(
         viewport_width,
         viewport_height,
         safe_settings);
-    if (impl_->signature == next_signature || impl_->views.empty() || geometry.worldVertexCount() == 0u) {
+    if (impl_->signature == next_signature || impl_->views.empty()) {
         impl_->signature = next_signature;
         return true;
     }
@@ -544,21 +544,23 @@ bool ShadowMaps::update(
             if (error) *error = "failed to begin raster shadow pass";
             return false;
         }
-        SDL_BindGPUGraphicsPipeline(pass, impl_->pipeline);
-        geometry.bind(pass);
-        SDL_PushGPUVertexUniformData(
-            command,
-            0u,
-            &impl_->views[index],
-            sizeof(ShadowView));
-        SDL_DrawGPUPrimitives(
-            pass,
-            static_cast<Uint32>(std::min<std::size_t>(
-                geometry.worldVertexCount(),
-                UINT32_MAX)),
-            1u,
-            0u,
-            0u);
+        if (geometry.worldVertexCount() > 0u) {
+            SDL_BindGPUGraphicsPipeline(pass, impl_->pipeline);
+            geometry.bind(pass);
+            SDL_PushGPUVertexUniformData(
+                command,
+                0u,
+                &impl_->views[index],
+                sizeof(ShadowView));
+            SDL_DrawGPUPrimitives(
+                pass,
+                static_cast<Uint32>(std::min<std::size_t>(
+                    geometry.worldVertexCount(),
+                    UINT32_MAX)),
+                1u,
+                0u,
+                0u);
+        }
         SDL_EndGPURenderPass(pass);
     }
     impl_->signature = next_signature;
