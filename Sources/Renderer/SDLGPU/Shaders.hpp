@@ -150,6 +150,9 @@ cbuffer VertexFrame : register(b0, space1) {
     uint4 VFrame;
     uint4 VPathPolicy;
 };
+cbuffer VertexDraw : register(b1, space1) {
+    uint4 VDraw;
+};
 
 Texture2D<float4> Tex0  : register(t0,  space2); SamplerState Samp0  : register(s0,  space2);
 Texture2D<float4> Tex1  : register(t1,  space2); SamplerState Samp1  : register(s1,  space2);
@@ -267,7 +270,7 @@ float3 RasterWorldNormal(RasterItem item, float3 normal) {
 
 VSOut VSMain(uint vertex_id : SV_VertexID) {
     VSOut o;
-    RasterVertex vertex = VVertices[vertex_id];
+    RasterVertex vertex = VVertices[vertex_id + VDraw.x];
     RasterItem item = VItems[vertex.meta.x];
     uint entity = item.meta.y;
     if (item.flags.x != 0u && VVisibility[entity] == 0u) {

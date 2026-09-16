@@ -29,6 +29,15 @@ namespace {
 constexpr std::size_t RasterMaterialTextureSlots =
     Scenes::SDLGPU::SceneResources::MaximumTextureSlots - 1u;
 
+struct alignas(16) RasterDrawUniforms {
+    std::uint32_t first_vertex = 0u;
+    std::uint32_t reserved0 = 0u;
+    std::uint32_t reserved1 = 0u;
+    std::uint32_t reserved2 = 0u;
+};
+
+static_assert(sizeof(RasterDrawUniforms) == 16u);
+
 SDL_GPUGraphicsPipeline *createRasterPipeline(
     SDL_GPUShader *vertex,
     SDL_GPUShader *fragment,
@@ -293,11 +302,16 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
                 binding.texture_count, static_cast<std::size_t>(INT32_MAX)));
             SDL_PushGPUFragmentUniformData(
                 command, 0u, &material_uniforms, sizeof(material_uniforms));
+            const RasterDrawUniforms draw_uniforms{
+                static_cast<std::uint32_t>(std::min<std::size_t>(draw.first_vertex, UINT32_MAX)),
+            };
+            SDL_PushGPUVertexUniformData(
+                command, 1u, &draw_uniforms, sizeof(draw_uniforms));
             SDL_DrawGPUPrimitives(
                 target,
                 static_cast<Uint32>(std::min<std::size_t>(draw.vertex_count, UINT32_MAX)),
                 1u,
-                static_cast<Uint32>(std::min<std::size_t>(draw.first_vertex, UINT32_MAX)),
+                0u,
                 0u);
         }
         return true;
