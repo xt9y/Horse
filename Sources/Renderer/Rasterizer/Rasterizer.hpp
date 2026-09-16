@@ -7,13 +7,13 @@
 namespace Renderer {
 
 struct RasterizerSettings {
-    bool enabled = false;
-    bool viewport_culling = false;
+    bool enabled = true;
+    bool viewport_culling = true;
     int shadow_resolution = 512;
     int shadow_cascades = 4;
     float shadow_distance = 80.0f;
     float shadow_near_plane = 0.05f;
-    Vec4 clear_color{};
+    Vec4 clear_color {0.0f, 0.0f, 0.0f, 1.0f};
 };
 
 class Rasterizer final : public IRenderer {
