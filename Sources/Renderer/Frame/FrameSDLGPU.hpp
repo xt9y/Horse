@@ -21,6 +21,7 @@ public:
 
     SDL_GPUTexture *color() const { return color_; }
     SDL_GPUTexture *depth() const { return depth_; }
+    SDL_GPUTexture *cameraDepth();
     SDL_GPUTexture *linearDepth() const { return linear_depth_; }
     SDL_GPUTexture *velocity() const { return velocity_; }
     int width() const { return width_; }
@@ -32,6 +33,7 @@ private:
 
     SDL_GPUTexture *color_ = nullptr;
     SDL_GPUTexture *depth_ = nullptr;
+    SDL_GPUTexture *camera_depth_ = nullptr;
     SDL_GPUTexture *linear_depth_ = nullptr;
     SDL_GPUTexture *velocity_ = nullptr;
     int width_ = 1;

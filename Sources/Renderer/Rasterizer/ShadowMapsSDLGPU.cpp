@@ -525,7 +525,7 @@ bool ShadowMaps::update(
         viewport_width,
         viewport_height,
         safe_settings);
-    if (impl_->signature == next_signature || impl_->views.empty() || geometry.vertexCount() == 0u) {
+    if (impl_->signature == next_signature || impl_->views.empty() || geometry.worldVertexCount() == 0u) {
         impl_->signature = next_signature;
         return true;
     }
@@ -554,7 +554,7 @@ bool ShadowMaps::update(
         SDL_DrawGPUPrimitives(
             pass,
             static_cast<Uint32>(std::min<std::size_t>(
-                geometry.vertexCount(),
+                geometry.worldVertexCount(),
                 UINT32_MAX)),
             1u,
             0u,

@@ -79,6 +79,7 @@ void Target::destroy()
     SDL_GPUDevice *device = Renderer::SDLGPU::device();
     if (device) {
         if (linear_depth_) SDL_ReleaseGPUTexture(device, linear_depth_);
+        if (camera_depth_) SDL_ReleaseGPUTexture(device, camera_depth_);
         if (depth_) SDL_ReleaseGPUTexture(device, depth_);
         if (velocity_) SDL_ReleaseGPUTexture(device, velocity_);
         if (color_) SDL_ReleaseGPUTexture(device, color_);
@@ -86,6 +87,7 @@ void Target::destroy()
     color_ = nullptr;
     velocity_ = nullptr;
     depth_ = nullptr;
+    camera_depth_ = nullptr;
     linear_depth_ = nullptr;
 }
 
@@ -98,6 +100,21 @@ bool Target::resize(int width, int height)
     height_ = next_height;
     destroy();
     return create();
+}
+
+SDL_GPUTexture *Target::cameraDepth()
+{
+    if (camera_depth_) return camera_depth_;
+    if (!Renderer::SDLGPU::device()) return nullptr;
+    camera_depth_ = Renderer::SDLGPU::createTexture(
+        SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+        DepthUsage,
+        static_cast<std::uint32_t>(width_),
+        static_cast<std::uint32_t>(height_),
+        "Horse Camera Layer Depth");
+    if (!camera_depth_)
+        std::fprintf(stderr, "[Frame/SDL_GPU]: camera depth target creation failed: %s\n", SDL_GetError());
+    return camera_depth_;
 }
 
 bool Target::begin(Internal::FrameOutput& output)

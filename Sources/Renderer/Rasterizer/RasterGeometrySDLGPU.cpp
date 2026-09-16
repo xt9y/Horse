@@ -167,6 +167,20 @@ std::uint64_t topologySignature(const std::vector<Scenes::Scene::RenderItem>& it
     return hash;
 }
 
+std::uint64_t cameraLayerSignature(
+    const Ecs::World& world,
+    const std::vector<Scenes::Scene::RenderItem>& items)
+{
+    std::uint64_t hash = 1469598103934665603ull;
+    const Ecs::Entity camera = Camera::activeCamera(world);
+    hashValue(hash, camera);
+    for (const Scenes::Scene::RenderItem& item : items) {
+        hashValue(hash, item.entity);
+        hashValue(hash, cameraAttached(world, item.entity, camera) ? 1u : 0u);
+    }
+    return hash;
+}
+
 bool appendInfluences(
     const Models::MeshData& mesh,
     std::size_t vertex_index,
@@ -382,12 +396,16 @@ struct RasterGeometry::Impl {
     std::vector<Float4> skin;
     std::vector<ItemBinding> bindings;
     std::uint64_t topology_signature = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t camera_layer_signature = std::numeric_limits<std::uint64_t>::max();
     Scenes::Scene::RenderRevision render_revision{};
     std::uint64_t camera_revision = 0u;
     bool revision_initialized = false;
     std::uint64_t geometry_revision = 0u;
     std::uint64_t shadow_signature = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t shadow_revision = 0u;
+    std::size_t world_vertex_count = 0u;
+    std::size_t camera_first_vertex = 0u;
+    std::size_t camera_vertex_count = 0u;
 
     bool ensureBuffer(
         SDL_GPUBuffer *&buffer,
@@ -421,55 +439,74 @@ struct RasterGeometry::Impl {
         bindings.resize(render_items.size());
 
         const std::size_t maximum_triangles = Scenes::SceneCache::maximumTriangles();
+        std::vector<std::size_t> triangle_counts(render_items.size(), 0u);
         std::size_t triangles_written = 0u;
         for (std::size_t item_index = 0u; item_index < render_items.size(); ++item_index) {
             const Scenes::Scene::RenderItem& item = render_items[item_index];
-            ItemBinding& binding = bindings[item_index];
-            binding.first_vertex = vertices.size();
             if (!item.mesh_component || !item.mesh || !item.material ||
                 item.material->opacity < Scenes::SceneCache::opacityCutoff())
                 continue;
-
-            binding.morph = world.get<ModelDeformComponent>(item.entity) &&
-                !item.mesh->morph_targets.empty();
             const std::size_t available_triangles = item.mesh->indices.size() / 3u;
             const std::size_t triangle_count = maximum_triangles == 0u
                 ? available_triangles
                 : std::min(available_triangles, maximum_triangles - std::min(maximum_triangles, triangles_written));
-
-            for (std::size_t triangle = 0u; triangle < triangle_count; ++triangle) {
-                for (std::size_t corner = 0u; corner < 3u; ++corner) {
-                    const std::uint32_t source_index = item.mesh->indices[triangle * 3u + corner];
-                    if (source_index >= item.mesh->vertices.size())
-                        return fail(error, "raster mesh index references invalid vertex");
-                    Models::Vertex source{};
-                    if (!sourceVertex(world, item, source_index, &source, error)) return false;
-                    std::uint32_t influence_offset = 0u;
-                    std::uint32_t influence_count = 0u;
-                    if (!appendInfluences(
-                            *item.mesh,
-                            source_index,
-                            influences,
-                            &influence_offset,
-                            &influence_count,
-                            error)) return false;
-                    RasterVertex vertex;
-                    vertex.position = {source.position.x, source.position.y, source.position.z, 1.0f};
-                    vertex.normal = {source.normal.x, source.normal.y, source.normal.z, 0.0f};
-                    vertex.uv = {source.uv.x, source.uv.y, 0.0f, 0.0f};
-                    vertex.meta = {
-                        static_cast<std::uint32_t>(item_index),
-                        influence_offset,
-                        influence_count,
-                        0u,
-                    };
-                    vertices.push_back(vertex);
-                }
-            }
+            triangle_counts[item_index] = triangle_count;
             triangles_written += triangle_count;
-            binding.vertex_count = vertices.size() - binding.first_vertex;
             if (maximum_triangles != 0u && triangles_written >= maximum_triangles) break;
         }
+
+        const Ecs::Entity camera = Camera::activeCamera(world);
+        const auto append_layer = [&](bool camera_layer) -> bool {
+            for (std::size_t item_index = 0u; item_index < render_items.size(); ++item_index) {
+                const Scenes::Scene::RenderItem& item = render_items[item_index];
+                if (cameraAttached(world, item.entity, camera) != camera_layer) continue;
+
+                ItemBinding& binding = bindings[item_index];
+                binding.first_vertex = vertices.size();
+                binding.morph = world.get<ModelDeformComponent>(item.entity) &&
+                    item.mesh && !item.mesh->morph_targets.empty();
+                const std::size_t triangle_count = triangle_counts[item_index];
+                if (triangle_count == 0u || !item.mesh) continue;
+
+                for (std::size_t triangle = 0u; triangle < triangle_count; ++triangle) {
+                    for (std::size_t corner = 0u; corner < 3u; ++corner) {
+                        const std::uint32_t source_index = item.mesh->indices[triangle * 3u + corner];
+                        if (source_index >= item.mesh->vertices.size())
+                            return fail(error, "raster mesh index references invalid vertex");
+                        Models::Vertex source{};
+                        if (!sourceVertex(world, item, source_index, &source, error)) return false;
+                        std::uint32_t influence_offset = 0u;
+                        std::uint32_t influence_count = 0u;
+                        if (!appendInfluences(
+                                *item.mesh,
+                                source_index,
+                                influences,
+                                &influence_offset,
+                                &influence_count,
+                                error)) return false;
+                        RasterVertex vertex;
+                        vertex.position = {source.position.x, source.position.y, source.position.z, 1.0f};
+                        vertex.normal = {source.normal.x, source.normal.y, source.normal.z, 0.0f};
+                        vertex.uv = {source.uv.x, source.uv.y, 0.0f, 0.0f};
+                        vertex.meta = {
+                            static_cast<std::uint32_t>(item_index),
+                            influence_offset,
+                            influence_count,
+                            0u,
+                        };
+                        vertices.push_back(vertex);
+                    }
+                }
+                binding.vertex_count = vertices.size() - binding.first_vertex;
+            }
+            return true;
+        };
+
+        if (!append_layer(false)) return false;
+        world_vertex_count = vertices.size();
+        camera_first_vertex = world_vertex_count;
+        if (!append_layer(true)) return false;
+        camera_vertex_count = vertices.size() - camera_first_vertex;
         return true;
     }
 
@@ -528,8 +565,9 @@ struct RasterGeometry::Impl {
                 skin_offset,
                 skin_count,
             };
+            const bool attached_to_camera = cameraAttached(world, source.entity, camera);
             target.flags = {
-                cameraAttached(world, source.entity, camera) ? 0u : 1u,
+                attached_to_camera ? 0u : 1u,
                 0u,
                 0u,
                 0u,
@@ -601,15 +639,22 @@ bool RasterGeometry::sync(
     const std::uint64_t current_camera_revision =
         world.changeRevision(Ecs::ChangeKind::Camera);
     const std::uint64_t current_topology = topologySignature(scene.renderItems());
-    const bool topology_changed = impl_->topology_signature != current_topology;
+    const bool structure_changed = !impl_->revision_initialized ||
+        impl_->render_revision.structure != current_revision.structure;
+    const bool camera_changed = !impl_->revision_initialized ||
+        impl_->camera_revision != current_camera_revision;
+    const bool base_topology_changed = impl_->topology_signature != current_topology;
+    std::uint64_t current_camera_layer = impl_->camera_layer_signature;
+    if (base_topology_changed || structure_changed || camera_changed)
+        current_camera_layer = cameraLayerSignature(world, scene.renderItems());
+    const bool camera_layer_changed = impl_->camera_layer_signature != current_camera_layer;
+    const bool topology_changed = base_topology_changed || camera_layer_changed;
     const bool animation_changed = !impl_->revision_initialized ||
         impl_->render_revision.animation != current_revision.animation;
     const bool transform_changed = !impl_->revision_initialized ||
         impl_->render_revision.transform != current_revision.transform;
     const bool resource_changed = !impl_->revision_initialized ||
         impl_->render_revision.resource != current_revision.resource;
-    const bool camera_changed = !impl_->revision_initialized ||
-        impl_->camera_revision != current_camera_revision;
 
     bool vertices_changed = false;
     bool influences_changed = false;
@@ -626,7 +671,8 @@ bool RasterGeometry::sync(
     }
 
     const bool items_changed =
-        topology_changed || animation_changed || transform_changed || resource_changed || camera_changed;
+        topology_changed || structure_changed || animation_changed || transform_changed ||
+        resource_changed || camera_changed;
     if (items_changed && !impl_->updateItems(world, scene, error)) return false;
     if (!impl_->upload(
             vertices_changed,
@@ -643,6 +689,7 @@ bool RasterGeometry::sync(
         impl_->shadow_signature = current_shadow_signature;
     }
     impl_->topology_signature = current_topology;
+    impl_->camera_layer_signature = current_camera_layer;
     impl_->render_revision = current_revision;
     impl_->camera_revision = current_camera_revision;
     impl_->revision_initialized = true;
@@ -685,16 +732,40 @@ void RasterGeometry::clear()
     impl_->vertices.clear();
     impl_->bindings.clear();
     impl_->topology_signature = std::numeric_limits<std::uint64_t>::max();
+    impl_->camera_layer_signature = std::numeric_limits<std::uint64_t>::max();
     impl_->camera_revision = 0u;
     impl_->revision_initialized = false;
     impl_->geometry_revision = 0u;
     impl_->shadow_signature = std::numeric_limits<std::uint64_t>::max();
     impl_->shadow_revision = 0u;
+    impl_->world_vertex_count = 0u;
+    impl_->camera_first_vertex = 0u;
+    impl_->camera_vertex_count = 0u;
 }
 
 std::size_t RasterGeometry::vertexCount() const
 {
     return impl_ ? impl_->vertices.size() : 0u;
+}
+
+std::size_t RasterGeometry::worldVertexCount() const
+{
+    return impl_ ? impl_->world_vertex_count : 0u;
+}
+
+std::size_t RasterGeometry::cameraFirstVertex() const
+{
+    return impl_ ? impl_->camera_first_vertex : 0u;
+}
+
+std::size_t RasterGeometry::cameraVertexCount() const
+{
+    return impl_ ? impl_->camera_vertex_count : 0u;
+}
+
+bool RasterGeometry::hasCameraGeometry() const
+{
+    return cameraVertexCount() != 0u;
 }
 
 std::uint64_t RasterGeometry::revision() const

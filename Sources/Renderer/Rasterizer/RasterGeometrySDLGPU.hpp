@@ -29,6 +29,10 @@ public:
     void clear();
 
     std::size_t vertexCount() const;
+    std::size_t worldVertexCount() const;
+    std::size_t cameraFirstVertex() const;
+    std::size_t cameraVertexCount() const;
+    bool hasCameraGeometry() const;
     std::uint64_t revision() const;
     std::uint64_t shadowRevision() const;
 

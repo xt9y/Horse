@@ -286,7 +286,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         SDL_PushGPUFragmentUniformData(command, 0u, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 3u, 1u, 0u, 0u);
 
-        if (impl_->geometry.vertexCount() > 0u) {
+        if (impl_->geometry.worldVertexCount() > 0u) {
             SDL_BindGPUGraphicsPipeline(pass, impl_->pipeline);
             impl_->geometry.bind(pass);
             SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
@@ -299,12 +299,51 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             SDL_DrawGPUPrimitives(
                 pass,
                 static_cast<Uint32>(std::min<std::size_t>(
-                    impl_->geometry.vertexCount(), UINT32_MAX)),
+                    impl_->geometry.worldVertexCount(), UINT32_MAX)),
                 1u, 0u, 0u);
         }
     }
 
     SDL_EndGPURenderPass(pass);
+
+    if (camera.valid && impl_->settings.enabled && impl_->geometry.hasCameraGeometry()) {
+        colors[0].load_op = SDL_GPU_LOADOP_LOAD;
+        colors[1].load_op = SDL_GPU_LOADOP_LOAD;
+        depth.texture = impl_->frame.cameraDepth();
+        if (!depth.texture) {
+            Frame::SDLGPU::cancel(output);
+            return false;
+        }
+        depth.clear_depth = 1.0f;
+        depth.load_op = SDL_GPU_LOADOP_CLEAR;
+        depth.store_op = SDL_GPU_STOREOP_DONT_CARE;
+
+        SDL_GPURenderPass *camera_pass = SDL_BeginGPURenderPass(command, colors, 2u, &depth);
+        if (!camera_pass) {
+            Frame::SDLGPU::cancel(output);
+            return false;
+        }
+
+        SDL_BindGPUGraphicsPipeline(camera_pass, impl_->pipeline);
+        impl_->geometry.bind(camera_pass);
+        SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
+        SDL_BindGPUVertexStorageBuffers(camera_pass, 4u, visibility_buffers, 1u);
+        impl_->scene.bindRasterFragment(camera_pass);
+        Internal::bindGlobalIlluminationSDLGPU(camera_pass, output.global_illumination, 2u);
+        impl_->shadows.bind(camera_pass);
+        SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
+        SDL_PushGPUFragmentUniformData(command, 0u, &uniforms, sizeof(uniforms));
+        SDL_DrawGPUPrimitives(
+            camera_pass,
+            static_cast<Uint32>(std::min<std::size_t>(
+                impl_->geometry.cameraVertexCount(), UINT32_MAX)),
+            1u,
+            static_cast<Uint32>(std::min<std::size_t>(
+                impl_->geometry.cameraFirstVertex(), UINT32_MAX)),
+            0u);
+        SDL_EndGPURenderPass(camera_pass);
+    }
+
     output.api = Internal::GraphicsApi::SDLGPU;
     output.depth = Internal::DepthSource::Native;
     output.depth_texture = impl_->frame.depth();

@@ -270,7 +270,7 @@ VSOut VSMain(uint vertex_id : SV_VertexID) {
     RasterVertex vertex = VVertices[vertex_id];
     RasterItem item = VItems[vertex.meta.x];
     uint entity = item.meta.y;
-    if (VVisibility[entity] == 0u) {
+    if (item.flags.x != 0u && VVisibility[entity] == 0u) {
         o.position = float4(2.0, 2.0, 2.0, 1.0);
         o.world = 0.0.xxx;
         o.normal = float3(0.0, 1.0, 0.0);
