@@ -1,6 +1,7 @@
 #include "Renderer/Renderer.hpp"
 
 #include "Renderer/Internal/DebugRenderPass.hpp"
+#include "Renderer/Internal/Display.hpp"
 #include "Renderer/Internal/FontPass.hpp"
 #include "Renderer/GaussianSplat/GaussianSplat.hpp"
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
@@ -20,6 +21,7 @@ void IRenderer::render(const Ecs::World& world)
     if (!GaussianSplat::render(world, output)) return;
     if (!Volumetrics::render(world, output)) return;
     if (post_process_ && !post_process_->process(output)) return;
+    if (!Internal::renderDisplay(world, output)) return;
     if (!compose(output)) return;
     Debug::RenderPass::render(world, output);
     Internal::renderFonts(world, output);
