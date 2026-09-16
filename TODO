@@ -96,17 +96,18 @@ clearly separated; removes the redundant `Camera::Controller` alias.
 `Assets/Sponza/sponza.obj`, parented to a root transform with scale 0.01 and
 vertical offset about 1.264.
 
-- [ ] Add a temporary integration probe that loads Sponza and fails if the model
+- [x] Add a temporary integration probe that loads Sponza and fails if the model
       or instantiated scene is invalid.
-- [ ] Run the probe against the pre-migration GAME setup.
-- [ ] Remove `TestScene` usage and instantiate Sponza through the standard model
+- [x] Run the probe against the pre-migration GAME setup.
+- [x] Remove `TestScene` usage and instantiate Sponza through the standard model
       path; preserve environment, directional light and viewmodel overlay.
-- [ ] Update the information overlay to report Sponza model/part/node counts
+- [x] Update the information overlay to report Sponza model/part/node counts
       rather than procedural test-scene mesh/material counts.
-- [ ] Search GAME for all direct low-level geometry API usage; expected result is
+- [x] Search GAME for all direct low-level geometry API usage; expected result is
       zero occurrences.
-- [ ] Build GAME and run the Sponza integration probe expecting success.
-- [ ] Commit the GAME migration separately from Horse.
+- [x] Build GAME and run the Sponza integration probe expecting success.
+- [ ] Commit the GAME migration separately from Horse. Left uncommitted because
+      GAME already contains mixed pre-existing user changes outside this migration.
 
 ### Task 5: Whole-engine public API audit and targeted cleanup
 
@@ -114,29 +115,29 @@ vertical offset about 1.264.
 
 **Produces:** a smaller public surface without removing generic features.
 
-- [ ] Enumerate public-looking headers under `Sources/*/*.hpp` and classify each
+- [x] Enumerate public-looking headers under `Sources/*/*.hpp` and classify each
       as gameplay API, advanced API, or implementation detail.
-- [ ] Search for redundant aliases, public headers that expose only
+- [x] Search for redundant aliases, public headers that expose only
       `Renderer::Internal`, backend-only hooks, and APIs with no non-internal
       callers.
-- [ ] Apply only cleanups with a clear ownership improvement and no replacement
+- [x] Apply only cleanups with a clear ownership improvement and no replacement
       feature requirement.
-- [ ] Build Horse after each cleanup group and revert any cleanup that merely
+- [x] Build Horse after each cleanup group and revert any cleanup that merely
       renames a useful generic API without reducing ambiguity.
-- [ ] Run a final search confirming raw geometry writes/components are not in the
+- [x] Run a final search confirming raw geometry writes/components are not in the
       normal public headers.
-- [ ] Commit the final audit cleanup.
+- [x] Commit the final audit cleanup.
 
 ### Task 6: Final integration verification
 
 **Files:** no production changes unless verification finds a real defect.
 
-- [ ] Build Horse from a clean dependency state.
-- [ ] Build GAME against the cleaned Horse source/commit.
-- [ ] Start GAME and confirm Sponza loads and SDL_GPU rasterizer initializes.
-- [ ] Verify the viewmodel remains classified as Overlay and excluded from world
+- [x] Build Horse from a clean dependency state.
+- [x] Build GAME against the cleaned Horse source/commit.
+- [x] Start GAME and confirm Sponza loads and SDL_GPU rasterizer initializes.
+- [x] Verify the viewmodel remains classified as Overlay and excluded from world
       shadows/depth.
-- [ ] Search GAME for removed low-level geometry APIs and Horse public headers for
+- [x] Search GAME for removed low-level geometry APIs and Horse public headers for
       registry-write declarations.
-- [ ] Review `git diff`/status in both repos to ensure no unrelated user changes
+- [x] Review `git diff`/status in both repos to ensure no unrelated user changes
       were overwritten.
