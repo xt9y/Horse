@@ -20,6 +20,8 @@ using DepthSource = PostProcess::DepthSource;
 struct FrameOutput : PostProcess::Frame {
     const GlobalIllumination::Field *global_illumination = nullptr;
     void *scene_resources = nullptr;
+    void *display_texture = nullptr;
+    void *presentation_texture = nullptr;
 };
 
 } // namespace Internal
