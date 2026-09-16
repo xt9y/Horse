@@ -133,6 +133,12 @@ GpuAdvancedMaterial encode(
         std::max(material.dispersion, 0.0f),
         std::max(material.ior, 1.0001f),
     };
+    gpu.texture_scales = {
+        std::max(material.clearcoat_normal_info.scale, 0.0f),
+        0.0f,
+        0.0f,
+        0.0f,
+    };
     gpu.misc = {
         std::clamp(material.alpha_cutoff, 0.0f, 1.0f),
         material.unlit ? 1.0f : 0.0f,
