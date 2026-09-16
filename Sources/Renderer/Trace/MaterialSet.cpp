@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -133,12 +134,6 @@ GpuAdvancedMaterial encode(
         std::max(material.dispersion, 0.0f),
         std::max(material.ior, 1.0001f),
     };
-    gpu.texture_scales = {
-        std::max(material.clearcoat_normal_info.scale, 0.0f),
-        0.0f,
-        0.0f,
-        0.0f,
-    };
     gpu.misc = {
         std::clamp(material.alpha_cutoff, 0.0f, 1.0f),
         material.unlit ? 1.0f : 0.0f,
@@ -165,7 +160,12 @@ GpuAdvancedMaterial encode(
         slot(material.iridescence_info.texture), slot(material.iridescence_thickness_info.texture),
         slot(material.anisotropy_info.texture), slot(material.diffuse_transmission_info.texture),
     };
-    gpu.tex5 = {slot(material.diffuse_transmission_color_info.texture), -1, -1, -1};
+    gpu.tex5 = {
+        slot(material.diffuse_transmission_color_info.texture),
+        std::bit_cast<std::int32_t>(std::max(material.clearcoat_normal_info.scale, 0.0f)),
+        -1,
+        -1,
+    };
     return gpu;
 }
 
