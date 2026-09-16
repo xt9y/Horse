@@ -111,6 +111,14 @@ bool cameraAttached(const Ecs::World& world, Ecs::Entity entity, Ecs::Entity cam
     return false;
 }
 
+bool cameraLayer(
+    const Ecs::World& world,
+    const Scenes::Scene::RenderItem& item,
+    Ecs::Entity camera)
+{
+    return item.layer == RenderLayer::Overlay || cameraAttached(world, item.entity, camera);
+}
+
 std::uint64_t shadowSignature(
     const Ecs::World& world,
     const std::vector<Scenes::Scene::RenderItem>& items)
@@ -119,7 +127,7 @@ std::uint64_t shadowSignature(
     const Ecs::Entity camera = Camera::activeCamera(world);
     for (const Scenes::Scene::RenderItem& item : items) {
         if (!item.mesh_component || !item.transform || !item.mesh ||
-            cameraAttached(world, item.entity, camera))
+            cameraLayer(world, item, camera))
             continue;
 
         hashValue(hash, item.entity);
@@ -176,7 +184,7 @@ std::uint64_t cameraLayerSignature(
     hashValue(hash, camera);
     for (const Scenes::Scene::RenderItem& item : items) {
         hashValue(hash, item.entity);
-        hashValue(hash, cameraAttached(world, item.entity, camera) ? 1u : 0u);
+        hashValue(hash, cameraLayer(world, item, camera) ? 1u : 0u);
     }
     return hash;
 }
@@ -459,7 +467,7 @@ struct RasterGeometry::Impl {
         const auto append_layer = [&](bool camera_layer) -> bool {
             for (std::size_t item_index = 0u; item_index < render_items.size(); ++item_index) {
                 const Scenes::Scene::RenderItem& item = render_items[item_index];
-                if (cameraAttached(world, item.entity, camera) != camera_layer) continue;
+                if (cameraLayer(world, item, camera) != camera_layer) continue;
 
                 ItemBinding& binding = bindings[item_index];
                 binding.first_vertex = vertices.size();
@@ -565,7 +573,7 @@ struct RasterGeometry::Impl {
                 skin_offset,
                 skin_count,
             };
-            const bool attached_to_camera = cameraAttached(world, source.entity, camera);
+            const bool attached_to_camera = cameraLayer(world, source, camera);
             target.flags = {
                 attached_to_camera ? 0u : 1u,
                 0u,

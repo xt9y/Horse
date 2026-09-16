@@ -56,6 +56,7 @@ struct MeshState {
 struct RenderItem {
     Ecs::Entity entity = Ecs::INVALID_ENTITY;
     std::uint32_t instance_index = UINT32_MAX;
+    RenderLayer layer = RenderLayer::World;
     TransformState transform{};
     MeshState mesh_component{};
     const Models::MeshData* mesh = nullptr;

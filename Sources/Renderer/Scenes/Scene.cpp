@@ -30,6 +30,20 @@ Transform resolvedTransform(const Ecs::World& world, Ecs::Entity entity, const T
     return Hierarchy::worldTransform(world, entity, &result) ? result : local;
 }
 
+RenderLayer resolvedRenderLayer(const Ecs::World& world, Ecs::Entity entity)
+{
+    Ecs::Entity current = entity;
+    const std::size_t maximum = world.size() + 1u;
+    for (std::size_t depth = 0u; depth < maximum; ++depth) {
+        if (const RenderLayerComponent *layer = world.get<RenderLayerComponent>(current))
+            return layer->layer;
+        const Parent *parent = world.get<Parent>(current);
+        if (!parent || parent->entity == Ecs::INVALID_ENTITY || !world.alive(parent->entity)) break;
+        current = parent->entity;
+    }
+    return RenderLayer::World;
+}
+
 float distanceSquared(Vec3 a, Vec3 b)
 {
     const float x = a.x - b.x;
@@ -78,6 +92,7 @@ void appendItem(
     out.push_back(RenderItem{
         .entity = entity,
         .instance_index = instance_index,
+        .layer = resolvedRenderLayer(world, entity),
         .transform = TransformState{transform, true},
         .mesh_component = MeshState{selected, true},
         .mesh = mesh,

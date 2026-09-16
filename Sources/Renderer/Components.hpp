@@ -57,6 +57,15 @@ struct RenderableComponent {
     bool visible = false;
 };
 
+enum class RenderLayer {
+    World,
+    Overlay,
+};
+
+struct RenderLayerComponent {
+    RenderLayer layer = RenderLayer::World;
+};
+
 struct InteractionComponent {
     bool selectable = true;
     bool hoverable = true;
