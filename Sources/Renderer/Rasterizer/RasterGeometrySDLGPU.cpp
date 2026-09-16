@@ -403,6 +403,7 @@ struct RasterGeometry::Impl {
     std::vector<RasterInfluence> influences;
     std::vector<Float4> skin;
     std::vector<ItemBinding> bindings;
+    std::vector<RasterGeometry::DrawRange> draws;
     std::uint64_t topology_signature = std::numeric_limits<std::uint64_t>::max();
     std::uint64_t camera_layer_signature = std::numeric_limits<std::uint64_t>::max();
     Scenes::Scene::RenderRevision render_revision{};
@@ -443,6 +444,7 @@ struct RasterGeometry::Impl {
         vertices.clear();
         influences.clear();
         bindings.clear();
+        draws.clear();
         const auto& render_items = scene.renderItems();
         bindings.resize(render_items.size());
 
@@ -506,6 +508,23 @@ struct RasterGeometry::Impl {
                     }
                 }
                 binding.vertex_count = vertices.size() - binding.first_vertex;
+                if (binding.vertex_count != 0u && item.mesh_component) {
+                    const RasterGeometry::DrawRange next{
+                        binding.first_vertex,
+                        binding.vertex_count,
+                        item.mesh_component->material,
+                        camera_layer,
+                    };
+                    if (!draws.empty() &&
+                        draws.back().camera_layer == next.camera_layer &&
+                        draws.back().material == next.material &&
+                        draws.back().first_vertex + draws.back().vertex_count == next.first_vertex)
+                    {
+                        draws.back().vertex_count += next.vertex_count;
+                    } else {
+                        draws.push_back(next);
+                    }
+                }
             }
             return true;
         };
@@ -739,6 +758,7 @@ void RasterGeometry::clear()
     impl_->items.clear();
     impl_->vertices.clear();
     impl_->bindings.clear();
+    impl_->draws.clear();
     impl_->topology_signature = std::numeric_limits<std::uint64_t>::max();
     impl_->camera_layer_signature = std::numeric_limits<std::uint64_t>::max();
     impl_->camera_revision = 0u;
@@ -774,6 +794,12 @@ std::size_t RasterGeometry::cameraVertexCount() const
 bool RasterGeometry::hasCameraGeometry() const
 {
     return cameraVertexCount() != 0u;
+}
+
+const std::vector<RasterGeometry::DrawRange>& RasterGeometry::draws() const
+{
+    static const std::vector<DrawRange> empty;
+    return impl_ ? impl_->draws : empty;
 }
 
 std::uint64_t RasterGeometry::revision() const

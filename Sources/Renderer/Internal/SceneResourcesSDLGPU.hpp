@@ -18,6 +18,7 @@ namespace Renderer::Scenes::SDLGPU {
 class SceneResources {
 public:
     static constexpr std::size_t MaximumTextureSlots = 16u;
+    static constexpr std::size_t MaximumRasterTextureSlots = MaximumTextureSlots - 1u;
 
     SceneResources() = default;
     ~SceneResources();
@@ -28,6 +29,12 @@ public:
     struct SyncResult {
         bool ok = false;
         bool scene_changed = false;
+    };
+
+    struct RasterBinding {
+        bool valid = false;
+        std::size_t material_count = 0u;
+        std::size_t texture_count = 0u;
     };
 
     bool init(std::string *error = nullptr);
@@ -47,6 +54,10 @@ public:
     void bindVertex(SDL_GPURenderPass *pass) const;
     void bindFragment(SDL_GPURenderPass *pass) const;
     void bindRasterFragment(SDL_GPURenderPass *pass) const;
+    RasterBinding bindRasterMaterial(
+        SDL_GPURenderPass *pass,
+        Models::MaterialHandle material
+    ) const;
     void bindSky(SDL_GPURenderPass *pass) const;
     void bindCompute(SDL_GPUComputePass *pass) const;
 
@@ -60,8 +71,22 @@ public:
     bool hasEnvironmentTexture() const;
 
 private:
+    struct RasterMaterialResources {
+        Models::MaterialHandle material = Models::INVALID_MATERIAL;
+        SDL_GPUBuffer *base_materials = nullptr;
+        SDL_GPUBuffer *materials = nullptr;
+        std::array<SDL_GPUTextureSamplerBinding, MaximumRasterTextureSlots> texture_bindings{};
+        std::size_t material_count = 0u;
+        std::size_t texture_count = 0u;
+    };
+
     bool syncBuffers(bool include_geometry, std::string *error);
     bool syncTextures(std::string *error);
+    bool syncRasterMaterials(
+        const Ecs::World& world,
+        std::size_t maximum_texture_slots,
+        std::string *error
+    );
     bool ensureBuffer(
         SDL_GPUBuffer *&target,
         std::size_t& capacity,
@@ -71,6 +96,7 @@ private:
     );
     SDL_GPUTexture *textureFor(Models::TextureHandle handle, std::string *error);
     void clearTextures();
+    void clearRasterMaterials();
 
     SceneCache scene_;
     Trace::MaterialSet materials_;
@@ -88,10 +114,13 @@ private:
     SDL_GPUSampler *sampler_ = nullptr;
     std::unordered_map<Models::TextureHandle, SDL_GPUTexture *> texture_cache_;
     std::array<SDL_GPUTextureSamplerBinding, MaximumTextureSlots> texture_bindings_{};
+    std::vector<RasterMaterialResources> raster_materials_;
+    std::unordered_map<Models::MaterialHandle, std::size_t> raster_material_indices_;
 
     std::uint64_t geometry_revision_ = UINT64_MAX;
     std::uint64_t resource_revision_ = UINT64_MAX;
     std::uint64_t material_revision_ = UINT64_MAX;
+    std::uint64_t raster_material_revision_ = UINT64_MAX;
 };
 
 } // namespace Renderer::Scenes::SDLGPU

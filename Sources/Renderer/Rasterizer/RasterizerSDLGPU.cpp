@@ -279,6 +279,30 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         impl_->scene.materialCount(), impl_->scene.textureCount(),
         Scenes::SceneCache::opacityCutoff());
 
+    const auto draw_ranges = [&](SDL_GPURenderPass *target, bool camera_layer) -> bool {
+        for (const RasterizerSDLGPU::RasterGeometry::DrawRange& draw : impl_->geometry.draws()) {
+            if (draw.camera_layer != camera_layer || draw.vertex_count == 0u) continue;
+            const Scenes::SDLGPU::SceneResources::RasterBinding binding =
+                impl_->scene.bindRasterMaterial(target, draw.material);
+            if (!binding.valid) return false;
+
+            SDLGPU::FrameUniforms material_uniforms = uniforms;
+            material_uniforms.counts[2] = static_cast<std::int32_t>(std::min<std::size_t>(
+                binding.material_count, static_cast<std::size_t>(INT32_MAX)));
+            material_uniforms.counts[3] = static_cast<std::int32_t>(std::min<std::size_t>(
+                binding.texture_count, static_cast<std::size_t>(INT32_MAX)));
+            SDL_PushGPUFragmentUniformData(
+                command, 0u, &material_uniforms, sizeof(material_uniforms));
+            SDL_DrawGPUPrimitives(
+                target,
+                static_cast<Uint32>(std::min<std::size_t>(draw.vertex_count, UINT32_MAX)),
+                1u,
+                static_cast<Uint32>(std::min<std::size_t>(draw.first_vertex, UINT32_MAX)),
+                0u);
+        }
+        return true;
+    };
+
     if (camera.valid && impl_->settings.enabled) {
         SDL_BindGPUGraphicsPipeline(pass, impl_->sky_pipeline);
         impl_->scene.bindSky(pass);
@@ -295,12 +319,12 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             Internal::bindGlobalIlluminationSDLGPU(pass, output.global_illumination, 2u);
             impl_->shadows.bind(pass);
             SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
-            SDL_PushGPUFragmentUniformData(command, 0u, &uniforms, sizeof(uniforms));
-            SDL_DrawGPUPrimitives(
-                pass,
-                static_cast<Uint32>(std::min<std::size_t>(
-                    impl_->geometry.worldVertexCount(), UINT32_MAX)),
-                1u, 0u, 0u);
+            if (!draw_ranges(pass, false)) {
+                SDL_EndGPURenderPass(pass);
+                Frame::SDLGPU::cancel(output);
+                std::fprintf(stderr, "[Rasterizer/SDL_GPU]: raster material binding failed\n");
+                return false;
+            }
         }
     }
 
@@ -332,15 +356,12 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         Internal::bindGlobalIlluminationSDLGPU(camera_pass, output.global_illumination, 2u);
         impl_->shadows.bind(camera_pass);
         SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
-        SDL_PushGPUFragmentUniformData(command, 0u, &uniforms, sizeof(uniforms));
-        SDL_DrawGPUPrimitives(
-            camera_pass,
-            static_cast<Uint32>(std::min<std::size_t>(
-                impl_->geometry.cameraVertexCount(), UINT32_MAX)),
-            1u,
-            static_cast<Uint32>(std::min<std::size_t>(
-                impl_->geometry.cameraFirstVertex(), UINT32_MAX)),
-            0u);
+        if (!draw_ranges(camera_pass, true)) {
+            SDL_EndGPURenderPass(camera_pass);
+            Frame::SDLGPU::cancel(output);
+            std::fprintf(stderr, "[Rasterizer/SDL_GPU]: raster material binding failed\n");
+            return false;
+        }
         SDL_EndGPURenderPass(camera_pass);
     }
 

@@ -9,11 +9,19 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Renderer::RasterizerSDLGPU {
 
 class RasterGeometry {
 public:
+    struct DrawRange {
+        std::size_t first_vertex = 0u;
+        std::size_t vertex_count = 0u;
+        Models::MaterialHandle material = Models::INVALID_MATERIAL;
+        bool camera_layer = false;
+    };
+
     RasterGeometry() = default;
     ~RasterGeometry();
 
@@ -33,6 +41,7 @@ public:
     std::size_t cameraFirstVertex() const;
     std::size_t cameraVertexCount() const;
     bool hasCameraGeometry() const;
+    const std::vector<DrawRange>& draws() const;
     std::uint64_t revision() const;
     std::uint64_t shadowRevision() const;
 

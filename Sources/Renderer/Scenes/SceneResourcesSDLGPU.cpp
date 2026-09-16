@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <unordered_set>
 
 namespace Renderer::Scenes::SDLGPU {
 namespace {
@@ -183,6 +184,20 @@ void SceneResources::clearTextures()
     for (auto& binding : texture_bindings_) binding = {white_, sampler_};
 }
 
+void SceneResources::clearRasterMaterials()
+{
+    SDL_GPUDevice *device = Renderer::SDLGPU::device();
+    if (device) {
+        for (RasterMaterialResources& material : raster_materials_) {
+            if (material.materials) SDL_ReleaseGPUBuffer(device, material.materials);
+            if (material.base_materials) SDL_ReleaseGPUBuffer(device, material.base_materials);
+        }
+    }
+    raster_materials_.clear();
+    raster_material_indices_.clear();
+    raster_material_revision_ = UINT64_MAX;
+}
+
 bool SceneResources::syncTextures(std::string *error)
 {
     if (resource_revision_ == scene_.resourceRevision()) return true;
@@ -198,6 +213,92 @@ bool SceneResources::syncTextures(std::string *error)
         texture_bindings_[slot] = {texture, sampler_};
     }
     resource_revision_ = scene_.resourceRevision();
+    return true;
+}
+
+bool SceneResources::syncRasterMaterials(
+    const Ecs::World& world,
+    std::size_t maximum_texture_slots,
+    std::string *error)
+{
+    if (raster_material_revision_ == scene_.resourceRevision()) return true;
+
+    clearRasterMaterials();
+    maximum_texture_slots = std::min(maximum_texture_slots, MaximumRasterTextureSlots);
+
+    std::unordered_set<Models::MaterialHandle> seen;
+    for (const Scene::RenderItem& item : scene_.renderItems()) {
+        if (!item.mesh_component || !item.material ||
+            item.material->opacity < SceneCache::opacityCutoff())
+            continue;
+
+        const Models::MaterialHandle handle = item.mesh_component->material;
+        if (handle == Models::INVALID_MATERIAL || !seen.insert(handle).second) continue;
+
+        SceneCache material_scene;
+        const std::vector<Scene::RenderItem> material_items{item};
+        if (!material_scene.syncResources(world, material_items, maximum_texture_slots, error)) {
+            clearRasterMaterials();
+            return false;
+        }
+
+        Trace::MaterialSet material_set;
+        if (!material_set.sync(material_scene, maximum_texture_slots, error)) {
+            clearRasterMaterials();
+            return false;
+        }
+
+        const auto& base_materials = material_scene.materials();
+        const auto& advanced_materials = material_set.materials();
+        if (base_materials.empty() || advanced_materials.empty()) {
+            if (error) *error = "raster material resources are empty";
+            clearRasterMaterials();
+            return false;
+        }
+
+        RasterMaterialResources resources;
+        resources.material = handle;
+        resources.material_count = std::min(base_materials.size(), advanced_materials.size());
+        resources.texture_count = material_set.textureHandles().size();
+        for (auto& binding : resources.texture_bindings) binding = {white_, sampler_};
+
+        resources.base_materials = Renderer::SDLGPU::createBuffer(
+            SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+            base_materials.size() * sizeof(GpuMaterial),
+            base_materials.data(),
+            "Horse Raster Base Material");
+        resources.materials = Renderer::SDLGPU::createBuffer(
+            SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+            advanced_materials.size() * sizeof(Trace::GpuAdvancedMaterial),
+            advanced_materials.data(),
+            "Horse Raster Material");
+        if (!resources.base_materials || !resources.materials) {
+            if (resources.materials)
+                SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), resources.materials);
+            if (resources.base_materials)
+                SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), resources.base_materials);
+            if (error) *error = "failed to allocate SDL_GPU raster material buffers";
+            clearRasterMaterials();
+            return false;
+        }
+
+        const auto& texture_handles = material_set.textureHandles();
+        for (std::size_t slot = 0u; slot < texture_handles.size(); ++slot) {
+            SDL_GPUTexture *texture = textureFor(texture_handles[slot], error);
+            if (!texture) {
+                SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), resources.materials);
+                SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), resources.base_materials);
+                clearRasterMaterials();
+                return false;
+            }
+            resources.texture_bindings[slot] = {texture, sampler_};
+        }
+
+        raster_material_indices_.emplace(handle, raster_materials_.size());
+        raster_materials_.push_back(std::move(resources));
+    }
+
+    raster_material_revision_ = scene_.resourceRevision();
     return true;
 }
 
@@ -236,7 +337,8 @@ SceneResources::SyncResult SceneResources::syncRaster(
     maximum_texture_slots = std::min(maximum_texture_slots, MaximumTextureSlots);
     if (!scene_.syncResources(world, render_items_, maximum_texture_slots, error)) return {};
     if (!materials_.sync(scene_, maximum_texture_slots, error)) return {};
-    if (!syncBuffers(false, error) || !syncTextures(error)) return {};
+    if (!syncBuffers(false, error) || !syncTextures(error) ||
+        !syncRasterMaterials(world, maximum_texture_slots, error)) return {};
     return {true, old_resources != scene_.resourceRevision()};
 }
 
@@ -267,6 +369,28 @@ void SceneResources::bindRasterFragment(SDL_GPURenderPass *pass) const
     SDL_BindGPUFragmentStorageBuffers(pass, 0u, buffers, 2u);
 }
 
+SceneResources::RasterBinding SceneResources::bindRasterMaterial(
+    SDL_GPURenderPass *pass,
+    Models::MaterialHandle material) const
+{
+    if (!pass) return {};
+    const auto found = raster_material_indices_.find(material);
+    if (found == raster_material_indices_.end() || found->second >= raster_materials_.size())
+        return {};
+
+    const RasterMaterialResources& resources = raster_materials_[found->second];
+    if (!resources.base_materials || !resources.materials) return {};
+
+    SDL_BindGPUFragmentSamplers(
+        pass,
+        0u,
+        resources.texture_bindings.data(),
+        static_cast<Uint32>(resources.texture_bindings.size()));
+    SDL_GPUBuffer *buffers[] = {resources.base_materials, resources.materials};
+    SDL_BindGPUFragmentStorageBuffers(pass, 0u, buffers, 2u);
+    return {true, resources.material_count, resources.texture_count};
+}
+
 void SceneResources::bindSky(SDL_GPURenderPass *pass) const
 {
     if (!pass) return;
@@ -293,6 +417,7 @@ bool SceneResources::hasEnvironmentTexture() const
 void SceneResources::clear()
 {
     SDL_GPUDevice *device = Renderer::SDLGPU::device();
+    clearRasterMaterials();
     clearTextures();
     if (device) {
         if (sampler_) SDL_ReleaseGPUSampler(device, sampler_);
@@ -319,6 +444,7 @@ void SceneResources::clear()
     geometry_revision_ = UINT64_MAX;
     resource_revision_ = UINT64_MAX;
     material_revision_ = UINT64_MAX;
+    raster_material_revision_ = UINT64_MAX;
 }
 
 } // namespace Renderer::Scenes::SDLGPU
