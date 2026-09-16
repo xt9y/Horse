@@ -105,6 +105,23 @@ jobs:
           set -euo pipefail
           git clone --depth 1 --single-branch --branch systems https://github.com/xt9y-org/GAME.git GAME
 
+      - name: Resolve latest Horse main
+        working-directory: GAME
+        run: |
+          set -euo pipefail
+          c fetch
+          c update Horse
+
+          expected="$(git ls-remote https://github.com/xt9y/Horse.git refs/heads/main | awk '{print $1}')"
+          resolved="$(sed -n '/name = "Horse"/,/^$/p' c.lock | sed -n 's/^resolved = "\(.*\)"$/\1/p')"
+
+          if [ -z "$expected" ] || [ -z "$resolved" ] || [ "$resolved" != "$expected" ]; then
+            echo "Horse dependency is not current: resolved=$resolved expected=$expected" >&2
+            exit 1
+          fi
+
+          echo "Testing Horse main at $resolved"
+
       - name: RendererCheck
         working-directory: GAME
         run: renderercheck run
