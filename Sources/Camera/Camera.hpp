@@ -20,11 +20,11 @@ enum class ToneMapping : std::uint8_t {
 };
 
 struct CameraComponent {
-    float fov_degrees = 0.0f;
-    float near_plane = 0.0f;
-    bool active = false;
+    float fov_degrees = 70.0f;
+    float near_plane = 0.01f;
+    bool active = true;
     Projection projection = Projection::Perspective;
-    float far_plane = 0.0f;
+    float far_plane = 1000.0f;
     float aspect_ratio = 0.0f;
     float xmag = 1.0f;
     float ymag = 1.0f;
