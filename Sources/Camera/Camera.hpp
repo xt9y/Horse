@@ -5,11 +5,18 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Components.hpp"
 
+#include <cstdint>
+
 namespace Camera {
 
 enum class Projection {
     Perspective,
     Orthographic,
+};
+
+enum class ToneMapping : std::uint8_t {
+    None,
+    ACES,
 };
 
 struct CameraComponent {
@@ -21,6 +28,8 @@ struct CameraComponent {
     float aspect_ratio = 0.0f;
     float xmag = 1.0f;
     float ymag = 1.0f;
+    float exposure_ev = 0.0f;
+    ToneMapping tone_mapping = ToneMapping::ACES;
 };
 
 Ecs::Entity activeCamera(const Ecs::World& world);
