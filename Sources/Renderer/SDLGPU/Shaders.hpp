@@ -207,6 +207,18 @@ float4 SampleSlot(int slot, float2 uv) {
     return 1.0.xxxx;
 }
 
+float3 SrgbToLinear(float3 color) {
+    float3 low = color / 12.92;
+    float3 high = pow((color + 0.055) / 1.055, 2.4);
+    return lerp(low, high, step(0.04045.xxx, color));
+}
+
+float4 SampleColorSlot(int slot, float2 uv) {
+    float4 sample = SampleSlot(slot, uv);
+    sample.rgb = SrgbToLinear(sample.rgb);
+    return sample;
+}
+
 struct VSOut {
     float4 position : SV_Position;
     float3 world : TEXCOORD0;
@@ -361,7 +373,7 @@ float3 EnvironmentColor(float3 direction) {
         float rotation = PGI[7].w;
         float u = frac(atan2(direction.z, direction.x) / (2.0*PI) + 0.5 + rotation/(2.0*PI));
         float v = acos(clamp(direction.y, -1.0, 1.0)) / PI;
-        return SampleSlot(0, float2(u,v)).rgb * intensity;
+        return SampleColorSlot(0, float2(u,v)).rgb * intensity;
     }
     return sky * max(intensity, 1.0);
 }
@@ -539,7 +551,7 @@ PSOut PSMain(VSOut i) {
     uint mi = min(i.material, (uint)max(PCounts.z - 1, 0));
     GpuBaseMaterial base = PBaseMaterials[mi];
     GpuMaterial material = PMaterials[mi];
-    float4 base_sample = material.tex0.x >= 0 ? SampleSlot(material.tex0.x, i.uv) : 1.0.xxxx;
+    float4 base_sample = material.tex0.x >= 0 ? SampleColorSlot(material.tex0.x, i.uv) : 1.0.xxxx;
     float alpha = base.base_color.a * base_sample.a;
     if (material.tex1.z >= 0) alpha *= SampleSlot(material.tex1.z, i.uv).r;
     if (material.misc.w > 0.5 && material.misc.w < 1.5 && alpha < material.misc.x) discard;
@@ -553,7 +565,7 @@ PSOut PSMain(VSOut i) {
     float3 v = normalize(PCameraPositionNear.xyz - i.world);
 
     float3 emissive = material.emissive_strength.rgb * material.emissive_strength.w;
-    if (material.tex1.y >= 0) emissive *= SampleSlot(material.tex1.y, i.uv).rgb;
+    if (material.tex1.y >= 0) emissive *= SampleColorSlot(material.tex1.y, i.uv).rgb;
     if (material.misc.y > 0.5) {
         o.color = float4(albedo + emissive, alpha);
         o.velocity = 0.0.xx;
@@ -606,6 +618,11 @@ VSOut SkyVS(uint id : SV_VertexID) {
     float2 p = id == 0u ? float2(-1,-1) : (id == 1u ? float2(3,-1) : float2(-1,3));
     VSOut o; o.position=float4(p,0.999999,1); o.uv=p*0.5+0.5; return o;
 }
+float3 SrgbToLinear(float3 color) {
+    float3 low = color / 12.92;
+    float3 high = pow((color + 0.055) / 1.055, 2.4);
+    return lerp(low, high, step(0.04045.xxx, color));
+}
 struct PSOut { float4 color : SV_Target0; float2 velocity : SV_Target1; };
 PSOut SkyPS(VSOut i) {
     float2 ndc = i.uv * 2.0 - 1.0;
@@ -619,7 +636,7 @@ PSOut SkyPS(VSOut i) {
         const float PI=3.14159265359;
         float u=frac(atan2(direction.z,direction.x)/(2*PI)+0.5+GI[7].w/(2*PI));
         float v=acos(clamp(direction.y,-1.0,1.0))/PI;
-        color=SkyTexture.Sample(SkySampler,float2(u,v)).rgb*max(GI[3].w,0.0);
+        color=SrgbToLinear(SkyTexture.Sample(SkySampler,float2(u,v)).rgb)*max(GI[3].w,0.0);
     }
     PSOut o; o.color=float4(max(color,0.0.xxx),1); o.velocity=0.0.xx; return o;
 }
@@ -698,6 +715,18 @@ float4 SampleSlot(int slot, float2 uv) {
     return 1.0.xxxx;
 }
 
+float3 SrgbToLinear(float3 color) {
+    float3 low = color / 12.92;
+    float3 high = pow((color + 0.055) / 1.055, 2.4);
+    return lerp(low, high, step(0.04045.xxx, color));
+}
+
+float4 SampleColorSlot(int slot, float2 uv) {
+    float4 sample = SampleSlot(slot, uv);
+    sample.rgb = SrgbToLinear(sample.rgb);
+    return sample;
+}
+
 uint Hash(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
 float Random(inout uint state) { state=Hash(state); return (state & 0x00ffffffu) / 16777216.0; }
 
@@ -747,7 +776,7 @@ bool Occluded(float3 ro,float3 rd,float max_t){Hit h=TraceClosest(ro,rd,max_t);r
 
 float3 EnvironmentColor(float3 direction){
     float3 sky=GI[4].xyz; float intensity=max(GI[3].w,0.0);
-    if(GI[4].w>0.5){const float PI=3.14159265359;float u=frac(atan2(direction.z,direction.x)/(2*PI)+0.5+GI[7].w/(2*PI));float v=acos(clamp(direction.y,-1.0,1.0))/PI;return SampleSlot(0,float2(u,v)).rgb*intensity;}
+    if(GI[4].w>0.5){const float PI=3.14159265359;float u=frac(atan2(direction.z,direction.x)/(2*PI)+0.5+GI[7].w/(2*PI));float v=acos(clamp(direction.y,-1.0,1.0))/PI;return SampleColorSlot(0,float2(u,v)).rgb*intensity;}
     return sky*max(intensity,1.0);
 }
 
@@ -768,7 +797,7 @@ void CameraRay(float2 pixel,float2 jitter,out float3 origin,out float3 direction
 
 struct Surface { float3 position; float3 normal; float2 uv; uint material; float3 albedo; float alpha; float roughness; float metallic; float ao; float3 emission; };
 Surface MakeSurface(Hit hit,float3 rd){
-    GpuTriangle tri=Triangles[hit.triangle_index];float u=hit.bary.x,v=hit.bary.y,w=1-u-v;Surface s;s.position=tri.p0.xyz*w+tri.p1.xyz*u+tri.p2.xyz*v;s.normal=normalize(tri.n0.xyz*w+tri.n1.xyz*u+tri.n2.xyz*v);if(dot(s.normal,rd)>0)s.normal=-s.normal;s.uv=tri.uv01.xy*w+tri.uv01.zw*u+tri.uv2.xy*v;s.material=asuint(tri.p0.w);uint mi=min(s.material,(uint)max(Counts.z-1,0));GpuBaseMaterial b=BaseMaterials[mi];GpuMaterial m=Materials[mi];float4 base=m.tex0.x>=0?SampleSlot(m.tex0.x,s.uv):1.0.xxxx;s.albedo=max(b.base_color.rgb*base.rgb,0.0.xxx);s.alpha=b.base_color.a*base.a;if(m.tex1.z>=0)s.alpha*=SampleSlot(m.tex1.z,s.uv).r;s.roughness=max(saturate(m.pbr.x*(m.tex0.z>=0?SampleSlot(m.tex0.z,s.uv).r:1)),.04);s.metallic=saturate(m.pbr.y*(m.tex0.w>=0?SampleSlot(m.tex0.w,s.uv).r:1));s.ao=saturate(m.pbr.z*(m.tex1.x>=0?SampleSlot(m.tex1.x,s.uv).r:1));s.emission=m.emissive_strength.rgb*m.emissive_strength.w;if(m.tex1.y>=0)s.emission*=SampleSlot(m.tex1.y,s.uv).rgb;
+    GpuTriangle tri=Triangles[hit.triangle_index];float u=hit.bary.x,v=hit.bary.y,w=1-u-v;Surface s;s.position=tri.p0.xyz*w+tri.p1.xyz*u+tri.p2.xyz*v;s.normal=normalize(tri.n0.xyz*w+tri.n1.xyz*u+tri.n2.xyz*v);if(dot(s.normal,rd)>0)s.normal=-s.normal;s.uv=tri.uv01.xy*w+tri.uv01.zw*u+tri.uv2.xy*v;s.material=asuint(tri.p0.w);uint mi=min(s.material,(uint)max(Counts.z-1,0));GpuBaseMaterial b=BaseMaterials[mi];GpuMaterial m=Materials[mi];float4 base=m.tex0.x>=0?SampleColorSlot(m.tex0.x,s.uv):1.0.xxxx;s.albedo=max(b.base_color.rgb*base.rgb,0.0.xxx);s.alpha=b.base_color.a*base.a;if(m.tex1.z>=0)s.alpha*=SampleSlot(m.tex1.z,s.uv).r;s.roughness=max(saturate(m.pbr.x*(m.tex0.z>=0?SampleSlot(m.tex0.z,s.uv).r:1)),.04);s.metallic=saturate(m.pbr.y*(m.tex0.w>=0?SampleSlot(m.tex0.w,s.uv).r:1));s.ao=saturate(m.pbr.z*(m.tex1.x>=0?SampleSlot(m.tex1.x,s.uv).r:1));s.emission=m.emissive_strength.rgb*m.emissive_strength.w;if(m.tex1.y>=0)s.emission*=SampleColorSlot(m.tex1.y,s.uv).rgb;
     if(m.tex0.y>=0){float3 map=SampleSlot(m.tex0.y,s.uv).xyz*2-1;map.xy*=m.pbr.w;float3 e1=tri.p1.xyz-tri.p0.xyz,e2=tri.p2.xyz-tri.p0.xyz;float2 d1=tri.uv01.zw-tri.uv01.xy,d2=tri.uv2.xy-tri.uv01.xy;float det=d1.x*d2.y-d1.y*d2.x;if(abs(det)>1e-6){float inv=1/det;float3 t=normalize((e1*d2.y-e2*d1.y)*inv);float3 bt=normalize((-e1*d2.x+e2*d1.x)*inv);s.normal=normalize(t*map.x+bt*map.y+s.normal*map.z);}}
     return s;
 }
