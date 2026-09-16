@@ -5,7 +5,7 @@
 #include "Models/Core/MeshRevision.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/Runtime.hpp"
-#include "Renderer/DynamicGeometry.hpp"
+#include "Renderer/Internal/ModelGeometry.hpp"
 #include "Renderer/Environment.hpp"
 #include "Renderer/Math.hpp"
 
@@ -153,9 +153,9 @@ bool prepareItem(
         material != material_indices.end())
         prepared->material_index = material->second;
 
-    const ModelDeformComponent *deform = world.get<ModelDeformComponent>(item.entity);
+    const Internal::ModelDeformComponent *deform = world.get<Internal::ModelDeformComponent>(item.entity);
     if (deform) {
-        const ModelPoseComponent *pose = world.get<ModelPoseComponent>(deform->pose_entity);
+        const Internal::ModelPoseComponent *pose = world.get<Internal::ModelPoseComponent>(deform->pose_entity);
         if (!pose) {
             if (error) *error = "dynamic model geometry has no pose state";
             return false;
@@ -353,12 +353,12 @@ std::uint64_t SceneCache::signature(
         hashValue(hash, item.mesh_component->material);
         hashTransform(hash, *item.transform);
 
-        const ModelDeformComponent *deform = world.get<ModelDeformComponent>(item.entity);
+        const Internal::ModelDeformComponent *deform = world.get<Internal::ModelDeformComponent>(item.entity);
         if (deform && deform->pose_entity != Ecs::INVALID_ENTITY) {
             hashValue(hash, deform->model);
             hashValue(hash, deform->part);
             hashValue(hash, deform->pose_entity);
-            if (const ModelPoseComponent *pose = world.get<ModelPoseComponent>(deform->pose_entity))
+            if (const Internal::ModelPoseComponent *pose = world.get<Internal::ModelPoseComponent>(deform->pose_entity))
                 hashValue(hash, pose->revision);
         }
 

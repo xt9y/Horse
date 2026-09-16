@@ -1,6 +1,6 @@
 #include "Renderer/SDLGPU/Context.hpp"
 
-#include "Window/Backend.hpp"
+#include "Window/Internal/Backend.hpp"
 
 #include <SDL3/SDL.h>
 #include <SDL3_shadercross/SDL_shadercross.h>
@@ -29,7 +29,7 @@ State& state()
 bool createDevice()
 {
     State& value = state();
-    SDL_Window *window = Window::Backend::window();
+    SDL_Window *window = Window::Internal::window();
     if (!window) {
         std::fprintf(stderr, "[SDL_GPU]: Window::create() must be called before renderer initialization\n");
         return false;
@@ -89,7 +89,7 @@ void destroyDevice()
     State& value = state();
     if (value.device) {
         SDL_WaitForGPUIdle(value.device);
-        if (SDL_Window *window = Window::Backend::window())
+        if (SDL_Window *window = Window::Internal::window())
             SDL_ReleaseWindowFromGPUDevice(value.device, window);
         SDL_DestroyGPUDevice(value.device);
     }
@@ -406,13 +406,13 @@ bool blitToSwapchain(
     std::uint32_t source_width,
     std::uint32_t source_height)
 {
-    if (!command || !source || !Window::Backend::window()) return false;
+    if (!command || !source || !Window::Internal::window()) return false;
     SDL_GPUTexture *swapchain = nullptr;
     Uint32 width = 0u;
     Uint32 height = 0u;
     if (!SDL_WaitAndAcquireGPUSwapchainTexture(
             command,
-            Window::Backend::window(),
+            Window::Internal::window(),
             &swapchain,
             &width,
             &height))

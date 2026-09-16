@@ -37,14 +37,14 @@ become the game-facing path.
 **Produces:** `Models::Internal::{registerMesh,registerMaterial,updateMesh,updateMaterial}`;
 normal code retains `Models::load()` and read-only model inspection.
 
-- [ ] Write a compile probe that includes only `Models/Models.hpp` and confirms
+- [x] Write a compile probe that includes only `Models/Models.hpp` and confirms
       `Models::registerMesh` is currently visible.
-- [ ] Run the probe and record the pre-change result.
-- [ ] Move registry-write declarations to `Models/Internal/Registry.hpp` under
+- [x] Run the probe and record the pre-change result.
+- [x] Move registry-write declarations to `Models/Internal/Registry.hpp` under
       `Models::Internal`; update Horse internal callers.
-- [ ] Re-run the public probe expecting `Models::registerMesh` to be unavailable,
+- [x] Re-run the public probe expecting `Models::registerMesh` to be unavailable,
       then build Horse expecting success.
-- [ ] Commit the isolated registry/API change.
+- [x] Commit the isolated registry/API change.
 
 ### Task 2: Internalize renderer-only geometry components
 
@@ -56,12 +56,12 @@ normal code retains `Models::load()` and read-only model inspection.
 **Produces:** public transform/hierarchy/light/render-layer components plus
 internal `MeshComponent`, `InstanceComponent`, and `RenderableComponent`.
 
-- [ ] Write a public-header compile probe that currently resolves
+- [x] Write a public-header compile probe that currently resolves
       `Renderer::MeshComponent` through `Renderer/Components.hpp`.
-- [ ] Move renderer-only geometry components to the internal header and update
+- [x] Move renderer-only geometry components to the internal header and update
       every Horse caller to the internal names/path.
-- [ ] Verify the old public probe no longer compiles while Horse builds cleanly.
-- [ ] Commit the component boundary cleanup.
+- [x] Verify the old public probe no longer compiles while Horse builds cleanly.
+- [x] Commit the component boundary cleanup.
 
 ### Task 3: Move obvious backend implementation headers behind Internal paths
 
@@ -77,13 +77,13 @@ internal `MeshComponent`, `InstanceComponent`, and `RenderableComponent`.
 **Produces:** the same runtime behavior with implementation-only interfaces
 clearly separated; removes the redundant `Camera::Controller` alias.
 
-- [ ] Capture current Horse build as the baseline.
-- [ ] Move one internal interface at a time and update includes/namespaces.
-- [ ] Remove `using Controller = FreeController` and update any Horse callers.
-- [ ] Build Horse after each coherent move; fix only boundary fallout.
-- [ ] Search public umbrella headers for accidental inclusion of the new internal
+- [x] Capture current Horse build as the baseline.
+- [x] Move one internal interface at a time and update includes/namespaces.
+- [x] Remove `using Controller = FreeController` and update any Horse callers.
+- [x] Build Horse after each coherent move; fix only boundary fallout.
+- [x] Search public umbrella headers for accidental inclusion of the new internal
       headers and remove any unnecessary exposure.
-- [ ] Commit the API-boundary cleanup.
+- [x] Commit the API-boundary cleanup.
 
 ### Task 4: Replace GAME procedural geometry with Sponza
 

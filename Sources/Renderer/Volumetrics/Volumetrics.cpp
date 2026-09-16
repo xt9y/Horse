@@ -1,7 +1,7 @@
 #include "Renderer/Volumetrics/Volumetrics.hpp"
 
 #include "Renderer/Renderer.hpp"
-#include "Renderer/ShadingState.hpp"
+#include "Renderer/Internal/ShadingState.hpp"
 #include "Renderer/Volumetrics/VolumetricsSDLGPU.hpp"
 
 #include <algorithm>

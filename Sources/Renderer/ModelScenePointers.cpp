@@ -1,4 +1,4 @@
-#include "Renderer/ModelScenePointers.hpp"
+#include "Renderer/Internal/ModelScenePointers.hpp"
 
 #include "Models/Internal/Registry.hpp"
 

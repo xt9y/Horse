@@ -1,5 +1,5 @@
-#ifndef HORSE_RENDERER_DYNAMIC_GEOMETRY_HPP
-#define HORSE_RENDERER_DYNAMIC_GEOMETRY_HPP
+#ifndef HORSE_RENDERER_INTERNAL_MODEL_GEOMETRY_HPP
+#define HORSE_RENDERER_INTERNAL_MODEL_GEOMETRY_HPP
 
 #include "Ecs/Ecs.hpp"
 #include "Models/Models.hpp"
@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-namespace Renderer {
+namespace Renderer::Internal {
 
 struct ModelPoseComponent {
     Models::Runtime::Pose pose;
@@ -20,6 +20,6 @@ struct ModelDeformComponent {
     Ecs::Entity pose_entity = Ecs::INVALID_ENTITY;
 };
 
-} // namespace Renderer
+} // namespace Renderer::Internal
 
 #endif

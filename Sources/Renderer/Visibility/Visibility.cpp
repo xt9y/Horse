@@ -2,7 +2,7 @@
 
 #include "Camera/Camera.hpp"
 #include "Animation/Animation.hpp"
-#include "Renderer/DynamicGeometry.hpp"
+#include "Renderer/Internal/ModelGeometry.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
 
@@ -249,7 +249,7 @@ Result System::collectVisibleRenderItems(
 
     for (const Scenes::Scene::RenderItem& item : items) {
         const bool dynamic_geometry =
-            world.has<ModelDeformComponent>(item.entity) ||
+            world.has<Internal::ModelDeformComponent>(item.entity) ||
             world.has<Animation::SkinBindingComponent>(item.entity);
         if (!dynamic_geometry && classify(result.frustum, item) == Classification::Outside) {
             result.culled.push_back(item.entity);

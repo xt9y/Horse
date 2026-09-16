@@ -2,7 +2,7 @@
 
 #include "Renderer/Environment.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
-#include "Renderer/ShadingState.hpp"
+#include "Renderer/Internal/ShadingState.hpp"
 
 #include <algorithm>
 #include <cmath>

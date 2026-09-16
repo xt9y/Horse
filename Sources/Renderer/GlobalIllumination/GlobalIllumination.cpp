@@ -5,7 +5,7 @@
 #include "Renderer/GlobalIllumination/TraceScene.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
-#include "Renderer/ShadingState.hpp"
+#include "Renderer/Internal/ShadingState.hpp"
 
 #include <algorithm>
 #include <array>

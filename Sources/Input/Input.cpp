@@ -1,6 +1,6 @@
 #include "Input/Input.hpp"
 
-#include "Window/Backend.hpp"
+#include "Window/Internal/Backend.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -86,11 +86,11 @@ void poll()
     input.pointer.dx = static_cast<int>(dx);
     input.pointer.dy = static_cast<int>(dy);
     input.pointer.wheel = 0;
-    for (const SDL_Event& event : Window::Backend::events()) {
+    for (const SDL_Event& event : Window::Internal::events()) {
         if (event.type == SDL_EVENT_MOUSE_WHEEL)
             input.pointer.wheel += event.wheel.integer_y;
     }
-    SDL_Window *window = Window::Backend::window();
+    SDL_Window *window = Window::Internal::window();
     input.pointer.captured = window && SDL_GetWindowRelativeMouseMode(window);
 }
 
@@ -164,7 +164,7 @@ Pointer pointer()
 
 void setPointerCaptured(bool captured)
 {
-    SDL_Window *window = Window::Backend::window();
+    SDL_Window *window = Window::Internal::window();
     if (!window) return;
     if (SDL_SetWindowRelativeMouseMode(window, captured))
         state().pointer.captured = captured;

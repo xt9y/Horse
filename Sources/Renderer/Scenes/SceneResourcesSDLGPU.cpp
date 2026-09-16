@@ -3,7 +3,7 @@
 #include "Models/Core/Texture.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Scenes/Scene.hpp"
-#include "Renderer/ShadingState.hpp"
+#include "Renderer/Internal/ShadingState.hpp"
 
 #include <algorithm>
 #include <array>

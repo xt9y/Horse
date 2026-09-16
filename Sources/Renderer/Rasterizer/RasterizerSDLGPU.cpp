@@ -10,7 +10,7 @@
 #include "Renderer/SDLGPU/Uniforms.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Scenes/SceneResourcesSDLGPU.hpp"
-#include "Renderer/ShadingState.hpp"
+#include "Renderer/Internal/ShadingState.hpp"
 #include "Renderer/Visibility/Visibility.hpp"
 #include "Window/Window.hpp"
 

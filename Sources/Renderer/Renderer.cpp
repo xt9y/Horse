@@ -4,9 +4,9 @@
 #include "Renderer/Fonts/FontPass.hpp"
 #include "Renderer/GaussianSplat/GaussianSplat.hpp"
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
-#include "Renderer/ShadingState.hpp"
+#include "Renderer/Internal/ShadingState.hpp"
 #include "Renderer/Volumetrics/Volumetrics.hpp"
-#include "UI/RenderPass.hpp"
+#include "UI/Internal/RenderPass.hpp"
 
 namespace Renderer {
 
@@ -22,7 +22,7 @@ void IRenderer::render(const Ecs::World& world)
     if (!compose(output)) return;
     Debug::RenderPass::render(world, output);
     Internal::renderFonts(world, output);
-    UI::RenderPass::render(output);
+    UI::Internal::RenderPass::render(output);
     present(output);
 }
 

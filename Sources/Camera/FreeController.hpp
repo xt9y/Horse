@@ -33,8 +33,6 @@ private:
     bool mouse_initialized_ = false;
 };
 
-using Controller = FreeController;
-
 } // namespace Camera
 
 #endif

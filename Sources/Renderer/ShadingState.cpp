@@ -1,4 +1,4 @@
-#include "Renderer/ShadingState.hpp"
+#include "Renderer/Internal/ShadingState.hpp"
 
 namespace Renderer::Internal {
 namespace {

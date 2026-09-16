@@ -2,10 +2,10 @@
 
 #include "Camera/Camera.hpp"
 #include "Renderer/Components.hpp"
-#include "Renderer/DynamicGeometry.hpp"
 #include "Renderer/Internal/GeometryComponents.hpp"
+#include "Renderer/Internal/ModelGeometry.hpp"
+#include "Renderer/Internal/ModelScenePointers.hpp"
 #include "Renderer/Math.hpp"
-#include "Renderer/ModelScenePointers.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -161,7 +161,7 @@ bool addPart(
     if (is_dynamic) {
         if (pose_entity == Ecs::INVALID_ENTITY)
             return fail(error, "model scene dynamic part has no pose state");
-        world.add<ModelDeformComponent>(entity, ModelDeformComponent{
+        world.add<Internal::ModelDeformComponent>(entity, Internal::ModelDeformComponent{
             model,
             static_cast<std::uint32_t>(part_index),
             pose_entity,
@@ -285,7 +285,7 @@ bool instantiate(
     result.nodes.resize(Models::nodeCount(model));
     if (dynamicModel(model)) {
         result.pose_entity = world.createEntity();
-        world.add<ModelPoseComponent>(result.pose_entity, ModelPoseComponent{pose, 1u});
+        world.add<Internal::ModelPoseComponent>(result.pose_entity, Internal::ModelPoseComponent{pose, 1u});
     }
 
     bool activated_camera = false;
@@ -419,7 +419,7 @@ bool applyPose(
     if (pose.nodes.size() < instance.nodes.size()) return fail(error, "model pose node count is too small");
 
     if (instance.pose_entity != Ecs::INVALID_ENTITY) {
-        ModelPoseComponent *state = world.get<ModelPoseComponent>(instance.pose_entity);
+        Internal::ModelPoseComponent *state = world.get<Internal::ModelPoseComponent>(instance.pose_entity);
         if (!state) return fail(error, "model scene lost its pose state");
         state->pose = pose;
         ++state->revision;

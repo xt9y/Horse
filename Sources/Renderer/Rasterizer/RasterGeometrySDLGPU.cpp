@@ -4,7 +4,7 @@
 #include "Camera/Camera.hpp"
 #include "Models/Models.hpp"
 #include "Models/Core/MeshRevision.hpp"
-#include "Renderer/DynamicGeometry.hpp"
+#include "Renderer/Internal/ModelGeometry.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Scenes/Scene.hpp"
@@ -140,11 +140,11 @@ std::uint64_t shadowSignature(
         const Math::Mat4 model = Math::modelMatrix(*item.transform);
         for (const float value : model) hashFloat(hash, value);
 
-        if (const ModelDeformComponent *deform = world.get<ModelDeformComponent>(item.entity)) {
+        if (const Internal::ModelDeformComponent *deform = world.get<Internal::ModelDeformComponent>(item.entity)) {
             hashValue(hash, deform->model);
             hashValue(hash, deform->part);
             hashValue(hash, deform->pose_entity);
-            if (const ModelPoseComponent *pose = world.get<ModelPoseComponent>(deform->pose_entity))
+            if (const Internal::ModelPoseComponent *pose = world.get<Internal::ModelPoseComponent>(deform->pose_entity))
                 hashValue(hash, pose->revision);
         }
 
@@ -253,9 +253,9 @@ bool sourceVertex(
         return fail(error, "raster geometry references invalid model vertex");
     *output = item.mesh->vertices[source_index];
 
-    const ModelDeformComponent *deform = world.get<ModelDeformComponent>(item.entity);
+    const Internal::ModelDeformComponent *deform = world.get<Internal::ModelDeformComponent>(item.entity);
     if (!deform || item.mesh->morph_targets.empty()) return true;
-    const ModelPoseComponent *pose = world.get<ModelPoseComponent>(deform->pose_entity);
+    const Internal::ModelPoseComponent *pose = world.get<Internal::ModelPoseComponent>(deform->pose_entity);
     const Models::ModelPart *part = Models::part(deform->model, deform->part);
     if (!pose || !part)
         return fail(error, "raster dynamic model geometry has no pose state");
@@ -301,9 +301,9 @@ bool appendModelSkin(
     *offset = 0u;
     *count = 0u;
 
-    const ModelDeformComponent *deform = world.get<ModelDeformComponent>(item.entity);
+    const Internal::ModelDeformComponent *deform = world.get<Internal::ModelDeformComponent>(item.entity);
     if (deform) {
-        const ModelPoseComponent *pose = world.get<ModelPoseComponent>(deform->pose_entity);
+        const Internal::ModelPoseComponent *pose = world.get<Internal::ModelPoseComponent>(deform->pose_entity);
         const Models::ModelPart *part = Models::part(deform->model, deform->part);
         if (!pose || !part)
             return fail(error, "raster dynamic model geometry has no pose state");
@@ -471,7 +471,7 @@ struct RasterGeometry::Impl {
 
                 ItemBinding& binding = bindings[item_index];
                 binding.first_vertex = vertices.size();
-                binding.morph = world.get<ModelDeformComponent>(item.entity) &&
+                binding.morph = world.get<Internal::ModelDeformComponent>(item.entity) &&
                     item.mesh && !item.mesh->morph_targets.empty();
                 const std::size_t triangle_count = triangle_counts[item_index];
                 if (triangle_count == 0u || !item.mesh) continue;
