@@ -17,6 +17,7 @@ SDL_GPUDevice *device();
 SDL_GPUTextureFormat swapchainFormat();
 SDL_GPUTextureFormat colorFormat();
 const char *driver();
+bool linearSwapchain();
 
 SDL_GPUShader *compileGraphicsShader(
     const char *source,
@@ -61,6 +62,17 @@ bool uploadTextureRgba8(
 
 SDL_GPUSampler *createLinearSampler();
 SDL_GPUSampler *createNearestSampler();
+
+bool transformColor(
+    SDL_GPUCommandBuffer *command,
+    SDL_GPUTexture *source,
+    SDL_GPUTexture *destination,
+    std::uint32_t width,
+    std::uint32_t height,
+    float exposure_ev,
+    std::uint32_t tone_mapping,
+    bool encode_srgb
+);
 
 bool blitToSwapchain(
     SDL_GPUCommandBuffer *command,
