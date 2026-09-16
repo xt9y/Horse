@@ -71,6 +71,21 @@ bool createDevice()
         return false;
     }
 
+    // The renderer stores lighting output in a linear floating point target.
+    // Request an sRGB swapchain so presentation performs the linear -> display
+    // conversion instead of treating linear values as already encoded SDR.
+    if (SDL_WindowSupportsGPUSwapchainComposition(
+            value.device,
+            window,
+            SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR))
+    {
+        SDL_SetGPUSwapchainParameters(
+            value.device,
+            window,
+            SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR,
+            SDL_GPU_PRESENTMODE_VSYNC);
+    }
+
     value.swapchain_format = SDL_GetGPUSwapchainTextureFormat(value.device, window);
     SDL_SetGPUAllowedFramesInFlight(value.device, 2u);
     std::fprintf(
