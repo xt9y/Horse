@@ -1,4 +1,4 @@
-#include "Renderer/Rasterizer/ShadowMapsSDLGPU.hpp"
+#include "Renderer/Internal/ShadowMapsSDLGPU.hpp"
 
 #include "Renderer/Math.hpp"
 #include "Renderer/SDLGPU/Context.hpp"

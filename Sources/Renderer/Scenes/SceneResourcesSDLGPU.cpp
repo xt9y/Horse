@@ -1,4 +1,4 @@
-#include "Renderer/Scenes/SceneResourcesSDLGPU.hpp"
+#include "Renderer/Internal/SceneResourcesSDLGPU.hpp"
 
 #include "Models/Core/Texture.hpp"
 #include "Renderer/SDLGPU/Context.hpp"

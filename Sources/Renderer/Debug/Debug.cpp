@@ -1,7 +1,7 @@
 #include "Renderer/Debug/Debug.hpp"
 
 #include "Camera/Camera.hpp"
-#include "Renderer/Debug/RenderPass.hpp"
+#include "Renderer/Internal/DebugRenderPass.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
@@ -285,6 +285,13 @@ struct Inspector::Impl {
     }
 };
 
+struct InspectorAccess {
+    static Inspector::Impl& state(Inspector& inspector)
+    {
+        return *inspector.impl_;
+    }
+};
+
 Inspector::Inspector() : impl_(new Impl) {}
 
 Inspector::~Inspector()
@@ -446,7 +453,7 @@ namespace RenderPass {
 void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
 {
     Inspector& public_inspector = inspector();
-    Inspector::Impl& state = *public_inspector.impl_;
+    auto& state = InspectorAccess::state(public_inspector);
     if (!state.show_bvh && !state.show_viewport) return;
 
     const Scenes::Scene::CameraState camera = Scenes::Scene::cameraState(world);

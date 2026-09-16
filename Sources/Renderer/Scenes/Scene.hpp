@@ -5,7 +5,6 @@
 #include "Ecs/Ecs.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
-#include "Renderer/Internal/GeometryComponents.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -45,13 +44,13 @@ struct TransformState {
     const Transform* operator->() const { return valid ? &value : nullptr; }
 };
 
-struct MeshState {
-    Internal::MeshComponent value{};
+struct MeshBinding {
+    Models::MeshHandle mesh = Models::INVALID_MESH;
+    Models::MaterialHandle material = Models::INVALID_MATERIAL;
     bool valid = false;
 
     explicit operator bool() const { return valid; }
-    const Internal::MeshComponent& operator*() const { return value; }
-    const Internal::MeshComponent* operator->() const { return valid ? &value : nullptr; }
+    const MeshBinding* operator->() const { return valid ? this : nullptr; }
 };
 
 struct RenderItem {
@@ -59,7 +58,7 @@ struct RenderItem {
     std::uint32_t instance_index = UINT32_MAX;
     RenderLayer layer = RenderLayer::World;
     TransformState transform{};
-    MeshState mesh_component{};
+    MeshBinding mesh_component{};
     const Models::MeshData* mesh = nullptr;
     const Models::MaterialData* material = nullptr;
 };

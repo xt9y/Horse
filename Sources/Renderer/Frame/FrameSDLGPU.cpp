@@ -1,4 +1,4 @@
-#include "Renderer/Frame/FrameSDLGPU.hpp"
+#include "Renderer/Internal/FrameSDLGPU.hpp"
 
 #include "Renderer/SDLGPU/Context.hpp"
 

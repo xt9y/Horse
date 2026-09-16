@@ -1,5 +1,5 @@
-#ifndef HORSE_RENDERER_FONT_PASS_HPP
-#define HORSE_RENDERER_FONT_PASS_HPP
+#ifndef HORSE_RENDERER_INTERNAL_FONT_PASS_HPP
+#define HORSE_RENDERER_INTERNAL_FONT_PASS_HPP
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Renderer.hpp"

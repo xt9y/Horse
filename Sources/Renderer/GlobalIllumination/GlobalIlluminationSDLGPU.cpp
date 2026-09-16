@@ -1,4 +1,4 @@
-#include "Renderer/GlobalIllumination/GlobalIlluminationSDLGPU.hpp"
+#include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
 
 #include "Renderer/Environment.hpp"
 #include "Renderer/SDLGPU/Context.hpp"

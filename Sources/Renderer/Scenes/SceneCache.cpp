@@ -2,7 +2,7 @@
 
 #include "Animation/Animation.hpp"
 #include "Camera/Camera.hpp"
-#include "Models/Core/MeshRevision.hpp"
+#include "Models/Internal/MeshRevision.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/Runtime.hpp"
 #include "Renderer/Internal/ModelGeometry.hpp"

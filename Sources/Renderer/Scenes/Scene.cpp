@@ -4,6 +4,7 @@
 #include "Models/Core/Texture.hpp"
 #include "Models/GaussianSplat.hpp"
 #include "Renderer/Hierarchy.hpp"
+#include "Renderer/Internal/GeometryComponents.hpp"
 #include "Renderer/Lod.hpp"
 #include "Renderer/Math.hpp"
 
@@ -94,7 +95,11 @@ void appendItem(
         .instance_index = instance_index,
         .layer = resolvedRenderLayer(world, entity),
         .transform = TransformState{transform, true},
-        .mesh_component = MeshState{selected, true},
+        .mesh_component = MeshBinding{
+            .mesh = selected.mesh,
+            .material = selected.material,
+            .valid = true,
+        },
         .mesh = mesh,
         .material = Models::material(selected.material),
     });

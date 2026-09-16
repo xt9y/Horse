@@ -1,8 +1,9 @@
 #include "Renderer/Volumetrics/Volumetrics.hpp"
 
+#include "Renderer/Internal/VolumetricsRender.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
-#include "Renderer/Volumetrics/VolumetricsSDLGPU.hpp"
+#include "Renderer/Internal/VolumetricsSDLGPU.hpp"
 
 #include <algorithm>
 

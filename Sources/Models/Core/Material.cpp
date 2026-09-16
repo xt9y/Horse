@@ -52,19 +52,17 @@ bool loadMap(
     const std::filesystem::path& material_path,
     const std::string& value,
     std::string *destination_path,
-    TextureHandle *destination,
-    std::string *first_error)
+    TextureHandle *destination)
 {
     if (!destination_path || !destination) return false;
     const std::string filename = textureValue(value);
     if (filename.empty()) return false;
 
     *destination_path = (material_path.parent_path() / filename).lexically_normal().string();
-    std::string texture_error;
-    *destination = loadTexture(*destination_path, &texture_error);
-    if (*destination == INVALID_TEXTURE && first_error && first_error->empty()) {
-        *first_error = "failed to load texture '" + *destination_path + "'";
-        if (!texture_error.empty()) *first_error += ": " + texture_error;
+    *destination = loadTexture(*destination_path);
+    if (*destination == INVALID_TEXTURE) {
+        destination_path->clear();
+        return false;
     }
     return true;
 }
@@ -97,7 +95,6 @@ bool loadMaterialLibrary(
     const std::filesystem::path material_path(path);
     MaterialData *current = nullptr;
     std::string line;
-    std::string texture_error;
 
     while (std::getline(input, line)) {
         std::istringstream stream(line);
@@ -156,19 +153,19 @@ bool loadMaterialLibrary(
         } else if (key == "map_Kd") {
             std::string value;
             std::getline(stream >> std::ws, value);
-            loadMap(material_path, value, &current->texture_path, &current->diffuse_texture, &texture_error);
+            loadMap(material_path, value, &current->texture_path, &current->diffuse_texture);
         } else if (key == "map_Pr") {
             std::string value;
             std::getline(stream >> std::ws, value);
-            loadMap(material_path, value, &current->roughness_texture_path, &current->roughness_texture, &texture_error);
+            loadMap(material_path, value, &current->roughness_texture_path, &current->roughness_texture);
         } else if (key == "map_Pm") {
             std::string value;
             std::getline(stream >> std::ws, value);
-            loadMap(material_path, value, &current->metallic_texture_path, &current->metallic_texture, &texture_error);
+            loadMap(material_path, value, &current->metallic_texture_path, &current->metallic_texture);
         } else if (key == "map_Ke") {
             std::string value;
             std::getline(stream >> std::ws, value);
-            loadMap(material_path, value, &current->emissive_texture_path, &current->emissive_texture, &texture_error);
+            loadMap(material_path, value, &current->emissive_texture_path, &current->emissive_texture);
             if (current->emissive_texture != INVALID_TEXTURE && current->emissive_strength <= 0.0f)
                 current->emissive_strength = 1.0f;
         } else if (key == "map_AO" || key == "map_ao") {
@@ -178,17 +175,16 @@ bool loadMaterialLibrary(
                 material_path,
                 value,
                 &current->ambient_occlusion_texture_path,
-                &current->ambient_occlusion_texture,
-                &texture_error
+                &current->ambient_occlusion_texture
             );
         } else if (key == "norm" || key == "map_Kn" || key == "map_Bump" || key == "bump") {
             std::string value;
             std::getline(stream >> std::ws, value);
-            loadMap(material_path, value, &current->normal_texture_path, &current->normal_texture, &texture_error);
+            loadMap(material_path, value, &current->normal_texture_path, &current->normal_texture);
         } else if (key == "map_d") {
             std::string value;
             std::getline(stream >> std::ws, value);
-            loadMap(material_path, value, &current->opacity_texture_path, &current->opacity_texture, &texture_error);
+            loadMap(material_path, value, &current->opacity_texture_path, &current->opacity_texture);
         }
     }
 
@@ -205,22 +201,11 @@ bool loadMaterialLibrary(
         (void)name;
         if (material.texture_path.empty() || material.opacity_texture_path.empty()) continue;
 
-        std::string masked_error;
         const TextureHandle masked = loadTextureWithOpacity(
             material.texture_path,
-            material.opacity_texture_path,
-            &masked_error
+            material.opacity_texture_path
         );
         if (masked != INVALID_TEXTURE) material.diffuse_texture = masked;
-        else if (texture_error.empty()) {
-            texture_error = "failed to combine base-color and opacity textures";
-            if (!masked_error.empty()) texture_error += ": " + masked_error;
-        }
-    }
-
-    if (!texture_error.empty()) {
-        if (error) *error = texture_error;
-        return false;
     }
 
     return true;

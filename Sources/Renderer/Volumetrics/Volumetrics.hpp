@@ -1,13 +1,7 @@
 #ifndef HORSE_RENDERER_VOLUMETRICS_VOLUMETRICS_HPP
 #define HORSE_RENDERER_VOLUMETRICS_VOLUMETRICS_HPP
 
-#include "Ecs/Ecs.hpp"
-
 #include <cstdint>
-
-namespace Renderer::Internal {
-struct FrameOutput;
-}
 
 namespace Renderer::Volumetrics {
 
@@ -25,7 +19,6 @@ struct Settings {
 
 Settings& settings();
 const Settings& currentSettings();
-bool render(const Ecs::World& world, Internal::FrameOutput& output);
 void shutdown();
 
 } // namespace Renderer::Volumetrics

@@ -1,4 +1,4 @@
-#include "Renderer/Debug/RenderPass.hpp"
+#include "Renderer/Internal/DebugRenderPass.hpp"
 
 #include "Renderer/SDLGPU/Context.hpp"
 

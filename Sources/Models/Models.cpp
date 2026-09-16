@@ -1,6 +1,6 @@
 #include "Models/Models.hpp"
 
-#include "Models/Core/MeshRevision.hpp"
+#include "Models/Internal/MeshRevision.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/Formats/Registry.hpp"
 #include "Models/Internal/Registry.hpp"

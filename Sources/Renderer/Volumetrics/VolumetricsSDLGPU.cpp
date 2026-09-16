@@ -1,11 +1,11 @@
-#include "Renderer/Volumetrics/VolumetricsSDLGPU.hpp"
+#include "Renderer/Internal/VolumetricsSDLGPU.hpp"
 
-#include "Renderer/GlobalIllumination/GlobalIlluminationSDLGPU.hpp"
+#include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/SDLGPU/Uniforms.hpp"
 #include "Renderer/Scenes/Scene.hpp"
-#include "Renderer/Scenes/SceneResourcesSDLGPU.hpp"
+#include "Renderer/Internal/SceneResourcesSDLGPU.hpp"
 
 #include <SDL3/SDL.h>
 

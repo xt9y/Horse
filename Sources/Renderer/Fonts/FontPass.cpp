@@ -1,4 +1,4 @@
-#include "Renderer/Fonts/FontPass.hpp"
+#include "Renderer/Internal/FontPass.hpp"
 
 #include "Camera/Camera.hpp"
 #include "Font/Font.hpp"

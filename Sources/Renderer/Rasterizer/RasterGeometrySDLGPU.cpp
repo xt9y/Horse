@@ -1,9 +1,9 @@
-#include "Renderer/Rasterizer/RasterGeometrySDLGPU.hpp"
+#include "Renderer/Internal/RasterGeometrySDLGPU.hpp"
 
 #include "Animation/Animation.hpp"
 #include "Camera/Camera.hpp"
 #include "Models/Models.hpp"
-#include "Models/Core/MeshRevision.hpp"
+#include "Models/Internal/MeshRevision.hpp"
 #include "Renderer/Internal/ModelGeometry.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/SDLGPU/Context.hpp"

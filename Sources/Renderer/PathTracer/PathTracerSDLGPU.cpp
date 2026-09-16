@@ -1,14 +1,14 @@
 #include "Renderer/PathTracer/PathTracer.hpp"
 
-#include "Renderer/Fonts/FontPass.hpp"
-#include "Renderer/Frame/FrameSDLGPU.hpp"
+#include "Renderer/Internal/FontPass.hpp"
+#include "Renderer/Internal/FrameSDLGPU.hpp"
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
-#include "Renderer/GlobalIllumination/GlobalIlluminationSDLGPU.hpp"
+#include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/SDLGPU/Shaders.hpp"
 #include "Renderer/SDLGPU/Uniforms.hpp"
 #include "Renderer/Scenes/Scene.hpp"
-#include "Renderer/Scenes/SceneResourcesSDLGPU.hpp"
+#include "Renderer/Internal/SceneResourcesSDLGPU.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
 #include "Window/Window.hpp"
 

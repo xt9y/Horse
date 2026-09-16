@@ -3,15 +3,12 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Components.hpp"
-#include "Renderer/Renderer.hpp"
 
 #include <cstddef>
 
 namespace Renderer::Debug {
 
-namespace RenderPass {
-void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output);
-}
+struct InspectorAccess;
 
 struct SnapshotInfo {
     bool frozen = false;
@@ -70,10 +67,7 @@ private:
     struct Impl;
     Impl *impl_ = nullptr;
 
-    friend void RenderPass::render(
-        const Ecs::World& world,
-        Renderer::Internal::FrameOutput& output
-    );
+    friend struct InspectorAccess;
 };
 
 Inspector& inspector();

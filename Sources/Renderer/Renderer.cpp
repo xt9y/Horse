@@ -1,10 +1,11 @@
 #include "Renderer/Renderer.hpp"
 
-#include "Renderer/Debug/RenderPass.hpp"
-#include "Renderer/Fonts/FontPass.hpp"
+#include "Renderer/Internal/DebugRenderPass.hpp"
+#include "Renderer/Internal/FontPass.hpp"
 #include "Renderer/GaussianSplat/GaussianSplat.hpp"
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
+#include "Renderer/Internal/VolumetricsRender.hpp"
 #include "Renderer/Volumetrics/Volumetrics.hpp"
 #include "UI/Internal/RenderPass.hpp"
 

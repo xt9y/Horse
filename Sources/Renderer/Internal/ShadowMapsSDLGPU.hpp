@@ -1,9 +1,9 @@
-#ifndef HORSE_RENDERER_RASTERIZER_SHADOW_MAPS_SDLGPU_HPP
-#define HORSE_RENDERER_RASTERIZER_SHADOW_MAPS_SDLGPU_HPP
+#ifndef HORSE_RENDERER_INTERNAL_SHADOW_MAPS_SDLGPU_HPP
+#define HORSE_RENDERER_INTERNAL_SHADOW_MAPS_SDLGPU_HPP
 
 #include "Renderer/Lighting/Lighting.hpp"
-#include "Renderer/Rasterizer/RasterGeometrySDLGPU.hpp"
-#include "Renderer/Scenes/SceneResourcesSDLGPU.hpp"
+#include "Renderer/Internal/RasterGeometrySDLGPU.hpp"
+#include "Renderer/Internal/SceneResourcesSDLGPU.hpp"
 
 #include <SDL3/SDL_gpu.h>
 
