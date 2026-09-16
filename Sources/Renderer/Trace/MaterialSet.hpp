@@ -22,6 +22,7 @@ struct alignas(16) GpuAdvancedMaterial {
     std::array<float, 4> diffuse_transmission {1.0f, 1.0f, 1.0f, 0.0f}; // RGB, factor
     std::array<float, 4> anisotropy_iridescence {0.0f, 0.0f, 0.0f, 1.3f}; // strength, rotation, factor, IOR
     std::array<float, 4> iridescence_dispersion_ior {100.0f, 400.0f, 0.0f, 1.5f}; // thickness min/max, dispersion, IOR
+    std::array<float, 4> texture_scales {1.0f, 0.0f, 0.0f, 0.0f}; // clearcoat normal scale, reserved
     std::array<float, 4> misc {0.5f, 0.0f, 0.0f, 0.0f}; // alpha cutoff, unlit, double-sided, alpha mode
     std::array<std::int32_t, 4> tex0 {-1, -1, -1, -1}; // base, normal, roughness, metallic
     std::array<std::int32_t, 4> tex1 {-1, -1, -1, -1}; // AO, emissive, opacity, clearcoat
@@ -53,7 +54,7 @@ private:
     std::uint64_t revision_ = 0u;
 };
 
-static_assert(sizeof(GpuAdvancedMaterial) == 256u);
+static_assert(sizeof(GpuAdvancedMaterial) == 272u);
 
 } // namespace Renderer::Trace
 
