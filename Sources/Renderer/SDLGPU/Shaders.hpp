@@ -92,12 +92,11 @@ float4 VSMain(uint vertex_id : SV_VertexID) : SV_Position {
     float near_z = ViewPositionNear.w;
     float far_z = ViewForwardFar.w;
     float z = (far_z * depth - near_z * far_z) / max(far_z - near_z, 1.0e-5);
-    return float4(x, y, z, max(depth, 1.0e-5));
+    return float4(x, y, z, depth);
 }
 
 void PSMain() {}
 )HLSL";
-
 inline constexpr const char *Raster = R"HLSL(
 struct RasterVertex {
     float4 position;
@@ -318,7 +317,7 @@ VSOut VSMain(uint vertex_id : SV_VertexID) {
         float z = far_z < 3.0e37
             ? (far_z * depth - near_z * far_z) / max(far_z - near_z, 1.0e-5)
             : depth - near_z;
-        o.position = float4(x, y, z, max(depth, 1.0e-5));
+        o.position = float4(x, y, z, depth);
     }
     o.world = p;
     o.normal = n;
@@ -397,7 +396,6 @@ uint ShadowLightCount() {
 uint ShadowViewBase() {
     return 1u + ShadowLightCount();
 }
-
 float4 ShadowView(uint view_index, uint field) {
     return PShadows[ShadowViewBase() + view_index * 5u + field];
 }
@@ -597,7 +595,6 @@ PSOut PSMain(VSOut i) {
     return o;
 }
 )HLSL";
-
 inline constexpr const char *Sky = R"HLSL(
 Texture2D<float4> SkyTexture : register(t0, space2);
 SamplerState SkySampler : register(s0, space2);
