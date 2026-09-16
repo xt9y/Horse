@@ -1,5 +1,7 @@
 #include "Renderer/ModelScenePointers.hpp"
 
+#include "Models/Internal/Registry.hpp"
+
 #include "Camera/Camera.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
@@ -205,7 +207,7 @@ bool resetMaterials(Ecs::World& world, Instance& instance, bool reset_clones)
         }
         if (!reset_clones || binding.animated_material == Models::INVALID_MATERIAL) return;
         const Models::MaterialData *source = Models::material(base);
-        if (source && Models::updateMaterial(binding.animated_material, *source)) changed = true;
+        if (source && Models::Internal::updateMaterial(binding.animated_material, *source)) changed = true;
     });
     return changed;
 }
@@ -408,14 +410,14 @@ bool applyMaterial(
         if (!base_material) return;
 
         if (binding.animated_material == Models::INVALID_MATERIAL) {
-            binding.animated_material = Models::registerMaterial(*base_material);
+            binding.animated_material = Models::Internal::registerMaterial(*base_material);
             if (binding.animated_material == Models::INVALID_MATERIAL) return;
         }
         const Models::MaterialData *current = Models::material(binding.animated_material);
         if (!current) return;
         Models::MaterialData replacement = *current;
         if (!applyMaterialProperty(&replacement, target.property, value)) return;
-        if (!Models::updateMaterial(binding.animated_material, replacement)) return;
+        if (!Models::Internal::updateMaterial(binding.animated_material, replacement)) return;
         mesh->material = binding.animated_material;
         applied = true;
     });

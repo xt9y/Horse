@@ -228,13 +228,9 @@ struct InstanceData {
 };
 
 ModelHandle load(const std::string& path, std::string *error = nullptr);
-MeshHandle registerMesh(MeshData mesh);
-MaterialHandle registerMaterial(MaterialData material);
 const ModelPart *part(ModelHandle model, std::size_t index);
 const MeshData *mesh(MeshHandle handle);
-bool updateMesh(MeshHandle handle, const MeshData& replacement);
 const MaterialData *material(MaterialHandle handle);
-bool updateMaterial(MaterialHandle handle, const MaterialData& replacement);
 std::size_t partCount(ModelHandle model);
 
 std::size_t nodeCount(ModelHandle model);

@@ -3,6 +3,7 @@
 #include "Models/Core/MeshRevision.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/Formats/Registry.hpp"
+#include "Models/Internal/Registry.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -87,8 +88,8 @@ ModelHandle storeModel(const std::string& key, Formats::Document document)
     model.parts.reserve(document.parts.size());
 
     for (Formats::Part& source_part : document.parts) {
-        const MeshHandle mesh_handle = registerMesh(std::move(source_part.mesh));
-        const MaterialHandle material_handle = registerMaterial(std::move(source_part.material));
+        const MeshHandle mesh_handle = Internal::registerMesh(std::move(source_part.mesh));
+        const MaterialHandle material_handle = Internal::registerMaterial(std::move(source_part.material));
         if (mesh_handle == INVALID_MESH || material_handle == INVALID_MATERIAL)
             return INVALID_MODEL;
         model.parts.push_back({
@@ -121,7 +122,7 @@ ModelHandle storeModel(const std::string& key, Formats::Document document)
 
     model.variant_mappings.reserve(document.variant_materials.size());
     for (Formats::VariantMaterial& source : document.variant_materials) {
-        const MaterialHandle handle = registerMaterial(std::move(source.material));
+        const MaterialHandle handle = Internal::registerMaterial(std::move(source.material));
         if (handle == INVALID_MATERIAL) return INVALID_MODEL;
         model.variant_mappings.push_back({
             source.part,
@@ -171,7 +172,7 @@ ModelHandle load(const std::string& path, std::string *error)
     return storeModel(key, std::move(document));
 }
 
-MeshHandle registerMesh(MeshData mesh)
+MeshHandle Internal::registerMesh(MeshData mesh)
 {
     if (meshes().size() >= static_cast<std::size_t>(INVALID_MESH)) return INVALID_MESH;
     const MeshHandle handle = static_cast<MeshHandle>(meshes().size());
@@ -182,7 +183,7 @@ MeshHandle registerMesh(MeshData mesh)
     return handle;
 }
 
-MaterialHandle registerMaterial(MaterialData material)
+MaterialHandle Internal::registerMaterial(MaterialData material)
 {
     if (materials().size() >= static_cast<std::size_t>(INVALID_MATERIAL)) return INVALID_MATERIAL;
     const MaterialHandle handle = static_cast<MaterialHandle>(materials().size());
@@ -202,7 +203,7 @@ const MeshData *mesh(MeshHandle handle)
     return handle < meshes().size() ? &meshes()[handle] : nullptr;
 }
 
-bool updateMesh(MeshHandle handle, const MeshData& replacement)
+bool Internal::updateMesh(MeshHandle handle, const MeshData& replacement)
 {
     if (handle >= meshes().size() || handle >= meshRevisions().size()) return false;
     const MeshData& current = meshes()[handle];
@@ -233,7 +234,7 @@ const MaterialData *material(MaterialHandle handle)
     return handle < materials().size() ? &materials()[handle] : nullptr;
 }
 
-bool updateMaterial(MaterialHandle handle, const MaterialData& replacement)
+bool Internal::updateMaterial(MaterialHandle handle, const MaterialData& replacement)
 {
     if (handle >= materials().size()) return false;
     materials()[handle] = replacement;
