@@ -127,7 +127,7 @@ private:
     void clearResources();
 
     inline static std::uint32_t leaf_size_ = 0u;
-    inline static std::size_t maximum_triangles_ = 0u;
+    inline static std::size_t maximum_triangles_ = std::numeric_limits<std::size_t>::max();
     inline static float opacity_cutoff_ = 0.0f;
     inline static std::uint8_t alpha_threshold_ = 0u;
     inline static std::uint64_t config_revision_ = 1u;
