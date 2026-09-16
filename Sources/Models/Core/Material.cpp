@@ -60,11 +60,7 @@ bool loadMap(
 
     *destination_path = (material_path.parent_path() / filename).lexically_normal().string();
     *destination = loadTexture(*destination_path);
-    if (*destination == INVALID_TEXTURE) {
-        destination_path->clear();
-        return false;
-    }
-    return true;
+    return *destination != INVALID_TEXTURE;
 }
 
 float clamp01(float value)
