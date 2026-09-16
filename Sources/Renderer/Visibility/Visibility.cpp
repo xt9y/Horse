@@ -1,6 +1,8 @@
 #include "Renderer/Visibility/Visibility.hpp"
 
 #include "Camera/Camera.hpp"
+#include "Animation/Animation.hpp"
+#include "Renderer/DynamicGeometry.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
 
@@ -246,7 +248,10 @@ Result System::collectVisibleRenderItems(
     out.reserve(items.size());
 
     for (const Scenes::Scene::RenderItem& item : items) {
-        if (classify(result.frustum, item) == Classification::Outside) {
+        const bool dynamic_geometry =
+            world.has<ModelDeformComponent>(item.entity) ||
+            world.has<Animation::SkinBindingComponent>(item.entity);
+        if (!dynamic_geometry && classify(result.frustum, item) == Classification::Outside) {
             result.culled.push_back(item.entity);
             result.culled_triangles += triangleCount(item);
         } else {

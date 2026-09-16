@@ -3,10 +3,31 @@
 #include "Camera/Camera.hpp"
 #include "Input/Input.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/Math.hpp"
 
 #include <algorithm>
 
 namespace Camera {
+namespace {
+
+void syncCameraMatrix(Renderer::Transform& transform)
+{
+    transform.matrix_override = Renderer::Math::multiply(
+        Renderer::Math::multiply(
+            Renderer::Math::multiply(
+                Renderer::Math::multiply(
+                    Renderer::Math::translation(
+                        transform.position.x,
+                        transform.position.y,
+                        transform.position.z),
+                    Renderer::Math::rotationY(transform.rotation.y)),
+                Renderer::Math::rotationX(transform.rotation.x)),
+            Renderer::Math::rotationZ(transform.rotation.z)),
+        Renderer::Math::scaling(transform.scale.x, transform.scale.y, transform.scale.z));
+    transform.matrix_override_enabled = true;
+}
+
+} // namespace
 
 void FreeController::update(Ecs::World& world, float delta_seconds)
 {
@@ -21,7 +42,7 @@ void FreeController::update(Ecs::World& world, float delta_seconds)
         mouse_initialized_ = true;
     }
 
-    bool changed = false;
+    bool changed = !transform->matrix_override_enabled;
     const Input::Pointer pointer = Input::pointer();
     const bool mouse_grabbed = pointer.captured;
     const int mouse_dx = pointer.dx;
@@ -29,7 +50,7 @@ void FreeController::update(Ecs::World& world, float delta_seconds)
 
     if (mouse_grabbed && (mouse_dx != 0 || mouse_dy != 0)) {
         transform->rotation.y -= static_cast<float>(mouse_dx) * mouse_sensitivity_;
-        transform->rotation.x += static_cast<float>(mouse_dy) * mouse_sensitivity_;
+        transform->rotation.x -= static_cast<float>(mouse_dy) * mouse_sensitivity_;
         const float minimum_pitch = std::min(minimum_pitch_, maximum_pitch_);
         const float maximum_pitch = std::max(minimum_pitch_, maximum_pitch_);
         transform->rotation.x = std::clamp(transform->rotation.x, minimum_pitch, maximum_pitch);
@@ -58,6 +79,7 @@ void FreeController::update(Ecs::World& world, float delta_seconds)
     if (Input::keyDown(Input::key("D"))) move(right, speed);
     if (Input::keyDown(Input::key("A"))) move(right, -speed);
 
+    syncCameraMatrix(*transform);
     if (changed) world.markChanged(Ecs::ChangeKind::Camera);
 }
 

@@ -3,17 +3,120 @@
 
 namespace Renderer::SDLGPU::Shaders {
 
-inline constexpr const char *Raster = R"HLSL(
-struct GpuNode {
-    float3 minimum; uint first;
-    float3 maximum; uint meta;
-    uint4 extra;
+inline constexpr const char *Shadow = R"HLSL(
+struct RasterVertex {
+    float4 position;
+    float4 normal;
+    float4 uv;
+    uint4 meta;
 };
 
-struct GpuTriangle {
-    float4 p0; float4 p1; float4 p2;
-    float4 n0; float4 n1; float4 n2;
-    float4 uv01; float4 uv2;
+struct RasterItem {
+    float4 model0; float4 model1; float4 model2; float4 model3;
+    float4 inverse0; float4 inverse1; float4 inverse2; float4 inverse3;
+    uint4 meta;
+    uint4 flags;
+};
+
+struct RasterInfluence {
+    uint joint;
+    float weight;
+    uint2 reserved;
+};
+
+StructuredBuffer<RasterVertex> Vertices : register(t0, space0);
+StructuredBuffer<RasterItem> Items : register(t1, space0);
+StructuredBuffer<RasterInfluence> Influences : register(t2, space0);
+StructuredBuffer<float4> SkinMatrices : register(t3, space0);
+cbuffer ShadowView : register(b0, space1) {
+    float4 ViewPositionNear;
+    float4 ViewForwardFar;
+    float4 ViewRightScale;
+    float4 ViewUpScale;
+    float4 ViewMeta;
+};
+
+float3 TransformPoint(float4 c0, float4 c1, float4 c2, float4 c3, float3 p) {
+    return c0.xyz * p.x + c1.xyz * p.y + c2.xyz * p.z + c3.xyz;
+}
+
+float3 TransformVector(uint matrix_index, float3 v) {
+    uint base = matrix_index * 4u;
+    return SkinMatrices[base + 0u].xyz * v.x +
+        SkinMatrices[base + 1u].xyz * v.y +
+        SkinMatrices[base + 2u].xyz * v.z;
+}
+
+float3 TransformSkinPoint(uint matrix_index, float3 p) {
+    uint base = matrix_index * 4u;
+    return SkinMatrices[base + 0u].xyz * p.x +
+        SkinMatrices[base + 1u].xyz * p.y +
+        SkinMatrices[base + 2u].xyz * p.z +
+        SkinMatrices[base + 3u].xyz;
+}
+
+float3 SkinPosition(RasterVertex vertex, RasterItem item) {
+    if (item.meta.w == 0u || vertex.meta.z == 0u) return vertex.position.xyz;
+    float3 position = 0.0.xxx;
+    float total = 0.0;
+    for (uint index = 0u; index < vertex.meta.z; ++index) {
+        RasterInfluence influence = Influences[vertex.meta.y + index];
+        if (influence.weight == 0.0 || influence.joint >= item.meta.w) continue;
+        position += TransformSkinPoint(item.meta.z + influence.joint, vertex.position.xyz) * influence.weight;
+        total += influence.weight;
+    }
+    return total > 1.0e-8 ? position / total : vertex.position.xyz;
+}
+
+float4 VSMain(uint vertex_id : SV_VertexID) : SV_Position {
+    RasterVertex vertex = Vertices[vertex_id];
+    RasterItem item = Items[vertex.meta.x];
+    if (item.flags.x == 0u) return float4(2.0, 2.0, 2.0, 1.0);
+    float3 local = SkinPosition(vertex, item);
+    float3 position = TransformPoint(
+        item.model0, item.model1, item.model2, item.model3, local);
+    float3 delta = position - ViewPositionNear.xyz;
+    float depth = dot(delta, ViewForwardFar.xyz);
+
+    if (ViewMeta.x > 0.5) {
+        float x = dot(delta, ViewRightScale.xyz) / max(ViewRightScale.w, 1.0e-6);
+        float y = dot(delta, ViewUpScale.xyz) / max(ViewUpScale.w, 1.0e-6);
+        float z = saturate((depth - ViewPositionNear.w) /
+            max(ViewForwardFar.w - ViewPositionNear.w, 1.0e-5));
+        return float4(x, y, z, 1.0);
+    }
+
+    float x = dot(delta, ViewRightScale.xyz) /
+        max(ViewUpScale.w * ViewRightScale.w, 1.0e-6);
+    float y = dot(delta, ViewUpScale.xyz) / max(ViewUpScale.w, 1.0e-6);
+    float near_z = ViewPositionNear.w;
+    float far_z = ViewForwardFar.w;
+    float z = (far_z * depth - near_z * far_z) / max(far_z - near_z, 1.0e-5);
+    return float4(x, y, z, max(depth, 1.0e-5));
+}
+
+void PSMain() {}
+)HLSL";
+
+inline constexpr const char *Raster = R"HLSL(
+struct RasterVertex {
+    float4 position;
+    float4 normal;
+    float4 uv;
+    uint4 meta;
+};
+
+struct RasterItem {
+    float4 model0; float4 model1; float4 model2; float4 model3;
+    float4 inverse0; float4 inverse1; float4 inverse2; float4 inverse3;
+    uint4 meta;
+    uint4 flags;
+};
+
+struct RasterInfluence {
+    uint joint;
+    float weight;
+    uint2 reserved;
 };
 
 struct GpuBaseMaterial { float4 base_color; int4 data; };
@@ -31,7 +134,11 @@ struct GpuMaterial {
     int4 tex0; int4 tex1; int4 tex2; int4 tex3; int4 tex4; int4 tex5;
 };
 
-StructuredBuffer<GpuTriangle> VTriangles : register(t0, space0);
+StructuredBuffer<RasterVertex> VVertices : register(t0, space0);
+StructuredBuffer<RasterItem> VItems : register(t1, space0);
+StructuredBuffer<RasterInfluence> VInfluences : register(t2, space0);
+StructuredBuffer<float4> VSkinMatrices : register(t3, space0);
+StructuredBuffer<uint> VVisibility : register(t4, space0);
 cbuffer VertexFrame : register(b0, space1) {
     float4 VCameraPositionNear;
     float4 VCameraForwardFar;
@@ -59,13 +166,13 @@ Texture2D<float4> Tex11 : register(t11, space2); SamplerState Samp11 : register(
 Texture2D<float4> Tex12 : register(t12, space2); SamplerState Samp12 : register(s12, space2);
 Texture2D<float4> Tex13 : register(t13, space2); SamplerState Samp13 : register(s13, space2);
 Texture2D<float4> Tex14 : register(t14, space2); SamplerState Samp14 : register(s14, space2);
-Texture2D<float4> Tex15 : register(t15, space2); SamplerState Samp15 : register(s15, space2);
+Texture2DArray<float> ShadowMaps : register(t15, space2);
+SamplerComparisonState ShadowSampler : register(s15, space2);
 
-StructuredBuffer<GpuNode> PNodes : register(t16, space2);
-StructuredBuffer<GpuTriangle> PTriangles : register(t17, space2);
-StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t18, space2);
-StructuredBuffer<GpuMaterial> PMaterials : register(t19, space2);
-StructuredBuffer<float4> PGI : register(t20, space2);
+StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t16, space2);
+StructuredBuffer<GpuMaterial> PMaterials : register(t17, space2);
+StructuredBuffer<float4> PGI : register(t18, space2);
+StructuredBuffer<float4> PShadows : register(t19, space2);
 cbuffer PixelFrame : register(b0, space3) {
     float4 PCameraPositionNear;
     float4 PCameraForwardFar;
@@ -94,7 +201,6 @@ float4 SampleSlot(int slot, float2 uv) {
     if (slot == 12) return Tex12.Sample(Samp12, uv);
     if (slot == 13) return Tex13.Sample(Samp13, uv);
     if (slot == 14) return Tex14.Sample(Samp14, uv);
-    if (slot == 15) return Tex15.Sample(Samp15, uv);
     return 1.0.xxxx;
 }
 
@@ -106,14 +212,79 @@ struct VSOut {
     nointerpolation uint material : TEXCOORD3;
 };
 
+float3 RasterTransformPoint(float4 c0, float4 c1, float4 c2, float4 c3, float3 p) {
+    return c0.xyz * p.x + c1.xyz * p.y + c2.xyz * p.z + c3.xyz;
+}
+
+float3 RasterSkinPoint(uint matrix_index, float3 p) {
+    uint base = matrix_index * 4u;
+    return VSkinMatrices[base + 0u].xyz * p.x +
+        VSkinMatrices[base + 1u].xyz * p.y +
+        VSkinMatrices[base + 2u].xyz * p.z +
+        VSkinMatrices[base + 3u].xyz;
+}
+
+float3 RasterSkinVector(uint matrix_index, float3 v) {
+    uint base = matrix_index * 4u;
+    return VSkinMatrices[base + 0u].xyz * v.x +
+        VSkinMatrices[base + 1u].xyz * v.y +
+        VSkinMatrices[base + 2u].xyz * v.z;
+}
+
+void RasterSkin(
+    RasterVertex vertex,
+    RasterItem item,
+    out float3 position,
+    out float3 normal)
+{
+    position = vertex.position.xyz;
+    normal = vertex.normal.xyz;
+    if (item.meta.w == 0u || vertex.meta.z == 0u) return;
+
+    float3 skinned_position = 0.0.xxx;
+    float3 skinned_normal = 0.0.xxx;
+    float total = 0.0;
+    for (uint index = 0u; index < vertex.meta.z; ++index) {
+        RasterInfluence influence = VInfluences[vertex.meta.y + index];
+        if (influence.weight == 0.0 || influence.joint >= item.meta.w) continue;
+        uint matrix_index = item.meta.z + influence.joint;
+        skinned_position += RasterSkinPoint(matrix_index, position) * influence.weight;
+        skinned_normal += RasterSkinVector(matrix_index, normal) * influence.weight;
+        total += influence.weight;
+    }
+    if (total > 1.0e-8) {
+        position = skinned_position / total;
+        normal = normalize(skinned_normal / total);
+    }
+}
+
+float3 RasterWorldNormal(RasterItem item, float3 normal) {
+    return normalize(float3(
+        dot(item.inverse0.xyz, normal),
+        dot(item.inverse1.xyz, normal),
+        dot(item.inverse2.xyz, normal)));
+}
+
 VSOut VSMain(uint vertex_id : SV_VertexID) {
     VSOut o;
-    uint triangle_index = vertex_id / 3u;
-    uint corner = vertex_id - triangle_index * 3u;
-    GpuTriangle tri = VTriangles[triangle_index];
-    float3 p = corner == 0u ? tri.p0.xyz : (corner == 1u ? tri.p1.xyz : tri.p2.xyz);
-    float3 n = corner == 0u ? tri.n0.xyz : (corner == 1u ? tri.n1.xyz : tri.n2.xyz);
-    float2 uv = corner == 0u ? tri.uv01.xy : (corner == 1u ? tri.uv01.zw : tri.uv2.xy);
+    RasterVertex vertex = VVertices[vertex_id];
+    RasterItem item = VItems[vertex.meta.x];
+    uint entity = item.meta.y;
+    if (VVisibility[entity] == 0u) {
+        o.position = float4(2.0, 2.0, 2.0, 1.0);
+        o.world = 0.0.xxx;
+        o.normal = float3(0.0, 1.0, 0.0);
+        o.uv = 0.0.xx;
+        o.material = 0u;
+        return o;
+    }
+    float3 local_position;
+    float3 local_normal;
+    RasterSkin(vertex, item, local_position, local_normal);
+    float3 p = RasterTransformPoint(
+        item.model0, item.model1, item.model2, item.model3, local_position);
+    float3 n = RasterWorldNormal(item, local_normal);
+    float2 uv = vertex.uv.xy;
 
     float3 delta = p - VCameraPositionNear.xyz;
     float depth = dot(delta, VCameraForwardFar.xyz);
@@ -137,59 +308,8 @@ VSOut VSMain(uint vertex_id : SV_VertexID) {
     o.world = p;
     o.normal = n;
     o.uv = uv;
-    o.material = asuint(tri.p0.w);
+    o.material = item.meta.x;
     return o;
-}
-
-bool IntersectAabb(float3 ro, float3 inv_rd, float3 bmin, float3 bmax, float max_t) {
-    float3 t0 = (bmin - ro) * inv_rd;
-    float3 t1 = (bmax - ro) * inv_rd;
-    float3 mn = min(t0, t1);
-    float3 mx = max(t0, t1);
-    float enter = max(max(mn.x, mn.y), max(mn.z, 0.0));
-    float leave = min(min(mx.x, mx.y), mx.z);
-    return leave >= enter && enter < max_t;
-}
-
-bool IntersectTriangle(float3 ro, float3 rd, GpuTriangle tri, float max_t) {
-    float3 e1 = tri.p1.xyz - tri.p0.xyz;
-    float3 e2 = tri.p2.xyz - tri.p0.xyz;
-    float3 p = cross(rd, e2);
-    float det = dot(e1, p);
-    if (abs(det) < 1.0e-7) return false;
-    float inv_det = 1.0 / det;
-    float3 s = ro - tri.p0.xyz;
-    float u = dot(s, p) * inv_det;
-    if (u < 0.0 || u > 1.0) return false;
-    float3 q = cross(s, e1);
-    float v = dot(rd, q) * inv_det;
-    if (v < 0.0 || u + v > 1.0) return false;
-    float t = dot(e2, q) * inv_det;
-    return t > 1.0e-4 && t < max_t;
-}
-
-bool Occluded(float3 ro, float3 rd, float max_t) {
-    if (PCounts.x <= 0 || PCounts.y <= 0) return false;
-    float3 safe_rd = sign(rd + 1.0e-20.xxx) * max(abs(rd), 1.0e-8.xxx);
-    float3 inv_rd = 1.0 / safe_rd;
-    uint stack[64]; uint top = 0u; stack[top++] = 0u;
-    while (top > 0u) {
-        uint index = stack[--top];
-        if (index >= (uint)PCounts.x) continue;
-        GpuNode node = PNodes[index];
-        if (!IntersectAabb(ro, inv_rd, node.minimum, node.maximum, max_t)) continue;
-        if ((node.meta & 0x80000000u) != 0u) {
-            uint count = node.meta & 0x7fffffffu;
-            for (uint i = 0u; i < count; ++i) {
-                uint ti = node.first + i;
-                if (ti < (uint)PCounts.y && IntersectTriangle(ro, rd, PTriangles[ti], max_t)) return true;
-            }
-        } else if (top + 2u <= 64u) {
-            stack[top++] = node.first;
-            stack[top++] = node.meta;
-        }
-    }
-    return false;
 }
 
 float3 SampleGI(float3 position, float3 normal) {
@@ -255,6 +375,91 @@ float3 ApplyNormalMap(float3 n, float3 position, float2 uv, int slot, float scal
     return normalize(t * mapped.x + b * mapped.y + normalize(n) * mapped.z);
 }
 
+uint ShadowLightCount() {
+    return (uint)max(PShadows[0].x, 0.0);
+}
+
+uint ShadowViewBase() {
+    return 1u + ShadowLightCount();
+}
+
+float4 ShadowView(uint view_index, uint field) {
+    return PShadows[ShadowViewBase() + view_index * 5u + field];
+}
+
+float SampleShadow(uint view_index, float3 position, float bias) {
+    float4 position_near = ShadowView(view_index, 0u);
+    float4 forward_far = ShadowView(view_index, 1u);
+    float4 right_scale = ShadowView(view_index, 2u);
+    float4 up_scale = ShadowView(view_index, 3u);
+    float4 meta = ShadowView(view_index, 4u);
+    float3 delta = position - position_near.xyz;
+    float depth = dot(delta, forward_far.xyz);
+    if (depth <= position_near.w || depth >= forward_far.w) return 1.0;
+
+    float2 ndc;
+    float reference;
+    if (meta.x > 0.5) {
+        ndc.x = dot(delta, right_scale.xyz) / max(right_scale.w, 1.0e-6);
+        ndc.y = dot(delta, up_scale.xyz) / max(up_scale.w, 1.0e-6);
+        reference = (depth - position_near.w) /
+            max(forward_far.w - position_near.w, 1.0e-5);
+    } else {
+        ndc.x = dot(delta, right_scale.xyz) /
+            max(up_scale.w * right_scale.w * depth, 1.0e-6);
+        ndc.y = dot(delta, up_scale.xyz) / max(up_scale.w * depth, 1.0e-6);
+        reference = (forward_far.w * depth - position_near.w * forward_far.w) /
+            max((forward_far.w - position_near.w) * depth, 1.0e-5);
+    }
+    if (any(abs(ndc) > 1.0.xx)) return 1.0;
+
+    float depth_bias = max(bias, 0.0) /
+        max(forward_far.w - position_near.w, 1.0e-4);
+    float3 sample_position = float3(
+        ndc.x * 0.5 + 0.5,
+        0.5 - ndc.y * 0.5,
+        (float)((uint)meta.y)
+    );
+    return ShadowMaps.SampleCmpLevelZero(
+        ShadowSampler,
+        sample_position,
+        saturate(reference - depth_bias)
+    );
+}
+
+float ShadowVisibility(uint light_index, float3 position, float type, float bias) {
+    uint light_count = ShadowLightCount();
+    if (light_index >= light_count) return 1.0;
+    float4 record = PShadows[1u + light_index];
+    uint first = (uint)max(record.x, 0.0);
+    uint count = (uint)max(record.y, 0.0);
+    if (count == 0u || record.w < 0.5) return 1.0;
+
+    uint selected = first;
+    if (type < 1.5 && count > 1u) {
+        float best = -2.0;
+        for (uint index = 0u; index < count; ++index) {
+            uint candidate = first + index;
+            float3 origin = ShadowView(candidate, 0u).xyz;
+            float3 direction = normalize(position - origin);
+            float score = dot(direction, ShadowView(candidate, 1u).xyz);
+            if (score > best) { best = score; selected = candidate; }
+        }
+    } else if (type > 1.5 && type < 2.5 && count > 1u) {
+        float camera_depth = dot(position - PCameraPositionNear.xyz, PCameraForwardFar.xyz);
+        selected = first + count - 1u;
+        for (uint index = 0u; index < count; ++index) {
+            uint candidate = first + index;
+            if (camera_depth <= ShadowView(candidate, 4u).z) {
+                selected = candidate;
+                break;
+            }
+        }
+    }
+
+    return SampleShadow(selected, position, max(record.z, bias));
+}
+
 float3 DirectLighting(
     float3 position,
     float3 normal,
@@ -287,14 +492,11 @@ float3 DirectLighting(
         float3 light_direction = normalize(direction_type.xyz);
         float3 l = -light_direction;
         float attenuation = 1.0;
-        float max_t = 1.0e30;
         if (direction_type.w < 1.5 || direction_type.w > 2.5) {
             float3 to_light = position_intensity.xyz - position;
             float dist = length(to_light);
             if (dist <= 1.0e-5) continue;
             l = to_light / dist;
-            float bias = max(cone_shadow.w, 1.0e-4);
-            max_t = max(dist - bias, 0.0);
             attenuation = 1.0 / max(dist * dist, 1.0);
             if (color_range.w > 0.0) attenuation *= saturate(1.0 - dist / color_range.w);
             if (direction_type.w > 2.5)
@@ -305,9 +507,14 @@ float3 DirectLighting(
         float ndotl = saturate(dot(normal, l));
         if (ndotl <= 0.0) continue;
         float shadow = 1.0;
-        if (cone_shadow.z > 0.5 && max_t > 0.0) {
+        if (cone_shadow.z > 0.5) {
             float bias = max(cone_shadow.w, 1.0e-4);
-            if (Occluded(position + normal * bias, l, max_t)) shadow = 0.0;
+            shadow = ShadowVisibility(
+                light_index,
+                position + normal * bias,
+                direction_type.w,
+                bias
+            );
         }
         if (shadow <= 0.0) continue;
 

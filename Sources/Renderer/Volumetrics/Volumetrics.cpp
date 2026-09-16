@@ -42,7 +42,7 @@ bool render(const Ecs::World& world, Internal::FrameOutput& output)
     Settings value = storage();
     if (!value.enabled || !active(Internal::shadingState())) return true;
     if (!output.command || !output.color_texture || !output.depth_texture ||
-        !output.scene_resources || output.depth == Internal::DepthSource::None)
+        output.depth == Internal::DepthSource::None)
         return true;
 
     value.resolution_divisor = std::max(value.resolution_divisor, 1);

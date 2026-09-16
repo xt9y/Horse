@@ -2,9 +2,11 @@
 
 #include "Models/Compression/Checksums.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
@@ -12,6 +14,14 @@
 
 namespace Models::Compression {
 namespace {
+
+#if defined(_MSC_VER)
+#define HORSE_DEFLATE_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define HORSE_DEFLATE_INLINE inline __attribute__((always_inline))
+#else
+#define HORSE_DEFLATE_INLINE inline
+#endif
 
 bool fail(std::string *error, const std::string& message)
 {
@@ -26,20 +36,45 @@ public:
     {
     }
 
-    bool readBits(unsigned count, std::uint32_t *value)
+    HORSE_DEFLATE_INLINE bool readBits(unsigned count, std::uint32_t *value)
     {
         if (!value || count > 24u) return false;
-        if (bit_position_ > size_ * 8u || count > size_ * 8u - bit_position_) return false;
-
-        std::uint32_t result = 0u;
-        for (unsigned bit = 0u; bit < count; ++bit) {
-            const std::size_t absolute = bit_position_ + bit;
-            const std::uint8_t byte = data_[absolute >> 3u];
-            result |= static_cast<std::uint32_t>((byte >> (absolute & 7u)) & 1u) << bit;
-        }
-        bit_position_ += count;
-        *value = result;
+        if (!ensure(count)) return false;
+        const std::uint64_t mask = count == 0u
+            ? 0u
+            : ((std::uint64_t{1u} << count) - 1u);
+        *value = static_cast<std::uint32_t>(buffer_ & mask);
+        buffer_ >>= count;
+        buffered_bits_ -= count;
+        consumed_bits_ += count;
         return true;
+    }
+
+    HORSE_DEFLATE_INLINE bool peekBits(unsigned count, std::uint32_t *value)
+    {
+        if (!value || count > 24u) return false;
+        if (!ensure(count)) return false;
+        const std::uint64_t mask = count == 0u
+            ? 0u
+            : ((std::uint64_t{1u} << count) - 1u);
+        *value = static_cast<std::uint32_t>(buffer_ & mask);
+        return true;
+    }
+
+    HORSE_DEFLATE_INLINE bool skipBits(unsigned count)
+    {
+        if (!ensure(count)) return false;
+        buffer_ >>= count;
+        buffered_bits_ -= count;
+        consumed_bits_ += count;
+        return true;
+    }
+
+    HORSE_DEFLATE_INLINE void consumeBuffered(unsigned count)
+    {
+        buffer_ >>= count;
+        buffered_bits_ -= count;
+        consumed_bits_ += count;
     }
 
     bool readBit(std::uint32_t *value)
@@ -49,16 +84,16 @@ public:
 
     void alignByte()
     {
-        bit_position_ = (bit_position_ + 7u) & ~std::size_t{7u};
+        const unsigned misalignment = static_cast<unsigned>(consumed_bits_ & 7u);
+        if (misalignment != 0u) (void)skipBits(8u - misalignment);
     }
 
     bool readByte(std::uint8_t *value)
     {
-        if ((bit_position_ & 7u) != 0u || !value) return false;
-        const std::size_t byte_position = bit_position_ >> 3u;
-        if (byte_position >= size_) return false;
-        *value = data_[byte_position];
-        bit_position_ += 8u;
+        if ((consumed_bits_ & 7u) != 0u || !value) return false;
+        std::uint32_t byte = 0u;
+        if (!readBits(8u, &byte)) return false;
+        *value = static_cast<std::uint8_t>(byte);
         return true;
     }
 
@@ -75,15 +110,41 @@ public:
     }
 
 private:
+    HORSE_DEFLATE_INLINE bool ensure(unsigned count)
+    {
+        while (buffered_bits_ < count && byte_position_ < size_) {
+            buffer_ |= static_cast<std::uint64_t>(data_[byte_position_++]) << buffered_bits_;
+            buffered_bits_ += 8u;
+        }
+        return buffered_bits_ >= count;
+    }
+
     const std::uint8_t *data_ = nullptr;
     std::size_t size_ = 0u;
-    std::size_t bit_position_ = 0u;
+    std::size_t byte_position_ = 0u;
+    std::size_t consumed_bits_ = 0u;
+    std::uint64_t buffer_ = 0u;
+    unsigned buffered_bits_ = 0u;
 };
 
 struct Huffman {
+    static constexpr unsigned LookupBits = 10u;
+    static constexpr std::size_t LookupSize = std::size_t{1u} << LookupBits;
+
     std::array<std::uint16_t, 16> count{};
     std::vector<std::uint16_t> symbol;
+    std::array<std::uint32_t, LookupSize> lookup{};
 };
+
+std::uint32_t reverseBits(std::uint32_t value, unsigned count)
+{
+    std::uint32_t result = 0u;
+    for (unsigned bit = 0u; bit < count; ++bit) {
+        result = (result << 1u) | (value & 1u);
+        value >>= 1u;
+    }
+    return result;
+}
 
 bool buildHuffman(
     const std::uint8_t *lengths,
@@ -93,52 +154,88 @@ bool buildHuffman(
 {
     if (!lengths || !table) return fail(error, "invalid Huffman table input");
     *table = {};
+    std::uint16_t *counts = table->count.data();
 
     for (std::size_t index = 0u; index < length_count; ++index) {
         const std::uint8_t length = lengths[index];
         if (length > 15u) return fail(error, "invalid DEFLATE Huffman code length");
-        ++table->count[length];
+        ++counts[length];
     }
 
-    if (table->count[0] == length_count) {
+    if (counts[0] == length_count) {
         return fail(error, "empty DEFLATE Huffman tree");
     }
 
     int left = 1;
     for (std::size_t bits = 1u; bits <= 15u; ++bits) {
         left <<= 1;
-        left -= table->count[bits];
+        left -= counts[bits];
         if (left < 0) return fail(error, "oversubscribed DEFLATE Huffman tree");
     }
 
     std::array<std::uint16_t, 16> offsets{};
-    offsets[1] = 0u;
+    std::uint16_t *offset_values = offsets.data();
+    offset_values[1] = 0u;
     for (std::size_t bits = 1u; bits < 15u; ++bits) {
-        offsets[bits + 1u] = static_cast<std::uint16_t>(
-            offsets[bits] + table->count[bits]
+        offset_values[bits + 1u] = static_cast<std::uint16_t>(
+            offset_values[bits] + counts[bits]
         );
     }
 
-    table->symbol.resize(length_count - table->count[0]);
+    table->symbol.resize(length_count - counts[0]);
+    std::uint16_t *symbols = table->symbol.data();
     for (std::size_t symbol = 0u; symbol < length_count; ++symbol) {
         const std::uint8_t length = lengths[symbol];
         if (length == 0u) continue;
-        const std::size_t destination = offsets[length]++;
+        const std::size_t destination = offset_values[length]++;
         if (destination >= table->symbol.size()) {
             return fail(error, "invalid DEFLATE Huffman symbol ordering");
         }
-        table->symbol[destination] = static_cast<std::uint16_t>(symbol);
+        symbols[destination] = static_cast<std::uint16_t>(symbol);
+    }
+
+    std::array<std::uint32_t, 16> next_code{};
+    std::uint32_t *next_codes = next_code.data();
+    std::uint32_t code = 0u;
+    for (unsigned bits = 1u; bits <= 15u; ++bits) {
+        code = (code + counts[bits - 1u]) << 1u;
+        next_codes[bits] = code;
+    }
+    std::uint32_t *lookup = table->lookup.data();
+    for (std::size_t symbol = 0u; symbol < length_count; ++symbol) {
+        const unsigned length = lengths[symbol];
+        if (length == 0u) continue;
+        const std::uint32_t reversed = reverseBits(next_codes[length]++, length);
+        if (length > Huffman::LookupBits) continue;
+        const std::uint32_t entry =
+            (static_cast<std::uint32_t>(length) << 16u) |
+            (static_cast<std::uint32_t>(symbol) + 1u);
+        const std::uint32_t stride = std::uint32_t{1u} << length;
+        for (std::uint32_t slot = reversed; slot < Huffman::LookupSize; slot += stride) {
+            lookup[slot] = entry;
+        }
     }
     return true;
 }
 
-bool decodeSymbol(
+HORSE_DEFLATE_INLINE bool decodeSymbol(
     BitReader *reader,
     const Huffman& table,
     std::uint16_t *symbol,
     std::string *error)
 {
     if (!reader || !symbol) return fail(error, "invalid Huffman decode state");
+
+    std::uint32_t bits = 0u;
+    if (reader->peekBits(Huffman::LookupBits, &bits)) {
+        const std::uint32_t entry = table.lookup.data()[bits];
+        if (entry != 0u) {
+            const unsigned length = entry >> 16u;
+            reader->consumeBuffered(length);
+            *symbol = static_cast<std::uint16_t>((entry & 0xffffu) - 1u);
+            return true;
+        }
+    }
 
     std::uint32_t code = 0u;
     std::uint32_t first = 0u;
@@ -148,13 +245,13 @@ bool decodeSymbol(
         if (!reader->readBit(&bit)) return fail(error, "truncated DEFLATE Huffman code");
         code |= bit;
 
-        const std::uint32_t count = table.count[length];
+        const std::uint32_t count = table.count.data()[length];
         if (code >= first && code - first < count) {
             const std::size_t slot = index + static_cast<std::size_t>(code - first);
             if (slot >= table.symbol.size()) {
                 return fail(error, "invalid DEFLATE Huffman symbol index");
             }
-            *symbol = table.symbol[slot];
+            *symbol = table.symbol.data()[slot];
             return true;
         }
 
@@ -165,24 +262,94 @@ bool decodeSymbol(
     return fail(error, "invalid DEFLATE Huffman code");
 }
 
-bool reserveGrowth(
-    const std::vector<std::uint8_t>& output,
-    std::size_t growth,
-    const InflateOptions& options,
-    std::string *error)
-{
-    if (growth > options.max_output || output.size() > options.max_output - growth) {
-        return fail(error, "DEFLATE output limit exceeded");
+class InflateOutput {
+public:
+    InflateOutput(std::vector<std::uint8_t> *bytes, std::size_t limit)
+        : bytes_(bytes), limit_(limit)
+    {
+        if (bytes_) bytes_->clear();
     }
-    return true;
-}
+
+    InflateOutput(std::uint8_t *bytes, std::size_t size)
+        : fixed_bytes_(bytes), fixed_capacity_(size), limit_(size)
+    {
+    }
+
+    HORSE_DEFLATE_INLINE std::size_t size() const { return written_; }
+
+    HORSE_DEFLATE_INLINE bool append(std::uint8_t value, std::string *error)
+    {
+        if (!ensure(1u, error)) return false;
+        data()[written_++] = value;
+        return true;
+    }
+
+    HORSE_DEFLATE_INLINE bool appendCopy(std::size_t distance, std::size_t length, std::string *error)
+    {
+        if (distance == 0u || distance > written_) {
+            return fail(error, "invalid DEFLATE back-reference distance");
+        }
+        if (!ensure(length, error)) return false;
+
+        std::uint8_t *bytes = data();
+        const std::size_t destination = written_;
+        const std::size_t seed = std::min(distance, length);
+        std::memcpy(bytes + destination, bytes + destination - distance, seed);
+        std::size_t copied = seed;
+        while (copied < length) {
+            const std::size_t chunk = std::min(copied, length - copied);
+            std::memcpy(bytes + destination + copied, bytes + destination, chunk);
+            copied += chunk;
+        }
+        written_ += length;
+        return true;
+    }
+
+    void finish()
+    {
+        if (bytes_) bytes_->resize(written_);
+    }
+
+private:
+    HORSE_DEFLATE_INLINE std::uint8_t *data()
+    {
+        return bytes_ ? bytes_->data() : fixed_bytes_;
+    }
+
+    HORSE_DEFLATE_INLINE bool ensure(std::size_t growth, std::string *error)
+    {
+        if (!bytes_ && !fixed_bytes_) return fail(error, "null DEFLATE output");
+        if (growth > limit_ || written_ > limit_ - growth) {
+            return fail(error, "DEFLATE output limit exceeded");
+        }
+        const std::size_t needed = written_ + growth;
+        if (fixed_bytes_) return needed <= fixed_capacity_;
+        if (needed <= bytes_->size()) return true;
+
+        std::size_t expanded = bytes_->empty() ? std::min<std::size_t>(limit_, 64u * 1024u) : bytes_->size();
+        if (expanded == 0u) expanded = needed;
+        while (expanded < needed) {
+            const std::size_t remaining = limit_ - expanded;
+            if (remaining == 0u) break;
+            expanded += std::min(expanded, remaining);
+        }
+        if (expanded < needed) expanded = needed;
+        bytes_->resize(expanded);
+        return true;
+    }
+
+    std::vector<std::uint8_t> *bytes_ = nullptr;
+    std::uint8_t *fixed_bytes_ = nullptr;
+    std::size_t fixed_capacity_ = 0u;
+    std::size_t limit_ = 0u;
+    std::size_t written_ = 0u;
+};
 
 bool decodeCompressedBlock(
     BitReader *reader,
     const Huffman& literals,
     const Huffman& distances,
-    std::vector<std::uint8_t> *output,
-    const InflateOptions& options,
+    InflateOutput *output,
     std::string *error)
 {
     static constexpr std::array<std::uint16_t, 29> length_base = {
@@ -197,13 +364,16 @@ bool decodeCompressedBlock(
     static constexpr std::array<std::uint8_t, 30> distance_extra = {
         0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13
     };
+    const std::uint16_t *length_bases = length_base.data();
+    const std::uint8_t *length_extras = length_extra.data();
+    const std::uint16_t *distance_bases = distance_base.data();
+    const std::uint8_t *distance_extras = distance_extra.data();
 
     for (;;) {
         std::uint16_t literal = 0u;
         if (!decodeSymbol(reader, literals, &literal, error)) return false;
         if (literal < 256u) {
-            if (!reserveGrowth(*output, 1u, options, error)) return false;
-            output->push_back(static_cast<std::uint8_t>(literal));
+            if (!output->append(static_cast<std::uint8_t>(literal), error)) return false;
             continue;
         }
         if (literal == 256u) return true;
@@ -213,28 +383,21 @@ bool decodeCompressedBlock(
 
         const std::size_t length_index = static_cast<std::size_t>(literal - 257u);
         std::uint32_t length_bits = 0u;
-        if (!reader->readBits(length_extra[length_index], &length_bits)) {
+        if (!reader->readBits(length_extras[length_index], &length_bits)) {
             return fail(error, "truncated DEFLATE length");
         }
-        const std::size_t length = static_cast<std::size_t>(length_base[length_index]) + length_bits;
+        const std::size_t length = static_cast<std::size_t>(length_bases[length_index]) + length_bits;
 
         std::uint16_t distance_symbol = 0u;
         if (!decodeSymbol(reader, distances, &distance_symbol, error)) return false;
         if (distance_symbol >= 30u) return fail(error, "invalid DEFLATE distance symbol");
         std::uint32_t distance_bits = 0u;
-        if (!reader->readBits(distance_extra[distance_symbol], &distance_bits)) {
+        if (!reader->readBits(distance_extras[distance_symbol], &distance_bits)) {
             return fail(error, "truncated DEFLATE distance");
         }
         const std::size_t distance =
-            static_cast<std::size_t>(distance_base[distance_symbol]) + distance_bits;
-        if (distance == 0u || distance > output->size()) {
-            return fail(error, "invalid DEFLATE back-reference distance");
-        }
-        if (!reserveGrowth(*output, length, options, error)) return false;
-
-        for (std::size_t copied = 0u; copied < length; ++copied) {
-            output->push_back((*output)[output->size() - distance]);
-        }
+            static_cast<std::size_t>(distance_bases[distance_symbol]) + distance_bits;
+        if (!output->appendCopy(distance, length, error)) return false;
     }
 }
 
@@ -333,10 +496,10 @@ bool dynamicTables(
 bool inflateDeflate(
     const std::uint8_t *data,
     std::size_t size,
-    std::vector<std::uint8_t> *output,
-    const InflateOptions& options,
+    InflateOutput *decoded,
     std::string *error)
 {
+    if (!decoded) return fail(error, "null DEFLATE output");
     BitReader reader(data, size);
     bool final_block = false;
     while (!final_block) {
@@ -357,11 +520,10 @@ bool inflateDeflate(
             if (static_cast<std::uint16_t>(length ^ 0xffffu) != inverse_length) {
                 return fail(error, "invalid DEFLATE stored block length");
             }
-            if (!reserveGrowth(*output, length, options, error)) return false;
             for (std::size_t i = 0u; i < length; ++i) {
                 std::uint8_t byte = 0u;
                 if (!reader.readByte(&byte)) return fail(error, "truncated DEFLATE stored block");
-                output->push_back(byte);
+                if (!decoded->append(byte, error)) return false;
             }
             continue;
         }
@@ -375,8 +537,9 @@ bool inflateDeflate(
         } else {
             if (!dynamicTables(&reader, &literals, &distances, error)) return false;
         }
-        if (!decodeCompressedBlock(&reader, literals, distances, output, options, error)) return false;
+        if (!decodeCompressedBlock(&reader, literals, distances, decoded, error)) return false;
     }
+    decoded->finish();
     return true;
 }
 
@@ -404,7 +567,8 @@ bool inflateZlib(
     if ((flg & 0x20u) != 0u) return fail(error, "zlib preset dictionary is unsupported");
 
     std::vector<std::uint8_t> decoded;
-    if (!inflateDeflate(data + 2u, size - 6u, &decoded, options, error)) return false;
+    InflateOutput target(&decoded, options.max_output);
+    if (!inflateDeflate(data + 2u, size - 6u, &target, error)) return false;
 
     if (options.verify_adler32) {
         const std::uint32_t expected =
@@ -419,5 +583,44 @@ bool inflateZlib(
     *output = std::move(decoded);
     return true;
 }
+
+bool inflateZlibExact(
+    const std::uint8_t *data,
+    std::size_t size,
+    std::uint8_t *output,
+    std::size_t output_size,
+    std::string *error,
+    InflateOptions options)
+{
+    if (error) error->clear();
+    if (!output && output_size != 0u) return fail(error, "null zlib output");
+    if (!data || size < 6u) return fail(error, "truncated zlib stream");
+    if (output_size > options.max_output) return fail(error, "DEFLATE output limit exceeded");
+
+    const std::uint8_t cmf = data[0];
+    const std::uint8_t flg = data[1];
+    if ((cmf & 0x0fu) != 8u) return fail(error, "unsupported zlib compression method");
+    if ((cmf >> 4u) > 7u) return fail(error, "invalid zlib window size");
+    if (((static_cast<unsigned>(cmf) << 8u) | flg) % 31u != 0u)
+        return fail(error, "invalid zlib header checksum");
+    if ((flg & 0x20u) != 0u) return fail(error, "zlib preset dictionary is unsupported");
+
+    InflateOutput target(output, output_size);
+    if (!inflateDeflate(data + 2u, size - 6u, &target, error)) return false;
+    if (target.size() != output_size) return fail(error, "zlib output size mismatch");
+
+    if (options.verify_adler32) {
+        const std::uint32_t expected =
+            (static_cast<std::uint32_t>(data[size - 4u]) << 24u) |
+            (static_cast<std::uint32_t>(data[size - 3u]) << 16u) |
+            (static_cast<std::uint32_t>(data[size - 2u]) << 8u) |
+            static_cast<std::uint32_t>(data[size - 1u]);
+        const std::uint32_t actual = adler32(output, output_size);
+        if (actual != expected) return fail(error, "zlib Adler-32 mismatch");
+    }
+    return true;
+}
+
+#undef HORSE_DEFLATE_INLINE
 
 } // namespace Models::Compression

@@ -9,12 +9,21 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace Models::Images::Png {
 namespace {
+
+#if defined(_MSC_VER)
+#define HORSE_PNG_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+#define HORSE_PNG_INLINE inline __attribute__((always_inline))
+#else
+#define HORSE_PNG_INLINE inline
+#endif
 
 constexpr std::array<std::uint8_t, 8> kSignature = {
     137u, 80u, 78u, 71u, 13u, 10u, 26u, 10u
@@ -51,18 +60,33 @@ std::uint16_t readBe16(const std::uint8_t *data)
     );
 }
 
+constexpr std::array<std::uint32_t, 256> makeCrcTable()
+{
+    std::array<std::uint32_t, 256> table{};
+    for (std::uint32_t value = 0u; value < table.size(); ++value) {
+        std::uint32_t crc = value;
+        for (unsigned bit = 0u; bit < 8u; ++bit)
+            crc = (crc >> 1u) ^ ((crc & 1u) ? 0xedb88320u : 0u);
+        table[value] = crc;
+    }
+    return table;
+}
+
+constexpr auto kCrcTable = makeCrcTable();
+
+HORSE_PNG_INLINE std::uint32_t crcByte(std::uint32_t crc, std::uint8_t value)
+{
+    return kCrcTable.data()[(crc ^ value) & 0xffu] ^ (crc >> 8u);
+}
+
 std::uint32_t chunkCrc(const std::uint8_t *type, const std::uint8_t *data, std::size_t size)
 {
     std::uint32_t crc = 0xffffffffu;
-    const auto feed = [&crc](std::uint8_t value) {
-        crc ^= value;
-        for (int bit = 0; bit < 8; ++bit) {
-            const std::uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1u) ^ (0xedb88320u & mask);
-        }
-    };
-    for (std::size_t i = 0u; i < 4u; ++i) feed(type[i]);
-    for (std::size_t i = 0u; i < size; ++i) feed(data[i]);
+    crc = crcByte(crc, type[0]);
+    crc = crcByte(crc, type[1]);
+    crc = crcByte(crc, type[2]);
+    crc = crcByte(crc, type[3]);
+    for (std::size_t i = 0u; i < size; ++i) crc = crcByte(crc, data[i]);
     return ~crc;
 }
 
@@ -101,16 +125,24 @@ std::size_t passExtent(std::size_t full, std::size_t start, std::size_t step)
     return 1u + (full - 1u - start) / step;
 }
 
-std::uint8_t paeth(std::uint8_t a, std::uint8_t b, std::uint8_t c)
+HORSE_PNG_INLINE std::uint8_t paethPredictor(
+    std::uint8_t left,
+    std::uint8_t above,
+    std::uint8_t upper_left)
 {
-    const int ai = a;
-    const int bi = b;
-    const int ci = c;
-    const int p = ai + bi - ci;
-    const int pa = std::abs(p - ai);
-    const int pb = std::abs(p - bi);
-    const int pc = std::abs(p - ci);
-    return static_cast<std::uint8_t>(pa <= pb && pa <= pc ? ai : (pb <= pc ? bi : ci));
+    const int a = left;
+    const int b = above;
+    const int c = upper_left;
+    const int ac = a - c;
+    const int bc = b - c;
+    const int distance_a = bc < 0 ? -bc : bc;
+    const int distance_b = ac < 0 ? -ac : ac;
+    const int acbc = ac + bc;
+    const int distance_c = acbc < 0 ? -acbc : acbc;
+    return static_cast<std::uint8_t>(
+        distance_a <= distance_b && distance_a <= distance_c
+            ? a
+            : (distance_b <= distance_c ? b : c));
 }
 
 bool unfilterRow(
@@ -124,21 +156,72 @@ bool unfilterRow(
 {
     if (!source || !row) return fail(error, "invalid PNG scanline state");
     if (filter > 4u) return fail(error, "invalid PNG filter type");
-    row->assign(row_bytes, 0u);
-    for (std::size_t i = 0u; i < row_bytes; ++i) {
-        const std::uint8_t left = i >= bpp ? (*row)[i - bpp] : 0u;
-        const std::uint8_t up = previous.empty() ? 0u : previous[i];
-        const std::uint8_t up_left = (!previous.empty() && i >= bpp) ? previous[i - bpp] : 0u;
-        std::uint8_t predictor = 0u;
-        switch (filter) {
-            case 0u: predictor = 0u; break;
-            case 1u: predictor = left; break;
-            case 2u: predictor = up; break;
-            case 3u: predictor = static_cast<std::uint8_t>((static_cast<unsigned>(left) + up) / 2u); break;
-            case 4u: predictor = paeth(left, up, up_left); break;
-            default: break;
+    row->resize(row_bytes);
+    std::uint8_t *destination = row->data();
+    if (previous.size() < row_bytes) return fail(error, "invalid PNG previous scanline size");
+    const std::uint8_t *up = previous.data();
+
+    if (filter == 0u) {
+        std::memcpy(destination, source, row_bytes);
+        return true;
+    }
+    if (filter == 1u) {
+        const std::size_t prefix = std::min(bpp, row_bytes);
+        std::memcpy(destination, source, prefix);
+        for (std::size_t i = prefix; i < row_bytes; ++i)
+            destination[i] = static_cast<std::uint8_t>(source[i] + destination[i - bpp]);
+        return true;
+    }
+    if (filter == 2u) {
+        std::size_t i = 0u;
+        for (; i + 8u <= row_bytes; i += 8u) {
+            destination[i + 0u] = static_cast<std::uint8_t>(source[i + 0u] + up[i + 0u]);
+            destination[i + 1u] = static_cast<std::uint8_t>(source[i + 1u] + up[i + 1u]);
+            destination[i + 2u] = static_cast<std::uint8_t>(source[i + 2u] + up[i + 2u]);
+            destination[i + 3u] = static_cast<std::uint8_t>(source[i + 3u] + up[i + 3u]);
+            destination[i + 4u] = static_cast<std::uint8_t>(source[i + 4u] + up[i + 4u]);
+            destination[i + 5u] = static_cast<std::uint8_t>(source[i + 5u] + up[i + 5u]);
+            destination[i + 6u] = static_cast<std::uint8_t>(source[i + 6u] + up[i + 6u]);
+            destination[i + 7u] = static_cast<std::uint8_t>(source[i + 7u] + up[i + 7u]);
         }
-        (*row)[i] = static_cast<std::uint8_t>(source[i] + predictor);
+        for (; i < row_bytes; ++i)
+            destination[i] = static_cast<std::uint8_t>(source[i] + up[i]);
+        return true;
+    }
+    if (filter == 3u) {
+        for (std::size_t i = 0u; i < row_bytes; ++i) {
+            const unsigned left = i >= bpp ? destination[i - bpp] : 0u;
+            const unsigned above = up[i];
+            destination[i] = static_cast<std::uint8_t>(source[i] + ((left + above) >> 1u));
+        }
+        return true;
+    }
+
+    const std::size_t prefix = std::min(bpp, row_bytes);
+    for (std::size_t i = 0u; i < prefix; ++i)
+        destination[i] = static_cast<std::uint8_t>(source[i] + up[i]);
+
+    if (bpp == 4u) {
+        for (std::size_t i = 4u; i + 3u < row_bytes; i += 4u) {
+            destination[i + 0u] = static_cast<std::uint8_t>(source[i + 0u] + paethPredictor(destination[i - 4u], up[i + 0u], up[i - 4u]));
+            destination[i + 1u] = static_cast<std::uint8_t>(source[i + 1u] + paethPredictor(destination[i - 3u], up[i + 1u], up[i - 3u]));
+            destination[i + 2u] = static_cast<std::uint8_t>(source[i + 2u] + paethPredictor(destination[i - 2u], up[i + 2u], up[i - 2u]));
+            destination[i + 3u] = static_cast<std::uint8_t>(source[i + 3u] + paethPredictor(destination[i - 1u], up[i + 3u], up[i - 1u]));
+        }
+        return true;
+    }
+    if (bpp == 3u) {
+        for (std::size_t i = 3u; i + 2u < row_bytes; i += 3u) {
+            destination[i + 0u] = static_cast<std::uint8_t>(source[i + 0u] + paethPredictor(destination[i - 3u], up[i + 0u], up[i - 3u]));
+            destination[i + 1u] = static_cast<std::uint8_t>(source[i + 1u] + paethPredictor(destination[i - 2u], up[i + 1u], up[i - 2u]));
+            destination[i + 2u] = static_cast<std::uint8_t>(source[i + 2u] + paethPredictor(destination[i - 1u], up[i + 2u], up[i - 1u]));
+        }
+        return true;
+    }
+
+    for (std::size_t i = prefix; i < row_bytes; ++i) {
+        destination[i] = static_cast<std::uint8_t>(
+            source[i] + paethPredictor(destination[i - bpp], up[i], up[i - bpp]));
     }
     return true;
 }
@@ -181,6 +264,88 @@ struct DecodeState {
     std::vector<std::uint8_t> palette;
     std::vector<std::uint8_t> transparency;
 };
+
+bool writeRow8(
+    const DecodeState& state,
+    const std::vector<std::uint8_t>& row,
+    std::size_t destination_y,
+    Image *image,
+    std::string *error)
+{
+    if (!image || destination_y >= state.height) return fail(error, "PNG row destination overflow");
+    const std::size_t destination_offset = destination_y * state.width * 4u;
+    if (destination_offset > image->rgba.size() ||
+        state.width * 4u > image->rgba.size() - destination_offset)
+    {
+        return fail(error, "PNG row destination overflow");
+    }
+
+    std::uint8_t *destination = image->rgba.data() + destination_offset;
+    if (state.color_type == 6u) {
+        if (row.size() != state.width * 4u) return fail(error, "invalid PNG RGBA row size");
+        std::memcpy(destination, row.data(), row.size());
+        if (!image->meaningful_alpha) {
+            for (std::size_t source = 3u; source < row.size(); source += 4u) {
+                if (row[source] != 255u) {
+                    image->meaningful_alpha = true;
+                    break;
+                }
+            }
+        }
+        return true;
+    }
+
+    if (state.color_type == 2u) {
+        if (row.size() != state.width * 3u) return fail(error, "invalid PNG RGB row size");
+        const bool transparent = state.transparency.size() == 6u;
+        const std::uint16_t transparent_red = transparent ? readBe16(state.transparency.data()) : 0u;
+        const std::uint16_t transparent_green = transparent ? readBe16(state.transparency.data() + 2u) : 0u;
+        const std::uint16_t transparent_blue = transparent ? readBe16(state.transparency.data() + 4u) : 0u;
+        const std::uint8_t *source = row.data();
+        if (!transparent) {
+            std::size_t x = 0u;
+            for (; x + 4u <= state.width; x += 4u, source += 12u, destination += 16u) {
+                destination[0] = source[0];
+                destination[1] = source[1];
+                destination[2] = source[2];
+                destination[3] = 255u;
+                destination[4] = source[3];
+                destination[5] = source[4];
+                destination[6] = source[5];
+                destination[7] = 255u;
+                destination[8] = source[6];
+                destination[9] = source[7];
+                destination[10] = source[8];
+                destination[11] = 255u;
+                destination[12] = source[9];
+                destination[13] = source[10];
+                destination[14] = source[11];
+                destination[15] = 255u;
+            }
+            for (; x < state.width; ++x, source += 3u, destination += 4u) {
+                destination[0] = source[0];
+                destination[1] = source[1];
+                destination[2] = source[2];
+                destination[3] = 255u;
+            }
+            return true;
+        }
+        for (std::size_t x = 0u; x < state.width; ++x, source += 3u, destination += 4u) {
+            destination[0] = source[0];
+            destination[1] = source[1];
+            destination[2] = source[2];
+            const bool clear =
+                source[0] == transparent_red &&
+                source[1] == transparent_green &&
+                source[2] == transparent_blue;
+            destination[3] = clear ? 0u : 255u;
+            image->meaningful_alpha = image->meaningful_alpha || clear;
+        }
+        return true;
+    }
+
+    return false;
+}
 
 bool writePixel(
     const DecodeState& state,
@@ -251,7 +416,8 @@ bool writePixel(
 
 bool decodePass(
     const DecodeState& state,
-    const std::vector<std::uint8_t>& inflated,
+    const std::uint8_t *inflated,
+    std::size_t inflated_size,
     std::size_t *offset,
     std::size_t x_start,
     std::size_t y_start,
@@ -272,26 +438,35 @@ bool decodePass(
     const std::size_t bpp = std::max<std::size_t>(1u, (bits_per_pixel + 7u) / 8u);
 
     std::vector<std::uint8_t> previous(row_bytes, 0u);
-    std::vector<std::uint8_t> row;
+    std::vector<std::uint8_t> row(row_bytes, 0u);
     for (std::size_t y = 0u; y < pass_height; ++y) {
-        if (*offset >= inflated.size()) return fail(error, "truncated PNG scanline filter");
+        if (*offset >= inflated_size) return fail(error, "truncated PNG scanline filter");
         const std::uint8_t filter = inflated[(*offset)++];
-        if (row_bytes > inflated.size() - *offset) return fail(error, "truncated PNG scanline");
-        if (!unfilterRow(filter, inflated.data() + *offset, row_bytes, previous, bpp, &row, error)) return false;
+        if (row_bytes > inflated_size - *offset) return fail(error, "truncated PNG scanline");
+        if (!unfilterRow(filter, inflated + *offset, row_bytes, previous, bpp, &row, error)) return false;
         *offset += row_bytes;
 
-        for (std::size_t x = 0u; x < pass_width; ++x) {
-            if (!writePixel(
-                state,
-                row,
-                x,
-                x_start + x * x_step,
-                y_start + y * y_step,
-                image,
-                error
-            )) return false;
+        const bool direct_8bit_row =
+            state.bit_depth == 8u &&
+            x_start == 0u && y_start == 0u &&
+            x_step == 1u && y_step == 1u &&
+            (state.color_type == 2u || state.color_type == 6u);
+        if (direct_8bit_row) {
+            if (!writeRow8(state, row, y, image, error)) return false;
+        } else {
+            for (std::size_t x = 0u; x < pass_width; ++x) {
+                if (!writePixel(
+                    state,
+                    row,
+                    x,
+                    x_start + x * x_step,
+                    y_start + y * y_step,
+                    image,
+                    error
+                )) return false;
+            }
         }
-        previous = row;
+        previous.swap(row);
     }
     return true;
 }
@@ -329,6 +504,8 @@ bool expectedInflatedSize(const DecodeState& state, std::size_t *result, std::st
     return true;
 }
 
+#undef HORSE_PNG_INLINE
+
 } // namespace
 
 bool matches(const std::uint8_t *data, std::size_t size)
@@ -352,7 +529,7 @@ bool decode(
     bool have_ihdr = false;
     bool have_iend = false;
     bool seen_idat = false;
-    std::vector<std::uint8_t> idat;
+    std::string idat;
     std::size_t offset = kSignature.size();
 
     while (offset < size) {
@@ -404,7 +581,7 @@ bool decode(
             if (!checkedAdd(idat.size(), length, &new_size) || new_size > 1024u * 1024u * 1024u) {
                 return fail(error, "PNG IDAT data exceeds limit");
             }
-            idat.insert(idat.end(), payload, payload + length);
+            idat.append(reinterpret_cast<const char *>(payload), length);
             seen_idat = true;
         } else if (typeEquals(type, "IEND")) {
             if (!have_ihdr || !seen_idat || length != 0u) return fail(error, "invalid PNG IEND chunk");
@@ -425,9 +602,15 @@ bool decode(
     if (!expectedInflatedSize(state, &expected, error)) return false;
     Compression::InflateOptions inflate_options;
     inflate_options.max_output = expected;
-    std::vector<std::uint8_t> inflated;
-    if (!Compression::inflateZlib(idat.data(), idat.size(), &inflated, error, inflate_options)) return false;
-    if (inflated.size() != expected) return fail(error, "PNG decompressed scanline size mismatch");
+    std::unique_ptr<std::uint8_t[]> inflated = std::make_unique<std::uint8_t[]>(expected);
+    if (!Compression::inflateZlibExact(
+            reinterpret_cast<const std::uint8_t *>(idat.data()),
+            idat.size(),
+            inflated.get(),
+            expected,
+            error,
+            inflate_options))
+        return false;
 
     image->width = static_cast<int>(state.width);
     image->height = static_cast<int>(state.height);
@@ -436,17 +619,17 @@ bool decode(
 
     std::size_t scan_offset = 0u;
     if (state.interlace == 0u) {
-        if (!decodePass(state, inflated, &scan_offset, 0u,0u,1u,1u, image, error)) return false;
+        if (!decodePass(state, inflated.get(), expected, &scan_offset, 0u,0u,1u,1u, image, error)) return false;
     } else {
         static constexpr std::array<std::array<std::size_t,4>,7> passes = {{
             {{0u,0u,8u,8u}}, {{4u,0u,8u,8u}}, {{0u,4u,4u,8u}},
             {{2u,0u,4u,4u}}, {{0u,2u,2u,4u}}, {{1u,0u,2u,2u}}, {{0u,1u,1u,2u}}
         }};
         for (const auto& pass : passes) {
-            if (!decodePass(state, inflated, &scan_offset, pass[0],pass[1],pass[2],pass[3], image, error)) return false;
+            if (!decodePass(state, inflated.get(), expected, &scan_offset, pass[0],pass[1],pass[2],pass[3], image, error)) return false;
         }
     }
-    if (scan_offset != inflated.size()) return fail(error, "PNG scanline data has trailing bytes");
+    if (scan_offset != expected) return fail(error, "PNG scanline data has trailing bytes");
     return true;
 }
 

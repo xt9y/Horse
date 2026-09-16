@@ -21,6 +21,15 @@ bool inflateZlib(
     InflateOptions options = {}
 );
 
+bool inflateZlibExact(
+    const std::uint8_t *data,
+    std::size_t size,
+    std::uint8_t *output,
+    std::size_t output_size,
+    std::string *error = nullptr,
+    InflateOptions options = {}
+);
+
 } // namespace Models::Compression
 
 #endif

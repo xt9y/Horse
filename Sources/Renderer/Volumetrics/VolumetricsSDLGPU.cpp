@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 
 namespace Renderer::Internal {
 namespace {
@@ -445,6 +446,7 @@ struct State {
     int volume_height = 0;
     int resolution_divisor = 0;
     std::uint32_t frame_index = 0u;
+    Scenes::SDLGPU::SceneResources fallback_scene;
 };
 
 State state;
@@ -665,7 +667,19 @@ bool renderVolumetricsSDLGPU(
     auto *color = static_cast<SDL_GPUTexture *>(output.color_texture);
     auto *depth = static_cast<SDL_GPUTexture *>(output.depth_texture);
     auto *scene = static_cast<Scenes::SDLGPU::SceneResources *>(output.scene_resources);
-    if (!command || !color || !depth || !scene) return false;
+    if (!command || !color || !depth) return false;
+    if (!scene) {
+        std::string error;
+        const auto sync = state.fallback_scene.sync(world, &error);
+        if (!sync.ok) {
+            std::fprintf(
+                stderr,
+                "[Volumetrics/SDL_GPU]: trace scene sync failed: %s\n",
+                error.c_str());
+            return false;
+        }
+        scene = &state.fallback_scene;
+    }
 
     const int width = std::max(output.width, 1);
     const int height = std::max(output.height, 1);
@@ -703,6 +717,7 @@ bool renderVolumetricsSDLGPU(
 void shutdownVolumetricsSDLGPU()
 {
     destroyTargets();
+    state.fallback_scene.clear();
     SDL_GPUDevice *device = Renderer::SDLGPU::device();
     if (device) {
         if (state.nearest_sampler) SDL_ReleaseGPUSampler(device, state.nearest_sampler);

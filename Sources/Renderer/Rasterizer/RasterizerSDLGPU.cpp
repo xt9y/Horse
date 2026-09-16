@@ -3,12 +3,15 @@
 #include "Renderer/Fonts/FontPass.hpp"
 #include "Renderer/Frame/FrameSDLGPU.hpp"
 #include "Renderer/GlobalIllumination/GlobalIlluminationSDLGPU.hpp"
+#include "Renderer/Rasterizer/RasterGeometrySDLGPU.hpp"
+#include "Renderer/Rasterizer/ShadowMapsSDLGPU.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/SDLGPU/Shaders.hpp"
 #include "Renderer/SDLGPU/Uniforms.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Scenes/SceneResourcesSDLGPU.hpp"
 #include "Renderer/ShadingState.hpp"
+#include "Renderer/Visibility/Visibility.hpp"
 #include "Window/Window.hpp"
 
 #include <SDL3/SDL.h>
@@ -16,10 +19,15 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace Renderer {
 namespace {
+
+constexpr std::size_t RasterMaterialTextureSlots =
+    Scenes::SDLGPU::SceneResources::MaximumTextureSlots - 1u;
 
 SDL_GPUGraphicsPipeline *createRasterPipeline(
     SDL_GPUShader *vertex,
@@ -66,12 +74,57 @@ struct Rasterizer::Impl {
     RasterizerSettings settings{};
     Frame::SDLGPU::Target frame;
     Scenes::SDLGPU::SceneResources scene;
+    RasterizerSDLGPU::RasterGeometry geometry;
+    RasterizerSDLGPU::ShadowMaps shadows;
     SDL_GPUGraphicsPipeline *pipeline = nullptr;
     SDL_GPUGraphicsPipeline *sky_pipeline = nullptr;
+    SDL_GPUBuffer *visibility_buffer = nullptr;
+    std::size_t visibility_capacity = 0u;
+    std::vector<std::uint32_t> visibility;
     int width = 1;
     int height = 1;
     bool initialized = false;
     bool gpu_retained = false;
+
+    bool syncVisibility(const Ecs::World& world)
+    {
+        if (settings.viewport_culling) {
+            Visibility::system().buildEntityMask(world, width, height, visibility);
+        } else {
+            std::size_t size = 1u;
+            for (const Ecs::Entity entity : world.entities())
+                size = std::max(size, static_cast<std::size_t>(entity) + 1u);
+            visibility.assign(size, 1u);
+        }
+
+        const std::size_t bytes = visibility.size() * sizeof(std::uint32_t);
+        if (!visibility_buffer || visibility_capacity < bytes) {
+            SDL_GPUBuffer *replacement = SDLGPU::createBuffer(
+                SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+                bytes,
+                visibility.data(),
+                "Horse Raster Visibility");
+            if (!replacement) return false;
+            if (visibility_buffer) SDL_ReleaseGPUBuffer(SDLGPU::device(), visibility_buffer);
+            visibility_buffer = replacement;
+            visibility_capacity = bytes;
+            return true;
+        }
+
+        SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(SDLGPU::device());
+        if (!command || !SDLGPU::uploadBuffer(
+                command,
+                visibility_buffer,
+                visibility.data(),
+                bytes,
+                true) ||
+            !SDL_SubmitGPUCommandBuffer(command))
+        {
+            if (command) SDL_CancelGPUCommandBuffer(command);
+            return false;
+        }
+        return true;
+    }
 
     bool createPipelines()
     {
@@ -132,6 +185,7 @@ bool Rasterizer::init()
     std::string error;
     if (!impl_->frame.resize(impl_->width, impl_->height) ||
         !impl_->scene.init(&error) ||
+        !impl_->shadows.init(&error) ||
         !impl_->createPipelines())
     {
         if (!error.empty()) std::fprintf(stderr, "[Rasterizer/SDL_GPU]: %s\n", error.c_str());
@@ -156,15 +210,44 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 {
     if (!impl_ || !impl_->initialized) return false;
     std::string error;
-    const auto sync = impl_->scene.sync(world, &error);
+    const auto sync = impl_->scene.syncRaster(world, RasterMaterialTextureSlots, &error);
     if (!sync.ok) {
         std::fprintf(stderr, "[Rasterizer/SDL_GPU]: scene sync failed: %s\n", error.c_str());
         return false;
     }
+    if (!impl_->geometry.sync(world, impl_->scene.scene(), &error)) {
+        std::fprintf(stderr, "[Rasterizer/SDL_GPU]: geometry sync failed: %s\n", error.c_str());
+        return false;
+    }
+    if (!impl_->syncVisibility(world)) {
+        std::fprintf(stderr, "[Rasterizer/SDL_GPU]: visibility upload failed: %s\n", SDL_GetError());
+        return false;
+    }
     if (!impl_->frame.begin(output)) return false;
-    output.scene_resources = &impl_->scene;
+    output.scene_resources = nullptr;
 
     auto *command = static_cast<SDL_GPUCommandBuffer *>(output.command);
+    const Scenes::CameraState camera = Scenes::cameraState(Scenes::Scene::cameraState(world));
+    if (!impl_->shadows.update(
+            command,
+            impl_->geometry,
+            camera,
+            Internal::shadingState().lighting,
+            impl_->width,
+            impl_->height,
+            RasterizerSDLGPU::ShadowMapSettings{
+                impl_->settings.shadow_resolution,
+                impl_->settings.shadow_cascades,
+                impl_->settings.shadow_distance,
+                impl_->settings.shadow_near_plane,
+            },
+            &error))
+    {
+        std::fprintf(stderr, "[Rasterizer/SDL_GPU]: shadow update failed: %s\n", error.c_str());
+        Frame::SDLGPU::cancel(output);
+        return false;
+    }
+
     SDL_GPUColorTargetInfo colors[2]{};
     colors[0].texture = impl_->frame.color();
     colors[0].clear_color = {
@@ -190,10 +273,9 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         return false;
     }
 
-    const Scenes::CameraState camera = Scenes::cameraState(Scenes::Scene::cameraState(world));
     const SDLGPU::FrameUniforms uniforms = SDLGPU::makeFrameUniforms(
         camera, impl_->width, impl_->height, impl_->width, impl_->height,
-        impl_->scene.nodeCount(), impl_->scene.triangleCount(),
+        0u, impl_->geometry.vertexCount() / 3u,
         impl_->scene.materialCount(), impl_->scene.textureCount(),
         Scenes::SceneCache::opacityCutoff());
 
@@ -204,17 +286,20 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         SDL_PushGPUFragmentUniformData(command, 0u, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 3u, 1u, 0u, 0u);
 
-        if (impl_->scene.triangleCount() > 0u) {
+        if (impl_->geometry.vertexCount() > 0u) {
             SDL_BindGPUGraphicsPipeline(pass, impl_->pipeline);
-            impl_->scene.bindVertex(pass);
-            impl_->scene.bindFragment(pass);
-            Internal::bindGlobalIlluminationSDLGPU(pass, output.global_illumination);
+            impl_->geometry.bind(pass);
+            SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
+            SDL_BindGPUVertexStorageBuffers(pass, 4u, visibility_buffers, 1u);
+            impl_->scene.bindRasterFragment(pass);
+            Internal::bindGlobalIlluminationSDLGPU(pass, output.global_illumination, 2u);
+            impl_->shadows.bind(pass);
             SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
             SDL_PushGPUFragmentUniformData(command, 0u, &uniforms, sizeof(uniforms));
             SDL_DrawGPUPrimitives(
                 pass,
                 static_cast<Uint32>(std::min<std::size_t>(
-                    impl_->scene.triangleCount() * 3u, UINT32_MAX)),
+                    impl_->geometry.vertexCount(), UINT32_MAX)),
                 1u, 0u, 0u);
         }
     }
@@ -241,6 +326,13 @@ void Rasterizer::shutdown()
     if (!impl_) return;
     Internal::shutdownFonts(Internal::GraphicsApi::SDLGPU);
     Internal::shutdownGlobalIlluminationSDLGPU();
+    impl_->shadows.clear();
+    impl_->geometry.clear();
+    if (impl_->visibility_buffer && SDLGPU::device())
+        SDL_ReleaseGPUBuffer(SDLGPU::device(), impl_->visibility_buffer);
+    impl_->visibility_buffer = nullptr;
+    impl_->visibility_capacity = 0u;
+    impl_->visibility.clear();
     impl_->scene.clear();
     impl_->frame.shutdown();
     impl_->destroyPipelines();
@@ -253,8 +345,16 @@ bool Rasterizer::initialized() const { return impl_ && impl_->initialized; }
 bool Rasterizer::enabled() const { return impl_ && impl_->settings.enabled; }
 void Rasterizer::setEnabled(bool enabled) { if (impl_) impl_->settings.enabled = enabled; }
 void Rasterizer::setViewportCulling(bool value) { if (impl_) impl_->settings.viewport_culling = value; }
+void Rasterizer::setShadowResolution(int value) { if (impl_) impl_->settings.shadow_resolution = std::max(value, 1); }
+void Rasterizer::setShadowCascades(int value) { if (impl_) impl_->settings.shadow_cascades = std::max(value, 1); }
+void Rasterizer::setShadowDistance(float value) { if (impl_) impl_->settings.shadow_distance = std::max(value, 1.0f); }
+void Rasterizer::setShadowNearPlane(float value) { if (impl_) impl_->settings.shadow_near_plane = std::max(value, 1.0e-4f); }
 void Rasterizer::setClearColor(Vec4 value) { if (impl_) impl_->settings.clear_color = value; }
 bool Rasterizer::viewportCulling() const { return impl_ && impl_->settings.viewport_culling; }
+int Rasterizer::shadowResolution() const { return impl_ ? impl_->settings.shadow_resolution : 0; }
+int Rasterizer::shadowCascades() const { return impl_ ? impl_->settings.shadow_cascades : 0; }
+float Rasterizer::shadowDistance() const { return impl_ ? impl_->settings.shadow_distance : 0.0f; }
+float Rasterizer::shadowNearPlane() const { return impl_ ? impl_->settings.shadow_near_plane : 0.0f; }
 Vec4 Rasterizer::clearColor() const { return impl_ ? impl_->settings.clear_color : Vec4{}; }
 RasterizerSettings& Rasterizer::settings() { return impl_->settings; }
 const RasterizerSettings& Rasterizer::settings() const { return impl_->settings; }

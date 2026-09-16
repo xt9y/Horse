@@ -107,9 +107,9 @@ SDL_GPUTexture *SceneResources::textureFor(Models::TextureHandle handle, std::st
     return texture;
 }
 
-bool SceneResources::syncBuffers(std::string *error)
+bool SceneResources::syncBuffers(bool include_geometry, std::string *error)
 {
-    const bool geometry_changed = geometry_revision_ != scene_.geometryRevision();
+    const bool geometry_changed = include_geometry && geometry_revision_ != scene_.geometryRevision();
     const bool material_changed = material_revision_ != materials_.revision();
     if (!geometry_changed && !material_changed) return true;
 
@@ -203,17 +203,41 @@ bool SceneResources::syncTextures(std::string *error)
 
 SceneResources::SyncResult SceneResources::sync(const Ecs::World& world, std::string *error)
 {
+    return sync(world, MaximumTextureSlots, error);
+}
+
+SceneResources::SyncResult SceneResources::sync(
+    const Ecs::World& world,
+    std::size_t maximum_texture_slots,
+    std::string *error)
+{
     if (!init(error)) return {};
     Scenes::Scene::collectRenderItems(world, render_items_);
     const std::uint64_t old_geometry = scene_.geometryRevision();
     const std::uint64_t old_resources = scene_.resourceRevision();
-    if (!scene_.sync(world, render_items_, MaximumTextureSlots, error)) return {};
-    if (!materials_.sync(scene_, MaximumTextureSlots, error)) return {};
-    if (!syncBuffers(error) || !syncTextures(error)) return {};
+    maximum_texture_slots = std::min(maximum_texture_slots, MaximumTextureSlots);
+    if (!scene_.sync(world, render_items_, maximum_texture_slots, error)) return {};
+    if (!materials_.sync(scene_, maximum_texture_slots, error)) return {};
+    if (!syncBuffers(true, error) || !syncTextures(error)) return {};
     return {
         true,
         old_geometry != scene_.geometryRevision() || old_resources != scene_.resourceRevision()
     };
+}
+
+SceneResources::SyncResult SceneResources::syncRaster(
+    const Ecs::World& world,
+    std::size_t maximum_texture_slots,
+    std::string *error)
+{
+    if (!init(error)) return {};
+    Scenes::Scene::collectRenderItems(world, render_items_);
+    const std::uint64_t old_resources = scene_.resourceRevision();
+    maximum_texture_slots = std::min(maximum_texture_slots, MaximumTextureSlots);
+    if (!scene_.syncResources(world, render_items_, maximum_texture_slots, error)) return {};
+    if (!materials_.sync(scene_, maximum_texture_slots, error)) return {};
+    if (!syncBuffers(false, error) || !syncTextures(error)) return {};
+    return {true, old_resources != scene_.resourceRevision()};
 }
 
 void SceneResources::bindVertex(SDL_GPURenderPass *pass) const
@@ -231,6 +255,16 @@ void SceneResources::bindFragment(SDL_GPURenderPass *pass) const
         static_cast<Uint32>(texture_bindings_.size()));
     SDL_GPUBuffer *buffers[] = {nodes_, triangles_, base_materials_, materials_buffer_};
     SDL_BindGPUFragmentStorageBuffers(pass, 0u, buffers, 4u);
+}
+
+void SceneResources::bindRasterFragment(SDL_GPURenderPass *pass) const
+{
+    if (!pass) return;
+    SDL_BindGPUFragmentSamplers(
+        pass, 0u, texture_bindings_.data(),
+        static_cast<Uint32>(MaximumTextureSlots - 1u));
+    SDL_GPUBuffer *buffers[] = {base_materials_, materials_buffer_};
+    SDL_BindGPUFragmentStorageBuffers(pass, 0u, buffers, 2u);
 }
 
 void SceneResources::bindSky(SDL_GPURenderPass *pass) const

@@ -32,10 +32,21 @@ public:
 
     bool init(std::string *error = nullptr);
     SyncResult sync(const Ecs::World& world, std::string *error = nullptr);
+    SyncResult sync(
+        const Ecs::World& world,
+        std::size_t maximum_texture_slots,
+        std::string *error = nullptr
+    );
+    SyncResult syncRaster(
+        const Ecs::World& world,
+        std::size_t maximum_texture_slots,
+        std::string *error = nullptr
+    );
     void clear();
 
     void bindVertex(SDL_GPURenderPass *pass) const;
     void bindFragment(SDL_GPURenderPass *pass) const;
+    void bindRasterFragment(SDL_GPURenderPass *pass) const;
     void bindSky(SDL_GPURenderPass *pass) const;
     void bindCompute(SDL_GPUComputePass *pass) const;
 
@@ -49,7 +60,7 @@ public:
     bool hasEnvironmentTexture() const;
 
 private:
-    bool syncBuffers(std::string *error);
+    bool syncBuffers(bool include_geometry, std::string *error);
     bool syncTextures(std::string *error);
     bool ensureBuffer(
         SDL_GPUBuffer *&target,

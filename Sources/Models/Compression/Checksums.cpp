@@ -12,7 +12,19 @@ std::uint32_t adler32(const std::uint8_t *data, std::size_t size)
     while (size != 0u) {
         const std::size_t block = size > 5552u ? 5552u : size;
         size -= block;
-        for (std::size_t i = 0u; i < block; ++i) {
+        std::size_t i = 0u;
+        for (; i + 8u <= block; i += 8u) {
+            a += data[0]; b += a;
+            a += data[1]; b += a;
+            a += data[2]; b += a;
+            a += data[3]; b += a;
+            a += data[4]; b += a;
+            a += data[5]; b += a;
+            a += data[6]; b += a;
+            a += data[7]; b += a;
+            data += 8u;
+        }
+        for (; i < block; ++i) {
             a += *data++;
             b += a;
         }

@@ -92,6 +92,8 @@ public:
 
     bool sync(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::size_t maximum_texture_slots, std::string *error = nullptr);
     bool sync(const Ecs::World& world, std::size_t maximum_texture_slots, std::string *error = nullptr);
+    bool syncResources(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::size_t maximum_texture_slots, std::string *error = nullptr);
+    bool syncResources(const Ecs::World& world, std::size_t maximum_texture_slots, std::string *error = nullptr);
     std::uint64_t signature(const Ecs::World& world, const std::vector<Scene::RenderItem>& items) const;
     std::uint64_t resourceSignature(const std::vector<Scene::RenderItem>& items) const;
     void clear();
@@ -101,6 +103,7 @@ public:
     const std::vector<GpuMaterial>& materials() const { return materials_; }
     const std::vector<Models::TextureHandle>& textureHandles() const { return texture_handles_; }
     const std::vector<Scene::RenderItem>& renderItems() const { return render_items_; }
+    std::uint32_t materialIndex(Models::MaterialHandle handle) const;
     std::uint64_t geometryRevision() const { return geometry_revision_; }
     std::uint64_t topologyRevision() const { return topology_revision_; }
     std::uint64_t resourceRevision() const { return resource_revision_; }

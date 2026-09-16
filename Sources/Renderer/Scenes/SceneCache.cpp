@@ -262,9 +262,11 @@ bool triangleFor(
 
 bool textureHasTransparency(Models::TextureHandle handle)
 {
+    const std::uint8_t threshold = SceneCache::alphaThreshold();
+    if (threshold == 0u) return false;
+
     const Models::TextureAsset *asset = Models::texture(handle);
     if (!asset || asset->image.rgba.size() < 4u) return false;
-    const std::uint8_t threshold = SceneCache::alphaThreshold();
     for (std::size_t index = 3u; index < asset->image.rgba.size(); index += 4u) {
         if (asset->image.rgba[index] < threshold) return true;
     }
@@ -519,29 +521,11 @@ bool SceneCache::sync(
     std::size_t maximum_texture_slots,
     std::string *error)
 {
-    if (error) error->clear();
-    render_items_ = items;
-
     if (maximum_triangles_ == 0u) {
         if (error) *error = "SceneCache maximum triangle count was not configured";
         return false;
     }
-
-    const EnvironmentState environment = environmentState(world);
-    environment_texture_ = environment.valid ? environment.texture : Models::INVALID_TEXTURE;
-
-    std::uint64_t current_resource_signature = resourceSignature(items);
-    hashValue(current_resource_signature, environmentSignature(environment));
-    if (!resources_initialized_ || current_resource_signature != resource_signature_) {
-        if (!rebuildResources(items, maximum_texture_slots, error)) {
-            clear();
-            return false;
-        }
-        resource_signature_ = current_resource_signature;
-        resources_initialized_ = true;
-        ++resource_revision_;
-        ++resource_updates_;
-    }
+    if (!syncResources(world, items, maximum_texture_slots, error)) return false;
 
     const std::uint64_t current_topology_signature = topologySignature(items);
     const std::uint64_t current_geometry_signature = signature(world, items);
@@ -570,6 +554,49 @@ bool SceneCache::sync(
     }
 
     return true;
+}
+
+bool SceneCache::syncResources(
+    const Ecs::World& world,
+    std::size_t maximum_texture_slots,
+    std::string *error)
+{
+    Scene::collectRenderItems(world, render_items_);
+    return syncResources(world, render_items_, maximum_texture_slots, error);
+}
+
+bool SceneCache::syncResources(
+    const Ecs::World& world,
+    const std::vector<Scene::RenderItem>& items,
+    std::size_t maximum_texture_slots,
+    std::string *error)
+{
+    if (error) error->clear();
+    render_items_ = items;
+
+    const EnvironmentState environment = environmentState(world);
+    environment_texture_ = environment.valid ? environment.texture : Models::INVALID_TEXTURE;
+
+    std::uint64_t current_resource_signature = resourceSignature(items);
+    hashValue(current_resource_signature, environmentSignature(environment));
+    if (!resources_initialized_ || current_resource_signature != resource_signature_) {
+        if (!rebuildResources(items, maximum_texture_slots, error)) {
+            clearResources();
+            render_items_.clear();
+            return false;
+        }
+        resource_signature_ = current_resource_signature;
+        resources_initialized_ = true;
+        ++resource_revision_;
+        ++resource_updates_;
+    }
+    return true;
+}
+
+std::uint32_t SceneCache::materialIndex(Models::MaterialHandle handle) const
+{
+    const auto found = material_indices_.find(handle);
+    return found == material_indices_.end() ? 0u : found->second;
 }
 
 bool SceneCache::rebuildResources(
