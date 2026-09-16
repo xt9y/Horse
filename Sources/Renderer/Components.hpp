@@ -5,7 +5,6 @@
 
 #include <array>
 #include <cstdint>
-#include <vector>
 
 namespace Renderer {
 
@@ -42,19 +41,6 @@ struct Transform {
 
 struct Parent {
     Ecs::Entity entity = Ecs::INVALID_ENTITY;
-};
-
-struct MeshComponent {
-    std::uint32_t mesh = UINT32_MAX;
-    std::uint32_t material = UINT32_MAX;
-};
-
-struct InstanceComponent {
-    std::vector<std::array<float, 16>> matrices;
-};
-
-struct RenderableComponent {
-    bool visible = false;
 };
 
 enum class RenderLayer {

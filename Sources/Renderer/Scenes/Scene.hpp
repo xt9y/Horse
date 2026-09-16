@@ -5,6 +5,7 @@
 #include "Ecs/Ecs.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/Internal/GeometryComponents.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -45,12 +46,12 @@ struct TransformState {
 };
 
 struct MeshState {
-    MeshComponent value{};
+    Internal::MeshComponent value{};
     bool valid = false;
 
     explicit operator bool() const { return valid; }
-    const MeshComponent& operator*() const { return value; }
-    const MeshComponent* operator->() const { return valid ? &value : nullptr; }
+    const Internal::MeshComponent& operator*() const { return value; }
+    const Internal::MeshComponent* operator->() const { return valid ? &value : nullptr; }
 };
 
 struct RenderItem {

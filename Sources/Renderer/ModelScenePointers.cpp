@@ -5,6 +5,7 @@
 #include "Camera/Camera.hpp"
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/Internal/GeometryComponents.hpp"
 #include "Renderer/ModelScene.hpp"
 
 #include <algorithm>
@@ -193,7 +194,7 @@ bool resetMaterials(Ecs::World& world, Instance& instance, bool reset_clones)
 {
     bool changed = false;
     eachPart(instance, [&](PartBinding& binding) {
-        MeshComponent *mesh = world.get<MeshComponent>(binding.entity);
+        Internal::MeshComponent *mesh = world.get<Internal::MeshComponent>(binding.entity);
         if (!mesh) return;
         const Models::MaterialHandle base = Models::Runtime::materialForVariant(
             instance.model,
@@ -399,7 +400,7 @@ bool applyMaterial(
     bool applied = false;
     eachPart(instance, [&](PartBinding& binding) {
         if (sourceMaterialForVariant(instance.model, binding.part, instance.variant) != target.index) return;
-        MeshComponent *mesh = world.get<MeshComponent>(binding.entity);
+        Internal::MeshComponent *mesh = world.get<Internal::MeshComponent>(binding.entity);
         if (!mesh) return;
         const Models::MaterialHandle base = Models::Runtime::materialForVariant(
             instance.model,

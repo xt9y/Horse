@@ -52,14 +52,14 @@ float distanceSquared(Vec3 a, Vec3 b)
     return x * x + y * y + z * z;
 }
 
-MeshComponent selectedMesh(
+Internal::MeshComponent selectedMesh(
     const Ecs::World& world,
     Ecs::Entity entity,
-    const MeshComponent& base,
+    const Internal::MeshComponent& base,
     Vec3 world_position,
     const CameraState& camera)
 {
-    MeshComponent selected = base;
+    Internal::MeshComponent selected = base;
     const LodGroup *group = world.get<LodGroup>(entity);
     if (!group || group->levels.empty() || !camera.valid) return selected;
 
@@ -79,13 +79,13 @@ void appendItem(
     const Ecs::World& world,
     Ecs::Entity entity,
     std::uint32_t instance_index,
-    const MeshComponent& base,
+    const Internal::MeshComponent& base,
     const Transform& transform,
     const CameraState& camera,
     bool gaussian,
     std::vector<RenderItem>& out)
 {
-    const MeshComponent selected = selectedMesh(world, entity, base, transform.position, camera);
+    const Internal::MeshComponent selected = selectedMesh(world, entity, base, transform.position, camera);
     const Models::MeshData* mesh = Models::mesh(selected.mesh);
     if (!mesh || Models::GaussianSplat::isGaussianSplat(*mesh) != gaussian) return;
 
@@ -106,15 +106,15 @@ void collectItems(const Ecs::World& world, bool gaussian, std::vector<RenderItem
     const CameraState camera = cameraState(world);
 
     for (const Ecs::Entity entity : world.entities()) {
-        const RenderableComponent* renderable = world.get<RenderableComponent>(entity);
+        const Internal::RenderableComponent* renderable = world.get<Internal::RenderableComponent>(entity);
         if (!renderable || !renderable->visible) continue;
 
-        const MeshComponent* mesh_component = world.get<MeshComponent>(entity);
+        const Internal::MeshComponent* mesh_component = world.get<Internal::MeshComponent>(entity);
         const Transform* transform = world.get<Transform>(entity);
         if (!mesh_component || !transform) continue;
 
         const Transform world_transform = resolvedTransform(world, entity, *transform);
-        const InstanceComponent* instances = world.get<InstanceComponent>(entity);
+        const Internal::InstanceComponent* instances = world.get<Internal::InstanceComponent>(entity);
         if (!instances) {
             appendItem(world, entity, UINT32_MAX, *mesh_component, world_transform, camera, gaussian, out);
             continue;

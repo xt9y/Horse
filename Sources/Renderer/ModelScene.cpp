@@ -3,6 +3,7 @@
 #include "Camera/Camera.hpp"
 #include "Renderer/Components.hpp"
 #include "Renderer/DynamicGeometry.hpp"
+#include "Renderer/Internal/GeometryComponents.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/ModelScenePointers.hpp"
 
@@ -150,12 +151,13 @@ bool addPart(
     const Ecs::Entity entity = world.createEntity();
     world.add<Transform>(entity, Transform{});
     if (parent != Ecs::INVALID_ENTITY) world.add<Parent>(entity, Parent{parent});
-    world.add<MeshComponent>(entity, MeshComponent{
+    world.add<Internal::MeshComponent>(entity, Internal::MeshComponent{
         mesh_handle,
         Models::Runtime::materialForVariant(model, part_index, variant),
     });
-    world.add<RenderableComponent>(entity, RenderableComponent{visible});
-    if (instances) world.add<InstanceComponent>(entity, InstanceComponent{localInstanceMatrices(*instances)});
+    world.add<Internal::RenderableComponent>(entity, Internal::RenderableComponent{visible});
+    if (instances)
+        world.add<Internal::InstanceComponent>(entity, Internal::InstanceComponent{localInstanceMatrices(*instances)});
     if (is_dynamic) {
         if (pose_entity == Ecs::INVALID_ENTITY)
             return fail(error, "model scene dynamic part has no pose state");
@@ -434,7 +436,8 @@ bool applyPose(
             interaction->hoverable = pose.nodes[binding.node].hoverable;
         }
         for (PartBinding& part : binding.parts) {
-            if (RenderableComponent *renderable = world.get<RenderableComponent>(part.entity))
+            if (Internal::RenderableComponent *renderable =
+                    world.get<Internal::RenderableComponent>(part.entity))
                 renderable->visible = pose.nodes[binding.node].visible;
         }
     }
@@ -458,7 +461,7 @@ bool setVariant(
         return fail(error, "model material variant is invalid");
 
     const auto update = [&](PartBinding& binding) -> bool {
-        MeshComponent *mesh = world.get<MeshComponent>(binding.entity);
+        Internal::MeshComponent *mesh = world.get<Internal::MeshComponent>(binding.entity);
         if (!mesh) return false;
         mesh->material = Models::Runtime::materialForVariant(instance.model, binding.part, variant);
         return mesh->material != Models::INVALID_MATERIAL;
