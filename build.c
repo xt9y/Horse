@@ -120,5 +120,9 @@ void build(C_Build *b)
     c_sources(job_group_tests, "Tests/JobGroups.cpp");
     configureTest(job_group_tests, library);
 
+    C_Target *raster_topology_tests = c_test(b, "HorseRasterTopologyRevisionTests");
+    c_sources(raster_topology_tests, "Tests/RasterTopologyRevision.cpp");
+    configureTest(raster_topology_tests, library);
+
     c_default_target(b, library);
 }
