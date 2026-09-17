@@ -4,7 +4,7 @@
 
 **Goal:** Keep the existing `Models::load()` / `Renderer::ModelScene::instantiate()` API while moving glTF texture decode/derivation off the caller thread and adding a transparent compiled model cache.
 
-**Architecture:** Model geometry and metadata remain synchronously published so existing `ModelHandle` semantics do not change. glTF import registers stable deferred texture handles; a generic internal worker pool decodes/derives textures and writes model-cache payloads, while main-thread resource pumping commits completions and advances `Models::resourceRevision()`. A platform cache stores normalized Horse model data and dependency metadata so warm loads bypass source glTF reconstruction.
+**Architecture:** Model geometry and metadata remain synchronously published so current `ModelHandle` semantics stay intact. glTF import registers stable deferred texture handles; a generic internal worker pool decodes/derives textures and performs cache file I/O, while main-thread resource pumping commits completions and advances `Models::resourceRevision()`. Warm loads deserialize normalized Horse model data from the platform cache and rebuild deferred texture handles without reparsing glTF.
 
 **Tech Stack:** C++20, Horse Models/Renderer/ECS systems, SDL_GPU resource fallback, C-BuildSystem, standard-library threads/filesystem/binary I/O.
 
@@ -15,280 +15,139 @@
 - Horse-only change; do not modify GAME.
 - Keep `Models::load(path)` and `Renderer::ModelScene::instantiate(...)` unchanged for callers.
 - Keep geometry/model publication synchronous in this phase.
-- Worker threads must not mutate ECS, GPU state, model/mesh/material registries, or published texture assets.
-- Pending/failed textures use the renderer fallback and must not make a valid model fail.
-- Reuse `Models::resourceRevision()` and shared scene-resource synchronization rather than backend-specific streaming systems.
+- Worker threads may read files, decode/derive images and write completed cache payloads, but may not mutate ECS, GPU state, model/mesh/material registries or published texture assets.
+- Pending/failed textures use existing renderer fallback resources and must not invalidate an otherwise valid model.
+- Reuse `Models::resourceRevision()` and shared scene-resource synchronization; no renderer-specific loading system.
 - Cache corruption or cache-write failure must never prevent source loading.
-- No `docs/superpowers` tree; project documentation stays at repository root.
+- No `docs/superpowers` tree; project docs remain at repository root.
 
 ---
 
 ## File Structure
 
-- `Sources/Core/Jobs/Jobs.hpp` / `Jobs.cpp`: generic bounded CPU worker pool and completion queue.
-- `Sources/Models/Internal/TextureStreaming.hpp` / `TextureStreaming.cpp`: deferred texture descriptors, dependency scheduling, generation safety, main-thread commit.
-- `Sources/Models/Core/Texture.cpp` / `Texture.hpp`: stable texture assets and existing synchronous texture API; internal streaming hooks delegate into the new runtime.
-- `Sources/Models/Formats/GltfAssets.cpp`: register file/memory/channel texture sources without decoding them during import.
-- `Sources/Models/Formats/GltfAlpha.cpp`: register alpha-derived textures without synchronous image copies.
-- `Sources/Models/Internal/ModelCache.hpp` / `ModelCache.cpp`: platform cache root, dependency manifest, binary read/write, validation and atomic replacement.
-- `Sources/Models/Models.cpp`: cache-first model load path and generation-safe clear.
-- `Sources/Renderer/Scenes/SceneCache.cpp`: shared main-thread resource completion pump before resource signatures are evaluated.
-- `Sources/Renderer/Scenes/SceneResourcesSDLGPU.cpp`: use the existing white texture for pending/failed CPU textures rather than returning a scene error.
-- `Tests/ModelLoading.cpp`: deterministic regression coverage for jobs, deferred textures, cache validation and stale-generation rejection.
-- `build.c`: compile `Sources/Core/*/*.cpp`, add the model-loading test executable, keep Horse as the default target.
+- `Sources/Core/Jobs/Jobs.hpp`, `Jobs.cpp`: generic bounded worker pool and caller-thread completion queue.
+- `Sources/Models/Internal/TextureStreaming.hpp`, `TextureStreaming.cpp`: deferred texture source graph, scheduler, generation safety and completion commit.
+- `Sources/Models/Core/Texture.hpp`, `Texture.cpp`: existing public synchronous texture API plus storage hooks used by streaming internals.
+- `Sources/Models/Formats/Registry.hpp`: internal document dependency list used by cache validation.
+- `Sources/Models/Formats/GltfData.cpp` / glTF loading path: record external buffer dependencies.
+- `Sources/Models/Formats/GltfAssets.cpp`: register file/memory/channel texture sources without decoding during model import.
+- `Sources/Models/Formats/GltfAlpha.cpp`: register alpha-derived resources without reading/copying image pixels synchronously.
+- `Sources/Models/Internal/ModelCache.hpp`, `ModelCache.cpp`: platform cache root, binary codec, dependency manifest and asynchronous atomic file write.
+- `Sources/Models/Models.cpp`: cache-first model loading and generation-safe clearing.
+- `Sources/Renderer/Scenes/SceneCache.cpp`: shared resource-completion pump before resource signatures are computed.
+- `Sources/Renderer/Scenes/SceneResourcesSDLGPU.cpp`: existing white fallback for pending/failed decoded textures.
+- `Tests/ModelLoading.cpp`: deterministic regressions and stress tests.
+- `build.c`: compile generic Core subdirectories and add `HorseModelLoadingTests`.
 
 ---
 
 ### Task 1: Generic Internal Job System
 
-**Files:**
-- Create: `Sources/Core/Jobs/Jobs.hpp`
-- Create: `Sources/Core/Jobs/Jobs.cpp`
-- Modify: `build.c`
-- Create/Test: `Tests/ModelLoading.cpp`
+**Files:** Create `Sources/Core/Jobs/Jobs.hpp`, `Sources/Core/Jobs/Jobs.cpp`; create/extend `Tests/ModelLoading.cpp`; modify `build.c` source globs.
 
-**Interfaces:**
-- Produces:
-  - `bool Core::Jobs::trySubmit(std::function<void()> work, std::function<void()> completion = {});`
-  - `std::size_t Core::Jobs::pump();`
-  - `void Core::Jobs::cancelPending();`
-  - `void Core::Jobs::wait();`
-  - `void Core::Jobs::shutdown();`
-- Work executes only on worker threads; completion executes only from `pump()` on the caller thread.
+**Produces:**
+```cpp
+namespace Core::Jobs {
+bool trySubmit(std::function<void()> work, std::function<void()> completion = {});
+std::size_t pump();
+void cancelPending();
+void wait();
+void shutdown();
+}
+```
 
-- [ ] **Step 1: Write the failing job-system test**
-
-Add a standalone test that queues work which records the worker thread ID, captures a value in a completion, then calls `Core::Jobs::wait()` and `Core::Jobs::pump()` and asserts the work ran off the test thread while the completion ran on it.
-
-- [ ] **Step 2: Run the isolated test and verify RED**
-
-Compile the test against `Jobs.cpp`; expected failure is the missing `Core/Jobs/Jobs.hpp` / undefined API.
-
-- [ ] **Step 3: Implement the bounded worker pool**
-
-Use one internal singleton with `std::mutex`, two `std::condition_variable`s, a bounded `std::deque<Job>`, a completion deque, `std::jthread` workers, and lazy startup. `trySubmit()` returns `false` rather than blocking when the queue is full. Worker count is `max(1u, hardware_concurrency() - 1u)` and queue capacity is `max(64, workers * 32)`.
-
-- [ ] **Step 4: Verify GREEN and shutdown behavior**
-
-Run the isolated job test repeatedly and assert `shutdown()` joins workers, clears pending work and permits no stale completion after shutdown.
-
-- [ ] **Step 5: Commit**
-
-Commit message: `Add internal Horse job system`.
-
----
+- [ ] Write a failing test that records the test thread ID, queues work, waits, pumps completion, and proves work executes off-thread while completion executes on the caller thread.
+- [ ] Run the isolated test and confirm RED because the Jobs API does not exist.
+- [ ] Implement a lazy singleton using `std::jthread`, `std::mutex`, condition variables, bounded work/completion deques, `max(1u, hardware_concurrency()-1u)` workers and queue capacity `max(64, workers*32)`; `trySubmit()` never blocks when full.
+- [ ] Verify repeated submit/wait/pump and shutdown behavior GREEN.
+- [ ] Commit: `Add internal Horse job system`.
 
 ### Task 2: Deferred Texture Runtime
 
-**Files:**
-- Create: `Sources/Models/Internal/TextureStreaming.hpp`
-- Create: `Sources/Models/Internal/TextureStreaming.cpp`
-- Modify: `Sources/Models/Core/Texture.cpp`
-- Modify: `Sources/Models/Core/Texture.hpp`
-- Extend/Test: `Tests/ModelLoading.cpp`
+**Files:** Create `Sources/Models/Internal/TextureStreaming.hpp`, `TextureStreaming.cpp`; modify `Sources/Models/Core/Texture.hpp`, `Texture.cpp`; extend tests.
 
-**Interfaces:**
-- Produces in `Models::Internal`:
-  - `TextureHandle registerDeferredFile(const std::string& path);`
-  - `TextureHandle registerDeferredMemory(const std::string& key, std::vector<std::uint8_t> bytes);`
-  - `TextureHandle registerDeferredChannel(TextureHandle source, int channel, const std::string& label);`
-  - `TextureHandle registerDeferredAlpha(TextureHandle source, AlphaMode mode, float factor, float cutoff);`
-  - `TextureHandle registerDeferredOpacity(TextureHandle color, TextureHandle opacity);`
-  - `std::size_t pumpTextureResources();`
-  - `void clearTextureStreaming();`
-  - `enum class TextureState { Registered, Queued, Loading, Ready, Failed };`
-  - `TextureState textureState(TextureHandle handle);`
-- Existing public `loadTexture()` stays synchronous for direct callers.
+**Produces in `Models::Internal`:**
+```cpp
+enum class TextureState { Registered, Queued, Loading, Ready, Failed };
+TextureHandle registerDeferredFile(const std::string& path);
+TextureHandle registerDeferredMemory(const std::string& key, std::vector<std::uint8_t> bytes);
+TextureHandle registerDeferredChannel(TextureHandle source, int channel, const std::string& label);
+TextureHandle registerDeferredAlpha(TextureHandle source, AlphaMode mode, float factor, float cutoff);
+TextureHandle registerDeferredOpacity(TextureHandle color, TextureHandle opacity);
+TextureState textureState(TextureHandle handle);
+std::size_t pumpTextureResources();
+void clearTextureStreaming();
+```
 
-- [ ] **Step 1: Write failing deferred-resource tests**
+- [ ] Write RED tests for immediate stable handle + empty image, eventual Ready commit, normalized-path dedupe, dependency scheduling and stale-generation rejection.
+- [ ] Keep existing public `loadTexture()` synchronous; add internal storage registration helpers so deferred resources can reserve stable `TextureAsset` handles without decoding.
+- [ ] Implement source descriptors for file, compressed-memory, channel, alpha and opacity operations. Only file/memory/derived pixel work runs on workers; workers return immutable result objects.
+- [ ] `pumpTextureResources()` pumps Core jobs, commits only current-generation completions, schedules newly-unblocked derived resources, emits one diagnostic for Failed resources and increments the existing model resource revision only when published resource state changes.
+- [ ] Verify tests GREEN and commit: `Add deferred texture resources`.
 
-Create a tiny PNG fixture in the test temp directory, call `registerDeferredFile()`, assert the handle exists immediately with an empty `TextureAsset::image`, then repeatedly `Core::Jobs::wait()` + `pumpTextureResources()` until state is `Ready`; assert image dimensions are populated only after commit.
+### Task 3: Remove Texture Decode From glTF Model Import
 
-- [ ] **Step 2: Add duplicate-source and generation RED tests**
+**Files:** Modify `Sources/Models/Formats/Registry.hpp`, glTF data/dependency parsing files, `GltfAssets.cpp`, `GltfAlpha.cpp`; extend tests.
 
-Register the same normalized path twice and require one handle. Queue a decode, call `clearTextureStreaming()` before commit, then assert the old completion cannot publish into a later handle generation.
-
-- [ ] **Step 3: Implement descriptors and scheduler**
-
-Store deferred state in an internal record parallel to the existing public `TextureAsset`. File and memory sources queue decode jobs. Derived sources wait until dependencies are `Ready`; dependency `Failed` propagates to the derived record without retrying every frame.
-
-- [ ] **Step 4: Commit completions on the main thread**
-
-Worker jobs return immutable decoded `Images::Image` values through captured result objects. `pumpTextureResources()` calls `Core::Jobs::pump()`, commits only matching-generation results, marks assets `Ready`/`Failed`, emits one failure diagnostic and advances the existing model resource revision through an internal hook.
-
-- [ ] **Step 5: Verify tests and commit**
-
-Commit message: `Add deferred texture resources`.
-
----
-
-### Task 3: Remove Synchronous Texture Decode From glTF Import
-
-**Files:**
-- Modify: `Sources/Models/Formats/GltfAssets.cpp`
-- Modify: `Sources/Models/Formats/GltfAlpha.cpp`
-- Extend/Test: `Tests/ModelLoading.cpp`
-
-**Interfaces:**
-- Consumes deferred registration functions from Task 2.
-- Produces glTF materials containing stable texture handles whose images may be pending.
-
-- [ ] **Step 1: Add a failing glTF regression asset/test**
-
-Generate a minimal external-buffer `.gltf` with one triangle and one external PNG. Load it with `Models::load()` and assert the model succeeds while the referenced texture state is not required to be `Ready` before `Models::load()` returns.
-
-- [ ] **Step 2: Convert external/embedded image registration**
-
-In `GltfAssets::imageHandle`, replace immediate `loadTexture()` with `registerDeferredFile()` and immediate `loadTextureMemory()` with `registerDeferredMemory()` using copied compressed bytes. URI/path decoding and buffer-view bounds validation remain synchronous and model-critical.
-
-- [ ] **Step 3: Convert derived material textures**
-
-Replace synchronous channel extraction with `registerDeferredChannel()`. Change `GltfAlpha::deriveAlpha()` to register an alpha-derived resource instead of reading/copying `TextureAsset::image` during import. Blend-mode alpha probing must not force decode; preserve blend semantics from material metadata and let texture alpha become renderer data when ready.
-
-- [ ] **Step 4: Verify no glTF model-import path calls synchronous texture decode**
-
-Search `Gltf*.cpp` import paths and ensure source material construction uses deferred registration for material images. Direct non-model texture APIs remain synchronous.
-
-- [ ] **Step 5: Run regression tests and commit**
-
-Commit message: `Stream glTF material textures`.
-
----
+- [ ] Add a RED regression fixture: tiny external-buffer glTF + external PNG. `Models::load()` must succeed while its material texture is still pending.
+- [ ] Add `std::vector<std::string> dependencies` to internal `Formats::Document`; glTF parsing records normalized external `.bin` dependencies. The source model itself is added by the cache layer.
+- [ ] In `GltfAssets::imageHandle`, replace external `loadTexture()` with `registerDeferredFile()` and embedded `loadTextureMemory()` with `registerDeferredMemory()` containing copied compressed bytes; URI and buffer-view validation remains synchronous/model-critical.
+- [ ] Replace synchronous channel extraction with `registerDeferredChannel()` and change `GltfAlpha` to register alpha-derived resources. Blend materials must not inspect decoded alpha during import.
+- [ ] Search all glTF material import paths to ensure model import no longer calls synchronous image decode.
+- [ ] Run regressions GREEN and commit: `Stream glTF material textures`.
 
 ### Task 4: Shared Renderer Resource Pump and Fallback
 
-**Files:**
-- Modify: `Sources/Renderer/Scenes/SceneCache.cpp`
-- Modify: `Sources/Renderer/Scenes/SceneResourcesSDLGPU.cpp`
-- Extend/Test: `Tests/ModelLoading.cpp`
+**Files:** Modify `Sources/Renderer/Scenes/SceneCache.cpp`, `SceneResourcesSDLGPU.cpp`; extend tests.
 
-**Interfaces:**
-- `SceneCache::syncResources(...)` pumps `Models::Internal::pumpTextureResources()` before computing the resource signature.
-- `SceneResources::textureFor()` treats pending/failed texture assets as the existing white fallback, not an error.
-
-- [ ] **Step 1: Add failing resource-revision test**
-
-Record `Models::resourceRevision()`, allow a deferred texture job to complete, pump resources, and assert the revision increases only when the completion is committed.
-
-- [ ] **Step 2: Pump at the shared scene-resource boundary**
-
-Call the internal texture-resource pump at the beginning of `SceneCache::syncResources(...)` before `resourceSignature(...)`. Do not add backend-specific polling APIs.
-
-- [ ] **Step 3: Make SDL_GPU pending textures nonfatal**
-
-`SceneResources::textureFor()` returns `white_` when a valid texture handle exists but decoded image data is not ready. Invalid handles remain handled by normal material fallback. Actual decode failures retain the fallback.
-
-- [ ] **Step 4: Verify revision-driven replacement**
-
-Test that after a pending texture becomes `Ready`, the changed `Models::resourceRevision()` alters the scene resource signature so the next renderer sync can upload the real texture.
-
-- [ ] **Step 5: Commit**
-
-Commit message: `Integrate streamed textures with scene resources`.
-
----
+- [ ] Add RED test: resource revision does not change merely by registering a pending texture, but increases when a completed image is committed.
+- [ ] At the beginning of the shared `SceneCache::syncResources(...)` path call `Models::Internal::pumpTextureResources()` before calculating resource signatures.
+- [ ] Change `SceneResources::textureFor()` so a valid handle with no decoded RGBA returns the existing `white_` texture instead of reporting `scene texture has no RGBA image data`; invalid handles keep normal fallback behavior.
+- [ ] Verify a Ready commit changes `Models::resourceRevision()` and therefore scene resource signatures, enabling normal renderer resync without a backend-specific streaming API.
+- [ ] Commit: `Integrate streamed textures with scene resources`.
 
 ### Task 5: Automatic Compiled Model Cache
 
-**Files:**
-- Create: `Sources/Models/Internal/ModelCache.hpp`
-- Create: `Sources/Models/Internal/ModelCache.cpp`
-- Modify: `Sources/Models/Models.cpp`
-- Extend/Test: `Tests/ModelLoading.cpp`
+**Files:** Create `Sources/Models/Internal/ModelCache.hpp`, `ModelCache.cpp`; modify `Sources/Models/Models.cpp`; extend tests.
 
-**Interfaces:**
-- Produces in `Models::Internal::ModelCache`:
-  - `bool load(const std::string& source, Formats::Document *document);`
-  - `void writeAsync(const std::string& source, const Formats::Document& document);`
-  - `std::filesystem::path pathFor(const std::string& source);`
-- Cache schema has fixed magic/version, bounded section counts/sizes, dependency manifest entries `{normalized path, uint64 size, int64 mtime}` and a checksum over the binary payload.
+**Produces in `Models::Internal::ModelCache`:**
+```cpp
+struct Payload { std::vector<std::uint8_t> bytes; };
+bool load(const std::string& source, Formats::Document *document, std::string *error = nullptr);
+bool encode(const std::string& source, const Formats::Document& document, Payload *payload, std::string *error = nullptr);
+void writeAsync(const std::string& source, Payload payload);
+std::filesystem::path pathFor(const std::string& source);
+}
+```
 
-- [ ] **Step 1: Write failing cache round-trip test**
+**Important ownership rule:** `encode()` runs while the imported `Formats::Document` still exists and creates an owned byte payload. The worker receives only that owned payload and performs file I/O/atomic rename; no worker may retain a reference into a document that `storeModel()` is about to move from.
 
-Construct a small `Formats::Document`, write it to an isolated temporary Horse cache root, read it back and assert mesh/node/material/scene data and deferred texture descriptors round-trip exactly.
+- [ ] Write RED cache round-trip tests using a small `Formats::Document`; verify meshes/nodes/scenes/material values and texture source graph round-trip.
+- [ ] Write RED invalidation/corruption tests that mutate source, external `.bin`, referenced external texture size/mtime, schema version and payload bytes independently.
+- [ ] Implement platform roots: macOS `~/Library/Caches/Horse/Models`, Linux `$XDG_CACHE_HOME/Horse/Models` else `~/.cache/Horse/Models`, Windows `%LOCALAPPDATA%/Horse/Models`. Allow an internal/test environment override `HORSE_MODEL_CACHE_DIR` so tests never touch the real user cache.
+- [ ] Use a stable 64-bit hash of normalized absolute source path for the filename. Cache header contains fixed magic, schema/importer version, payload length/checksum and bounded section counts.
+- [ ] Encode normalized `Formats::Document` runtime data plus a dependency manifest. Build the texture table by recursively asking `TextureStreaming` for descriptors of texture handles referenced by every material/variant; external texture descriptors become cache dependencies. `Document::dependencies` contributes external buffers.
+- [ ] Decode texture descriptors first and recreate stable deferred texture handles, then reconstruct material handles inside the decoded `Formats::Document` using cache-local texture IDs.
+- [ ] Validate all counts/lengths/overflow before allocating. Any bad header/version/checksum/dependency is a clean cache miss.
+- [ ] `writeAsync()` queues only owned payload + target path; worker creates parent directories, writes a unique temporary file, closes it and atomically renames it. Failure is diagnostic-only.
+- [ ] Integrate `Models::load()`: memory cache -> compiled cache -> source loader. On source success, `encode()` an owned payload, queue `writeAsync()`, then move the document into existing `storeModel()`.
+- [ ] Verify cache tests GREEN and commit: `Add compiled model cache`.
 
-- [ ] **Step 2: Write failing invalidation/corruption tests**
+### Task 6: Clear/Shutdown and Stress Safety
 
-Mutate source size/mtime, external buffer size/mtime, referenced texture size/mtime, schema version and payload bytes independently. Each must make cache load return false without throwing or allocating unreasonable memory.
+**Files:** Modify `Sources/Models/Models.cpp`, `TextureStreaming.cpp`, `Jobs.cpp`; extend tests.
 
-- [ ] **Step 3: Implement platform cache root and stable key**
+- [ ] Add RED stress test that repeatedly registers/loads many resources, partially pumps, clears model cache, starts a new generation and pumps to idle; old completions must never mutate new handles.
+- [ ] Make `Models::clearCache()` first invalidate texture-stream generation, cancel model-owned pending work, wait/discard running results, then clear model/mesh/material/animation/texture registries and advance resource revision.
+- [ ] Ensure internal jobs singleton destruction/shutdown rejects new work and joins all workers. No new public shutdown API.
+- [ ] Verify stress test GREEN and commit: `Harden model resource lifetime`.
 
-Use `~/Library/Caches/Horse/Models` on macOS, `$XDG_CACHE_HOME/Horse/Models` then `~/.cache/Horse/Models` on Linux, and `%LOCALAPPDATA%/Horse/Models` on Windows. Derive filenames from a stable 64-bit hash of the normalized absolute source path; do not hash source file contents on every launch.
+### Task 7: Regression/Performance Target and Final Verification
 
-- [ ] **Step 4: Implement binary serialization/deserialization**
+**Files:** Finalize `Tests/ModelLoading.cpp`; modify `build.c`.
 
-Serialize the normalized `Formats::Document` data required by `storeModel()` plus texture-source descriptors and dependency manifest. Validate every count and byte range before allocation. Use little-endian fixed-width fields and reject unknown schema versions.
-
-- [ ] **Step 5: Implement asynchronous atomic writes**
-
-Serialize/cache-write work executes via `Core::Jobs`. Write `<cache>.tmp.<pid/thread-token>`, flush/close it, then atomically rename to the final path. Cache-write failure is diagnostic-only.
-
-- [ ] **Step 6: Integrate cache-first `Models::load()`**
-
-After the in-memory model cache lookup and loader lookup, try `ModelCache::load()`; on hit call existing `storeModel()`. On miss run the normal format loader, then queue `ModelCache::writeAsync()` before moving the document into `storeModel()`.
-
-- [ ] **Step 7: Verify and commit**
-
-Commit message: `Add compiled model cache`.
-
----
-
-### Task 6: Cache Clear, Shutdown and Stress Safety
-
-**Files:**
-- Modify: `Sources/Models/Models.cpp`
-- Modify: `Sources/Models/Internal/TextureStreaming.cpp`
-- Modify: `Sources/Core/Jobs/Jobs.cpp`
-- Extend/Test: `Tests/ModelLoading.cpp`
-
-**Interfaces:**
-- `Models::clearCache()` becomes a generation/synchronization boundary without changing its signature.
-
-- [ ] **Step 1: Add failing stress test**
-
-Repeat: register/load many deferred textures, queue work, partially pump, call `Models::clearCache()`, load/register again, pump to idle. Assert no old-generation result changes a new handle and no duplicate decode publishes twice.
-
-- [ ] **Step 2: Implement clear ordering**
-
-`Models::clearCache()` first invalidates the texture-stream generation, cancels pending jobs owned by the model resource runtime, waits/discards running completions, then clears model/mesh/material/animation/texture registries and advances resource revision.
-
-- [ ] **Step 3: Implement process shutdown safety**
-
-The internal jobs singleton destructor/shutdown path rejects new work, drains/cancels queues and joins every worker. No public shutdown API is added.
-
-- [ ] **Step 4: Verify stress test and commit**
-
-Commit message: `Harden model resource lifetime`.
-
----
-
-### Task 7: Performance/Behavior Regression Target and Final Verification
-
-**Files:**
-- Modify: `build.c`
-- Finalize: `Tests/ModelLoading.cpp`
-- Modify only if needed for diagnostics: model-loading internals from earlier tasks.
-
-**Interfaces:**
-- Build target: `HorseModelLoadingTests`.
-- Test process exits nonzero on any failed contract.
-
-- [ ] **Step 1: Add the test target to `build.c`**
-
-Compile `Tests/ModelLoading.cpp` as `HorseModelLoadingTests`, include `Sources`, link/use the Horse library target and platform libraries, while keeping `Horse` as the default target.
-
-- [ ] **Step 2: Cover the ten spec requirements in one deterministic suite**
-
-The suite must verify deferred external decode, immediate valid model handle, immediate model-scene-compatible metadata, fallback-compatible pending resource state, revision increment on completion, duplicate texture deduplication, warm cache hit, stale/corrupt cache miss, clear/shutdown generation safety and cache dependency invalidation.
-
-- [ ] **Step 3: Add relative timing checks without machine-specific thresholds**
-
-Record caller time for a cold model load versus a warm cache load and assert the warm path avoids the source importer through an internal test counter/diagnostic hook; do not require a fixed millisecond threshold. Verify caller-thread external image decode count is zero during glTF model load.
-
-- [ ] **Step 4: Run strict verification**
-
-Run the model-loading test target repeatedly, build the Horse shared library with strict warnings, and inspect the branch diff to confirm GAME is untouched and public model-loading signatures did not change.
-
-- [ ] **Step 5: Commit final verification target**
-
-Commit message: `Add model loading performance regressions`.
+- [ ] Add `HorseModelLoadingTests` executable target, include `Sources`, link/use Horse and platform libraries, keep Horse as the default build target.
+- [ ] Cover all ten `MODEL_LOADING_DESIGN` behavioral requirements: deferred external decode, immediate model handle, scene-compatible metadata while pending, fallback-compatible state, revision commit, duplicate texture dedupe, warm cache hit, stale/corrupt cache miss, clear/shutdown generation safety and dependency invalidation.
+- [ ] Add internal test counters for importer/cache/decode path selection only where required. Assert glTF caller-thread external image decode count is zero and warm load bypasses source import; do not use fixed machine-specific millisecond thresholds.
+- [ ] Run the test target repeatedly, build Horse with strict warnings, inspect branch diff for GAME absence and confirm public `Models::load()` / `ModelScene::instantiate()` signatures are unchanged.
+- [ ] Commit: `Add model loading performance regressions`.
