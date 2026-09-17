@@ -308,6 +308,7 @@ const TextureAsset *texture(TextureHandle handle)
 
 void clearTextureCache()
 {
+    Internal::clearTextureStreaming();
     cache().clear();
     assets().clear();
     readiness().clear();
