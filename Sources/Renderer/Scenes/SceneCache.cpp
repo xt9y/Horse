@@ -3,6 +3,7 @@
 #include "Animation/Animation.hpp"
 #include "Camera/Camera.hpp"
 #include "Models/Internal/MeshRevision.hpp"
+#include "Models/Internal/ResourcePump.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/Runtime.hpp"
 #include "Renderer/Internal/ModelGeometry.hpp"
@@ -571,6 +572,7 @@ bool SceneCache::syncResources(
     std::size_t maximum_texture_slots,
     std::string *error)
 {
+    Models::Internal::pumpResources();
     if (error) error->clear();
     render_items_ = items;
 
