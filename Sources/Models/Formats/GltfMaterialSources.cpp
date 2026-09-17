@@ -3,8 +3,11 @@
 #include "Models/Formats/GltfData.hpp"
 #include "Models/Formats/GltfJson.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace Models::Formats::GltfMaterialSources {
@@ -17,6 +20,44 @@ bool fail(std::string *error, const std::string& message)
 {
     if (error) *error = message;
     return false;
+}
+
+void appendDependency(Document *output, std::filesystem::path path)
+{
+    if (!output) return;
+    std::error_code ec;
+    const std::filesystem::path absolute = std::filesystem::absolute(path, ec);
+    const std::string normalized = (ec ? path : absolute).lexically_normal().string();
+    if (std::find(output->dependencies.begin(), output->dependencies.end(), normalized) ==
+        output->dependencies.end())
+        output->dependencies.push_back(normalized);
+}
+
+bool captureDependencies(
+    const std::string& path,
+    const Value& root,
+    Document *output,
+    std::string *error)
+{
+    const Value *buffers = root.get("buffers");
+    if (!buffers) return true;
+    if (!buffers->is(Type::Array)) return fail(error, "glTF buffers must be an array");
+
+    const std::filesystem::path directory = std::filesystem::path(path).parent_path();
+    for (const Value& buffer : buffers->array) {
+        if (!buffer.is(Type::Object)) return fail(error, "invalid glTF buffer object");
+        const Value *uri = buffer.get("uri");
+        if (!uri) continue;
+        if (!uri->is(Type::String)) return fail(error, "glTF buffer URI must be a string");
+        if (uri->string.starts_with("data:")) continue;
+
+        std::string decoded;
+        if (!GltfData::decodeUriPath(uri->string, &decoded, error)) return false;
+        std::filesystem::path dependency(decoded);
+        if (dependency.is_relative()) dependency = directory / dependency;
+        appendDependency(output, std::move(dependency));
+    }
+    return true;
 }
 
 bool appendMesh(
@@ -66,7 +107,6 @@ bool apply(const std::string& path, Document *output, std::string *error)
 {
     if (error) error->clear();
     if (!output) return fail(error, "null glTF source material output");
-    if (output->parts.empty() && output->variant_materials.empty()) return true;
 
     std::string json;
     std::vector<std::uint8_t> binary;
@@ -75,6 +115,9 @@ bool apply(const std::string& path, Document *output, std::string *error)
     Value root;
     if (!GltfJson::parse(json, &root, error)) return false;
     if (!root.is(Type::Object)) return fail(error, "glTF root must be an object");
+    if (!captureDependencies(path, root, output, error)) return false;
+
+    if (output->parts.empty() && output->variant_materials.empty()) return true;
 
     const Value *meshes = root.get("meshes");
     if (!meshes || !meshes->is(Type::Array)) {
