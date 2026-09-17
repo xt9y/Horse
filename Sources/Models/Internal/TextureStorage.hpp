@@ -10,6 +10,7 @@ namespace Models::Internal {
 std::string normalizeTexturePath(const std::string& path);
 TextureHandle findTexture(const std::string& key);
 TextureHandle reserveTexture(const std::string& key);
+bool textureStorageReady(TextureHandle handle);
 bool publishTexture(TextureHandle handle, Images::Image image);
 
 } // namespace Models::Internal
