@@ -8,8 +8,8 @@
 namespace Models::Internal {
 namespace {
 
-constexpr TextureHandle StagedTextureBit = 0x80000000u;
-constexpr TextureHandle StagedTextureIndexMask = 0x7fffffffu;
+constexpr TextureHandle StagedTextureBit = StagedTextureBase;
+constexpr TextureHandle StagedTextureIndexMask = StagedTextureBase - 1u;
 thread_local StagedModel *active_staging = nullptr;
 
 Images::Image fallbackImage()
