@@ -484,7 +484,6 @@ bool animated(ModelHandle handle)
 
 std::uint64_t resourceRevision()
 {
-    Internal::pumpTextureResources();
     return resourceRevisionStorage();
 }
 
