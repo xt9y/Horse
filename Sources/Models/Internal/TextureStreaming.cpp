@@ -3,6 +3,7 @@
 #include "Core/Jobs/Jobs.hpp"
 #include "Models/Core/Material.hpp"
 #include "Models/Internal/ResourceRevision.hpp"
+#include "Models/Internal/StagedModel.hpp"
 #include "Models/Internal/TextureStorage.hpp"
 
 #include <algorithm>
@@ -66,6 +67,7 @@ bool validImage(const Images::Image& image)
 
 TextureState stateFor(TextureHandle handle)
 {
+    if (isStagedTextureHandle(handle)) return TextureState::Registered;
     const auto found = runtime().records.find(handle);
     if (found != runtime().records.end()) return found->second.state;
     return textureStorageReady(handle) ? TextureState::Ready : TextureState::Registered;
@@ -104,7 +106,7 @@ bool applyOpacity(Images::Image *color, const Images::Image& opacity, std::strin
                 static_cast<int>(
                     (static_cast<long long>(x) * static_cast<long long>(opacity.width)) /
                     static_cast<long long>(color->width)
-                ),
+            ),
                 0,
                 opacity.width - 1
             );
@@ -270,6 +272,8 @@ bool schedule(TextureHandle handle)
 TextureHandle registerDescriptor(TextureSourceDescriptor descriptor)
 {
     if (descriptor.key.empty()) return INVALID_TEXTURE;
+    if (stagingActive()) return registerStagedTexture(std::move(descriptor));
+
     const TextureHandle existing = findTexture(descriptor.key);
     const TextureHandle handle = reserveTexture(descriptor.key);
     if (handle == INVALID_TEXTURE) return INVALID_TEXTURE;
@@ -463,6 +467,7 @@ TextureState textureState(TextureHandle handle)
 bool textureDescriptor(TextureHandle handle, TextureSourceDescriptor *descriptor)
 {
     if (!descriptor) return false;
+    if (isStagedTextureHandle(handle)) return stagedTextureDescriptor(handle, descriptor);
     const auto found = runtime().records.find(handle);
     if (found == runtime().records.end()) return false;
     *descriptor = found->second.descriptor;
