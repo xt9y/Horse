@@ -42,6 +42,7 @@ struct Document {
     std::vector<MaterialVariantData> variants;
     std::vector<VariantMaterial> variant_materials;
     std::vector<InstanceData> instances;
+    std::vector<std::string> dependencies;
     std::string extras_json;
     std::unordered_map<std::string, std::string> extensions_json;
 };
