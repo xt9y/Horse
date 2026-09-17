@@ -2,11 +2,32 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 namespace Renderer::Trace {
 namespace {
+
+struct ChannelSource {
+    Models::TextureHandle texture = Models::INVALID_TEXTURE;
+    int channel = 0;
+    std::uint8_t fallback = 255u;
+};
+
+struct PackedTextures {
+    Models::TextureHandle metallic_roughness = Models::INVALID_TEXTURE;
+    Models::TextureHandle clearcoat = Models::INVALID_TEXTURE;
+    Models::TextureHandle sheen = Models::INVALID_TEXTURE;
+    Models::TextureHandle transmission_thickness = Models::INVALID_TEXTURE;
+    Models::TextureHandle specular = Models::INVALID_TEXTURE;
+    Models::TextureHandle iridescence = Models::INVALID_TEXTURE;
+    Models::TextureHandle diffuse_transmission = Models::INVALID_TEXTURE;
+};
 
 void appendTexture(
     Models::TextureHandle handle,
@@ -17,6 +38,179 @@ void appendTexture(
     if (handle == Models::INVALID_TEXTURE || seen.contains(handle) || handles.size() >= maximum) return;
     seen.insert(handle);
     handles.push_back(handle);
+}
+
+std::uint8_t sampleChannel(
+    const Models::TextureAsset *asset,
+    int channel,
+    int x,
+    int y,
+    int width,
+    int height,
+    std::uint8_t fallback)
+{
+    if (!asset || channel < 0 || channel > 3 ||
+        asset->image.width <= 0 || asset->image.height <= 0 || asset->image.rgba.empty())
+        return fallback;
+
+    const int source_x = std::clamp(
+        static_cast<int>(
+            static_cast<long long>(x) * static_cast<long long>(asset->image.width) /
+            std::max(width, 1)),
+        0,
+        asset->image.width - 1);
+    const int source_y = std::clamp(
+        static_cast<int>(
+            static_cast<long long>(y) * static_cast<long long>(asset->image.height) /
+            std::max(height, 1)),
+        0,
+        asset->image.height - 1);
+    const std::size_t offset =
+        (static_cast<std::size_t>(source_y) * static_cast<std::size_t>(asset->image.width) +
+         static_cast<std::size_t>(source_x)) * 4u + static_cast<std::size_t>(channel);
+    return offset < asset->image.rgba.size() ? asset->image.rgba[offset] : fallback;
+}
+
+Models::TextureHandle packTexture(
+    const char *name,
+    const std::array<ChannelSource, 4>& channels,
+    std::string *error)
+{
+    int width = 0;
+    int height = 0;
+    bool any = false;
+    std::array<const Models::TextureAsset *, 4> assets{};
+    std::string key = "@horse-pbr-pack:";
+    key += name ? name : "texture";
+
+    for (std::size_t channel = 0u; channel < channels.size(); ++channel) {
+        const ChannelSource& source = channels[channel];
+        key += ":" + std::to_string(source.texture) + "." +
+            std::to_string(source.channel) + "." + std::to_string(source.fallback);
+        if (source.texture == Models::INVALID_TEXTURE) continue;
+        assets[channel] = Models::texture(source.texture);
+        if (!assets[channel] || assets[channel]->image.width <= 0 || assets[channel]->image.height <= 0)
+            continue;
+        any = true;
+        width = std::max(width, assets[channel]->image.width);
+        height = std::max(height, assets[channel]->image.height);
+    }
+    if (!any) return Models::INVALID_TEXTURE;
+
+    Models::Images::Image image;
+    image.width = std::max(width, 1);
+    image.height = std::max(height, 1);
+    image.rgba.resize(
+        static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height) * 4u,
+        255u);
+
+    for (int y = 0; y < image.height; ++y) {
+        for (int x = 0; x < image.width; ++x) {
+            const std::size_t destination =
+                (static_cast<std::size_t>(y) * static_cast<std::size_t>(image.width) +
+                 static_cast<std::size_t>(x)) * 4u;
+            for (std::size_t channel = 0u; channel < channels.size(); ++channel) {
+                image.rgba[destination + channel] = sampleChannel(
+                    assets[channel],
+                    channels[channel].channel,
+                    x,
+                    y,
+                    image.width,
+                    image.height,
+                    channels[channel].fallback);
+            }
+        }
+    }
+    image.meaningful_alpha = channels[3].texture != Models::INVALID_TEXTURE;
+    return Models::registerTextureImage(key, std::move(image), error);
+}
+
+bool packedTextures(
+    const Models::MaterialData& material,
+    PackedTextures *packed,
+    std::string *error)
+{
+    if (!packed) return false;
+    *packed = {};
+
+    packed->metallic_roughness = packTexture("metallic-roughness", {{
+        {material.roughness_texture, 0, 255u},
+        {material.metallic_texture, 0, 255u},
+        {},
+        {},
+    }}, error);
+    if ((material.roughness_texture != Models::INVALID_TEXTURE ||
+         material.metallic_texture != Models::INVALID_TEXTURE) &&
+        packed->metallic_roughness == Models::INVALID_TEXTURE)
+        return false;
+
+    packed->clearcoat = packTexture("clearcoat", {{
+        {material.clearcoat_info.texture, 0, 255u},
+        {material.clearcoat_roughness_info.texture, 1, 255u},
+        {},
+        {},
+    }}, error);
+    if ((material.clearcoat_info.texture != Models::INVALID_TEXTURE ||
+         material.clearcoat_roughness_info.texture != Models::INVALID_TEXTURE) &&
+        packed->clearcoat == Models::INVALID_TEXTURE)
+        return false;
+
+    packed->sheen = packTexture("sheen", {{
+        {material.sheen_color_info.texture, 0, 255u},
+        {material.sheen_color_info.texture, 1, 255u},
+        {material.sheen_color_info.texture, 2, 255u},
+        {material.sheen_roughness_info.texture, 3, 255u},
+    }}, error);
+    if ((material.sheen_color_info.texture != Models::INVALID_TEXTURE ||
+         material.sheen_roughness_info.texture != Models::INVALID_TEXTURE) &&
+        packed->sheen == Models::INVALID_TEXTURE)
+        return false;
+
+    packed->transmission_thickness = packTexture("transmission-thickness", {{
+        {material.transmission_info.texture, 0, 255u},
+        {material.thickness_info.texture, 1, 255u},
+        {},
+        {},
+    }}, error);
+    if ((material.transmission_info.texture != Models::INVALID_TEXTURE ||
+         material.thickness_info.texture != Models::INVALID_TEXTURE) &&
+        packed->transmission_thickness == Models::INVALID_TEXTURE)
+        return false;
+
+    packed->specular = packTexture("specular", {{
+        {material.specular_color_info.texture, 0, 255u},
+        {material.specular_color_info.texture, 1, 255u},
+        {material.specular_color_info.texture, 2, 255u},
+        {material.specular_info.texture, 3, 255u},
+    }}, error);
+    if ((material.specular_info.texture != Models::INVALID_TEXTURE ||
+         material.specular_color_info.texture != Models::INVALID_TEXTURE) &&
+        packed->specular == Models::INVALID_TEXTURE)
+        return false;
+
+    packed->iridescence = packTexture("iridescence", {{
+        {material.iridescence_info.texture, 0, 255u},
+        {material.iridescence_thickness_info.texture, 1, 255u},
+        {},
+        {},
+    }}, error);
+    if ((material.iridescence_info.texture != Models::INVALID_TEXTURE ||
+         material.iridescence_thickness_info.texture != Models::INVALID_TEXTURE) &&
+        packed->iridescence == Models::INVALID_TEXTURE)
+        return false;
+
+    packed->diffuse_transmission = packTexture("diffuse-transmission", {{
+        {material.diffuse_transmission_color_info.texture, 0, 255u},
+        {material.diffuse_transmission_color_info.texture, 1, 255u},
+        {material.diffuse_transmission_color_info.texture, 2, 255u},
+        {material.diffuse_transmission_info.texture, 3, 255u},
+    }}, error);
+    if ((material.diffuse_transmission_info.texture != Models::INVALID_TEXTURE ||
+         material.diffuse_transmission_color_info.texture != Models::INVALID_TEXTURE) &&
+        packed->diffuse_transmission == Models::INVALID_TEXTURE)
+        return false;
+
+    return true;
 }
 
 std::vector<Models::MaterialHandle> materialHandles(const Scenes::SceneCache& scene)
@@ -35,34 +229,28 @@ std::vector<Models::MaterialHandle> materialHandles(const Scenes::SceneCache& sc
     return handles;
 }
 
-void appendAdvancedTextures(
+void appendMaterialTextures(
     const Models::MaterialData& material,
+    const PackedTextures& packed,
     std::size_t maximum,
     std::vector<Models::TextureHandle>& handles,
     std::unordered_set<Models::TextureHandle>& seen)
 {
-    const std::array<Models::TextureHandle, 21> candidates {{
+    const std::array<Models::TextureHandle, 14> candidates {{
         material.diffuse_texture,
         material.normal_texture,
-        material.roughness_texture,
-        material.metallic_texture,
+        packed.metallic_roughness,
         material.ambient_occlusion_texture,
         material.emissive_texture,
         material.opacity_texture,
-        material.clearcoat_info.texture,
-        material.clearcoat_roughness_info.texture,
+        packed.clearcoat,
         material.clearcoat_normal_info.texture,
-        material.sheen_color_info.texture,
-        material.sheen_roughness_info.texture,
-        material.transmission_info.texture,
-        material.thickness_info.texture,
-        material.specular_info.texture,
-        material.specular_color_info.texture,
-        material.iridescence_info.texture,
-        material.iridescence_thickness_info.texture,
+        packed.sheen,
+        packed.transmission_thickness,
+        packed.specular,
+        packed.iridescence,
         material.anisotropy_info.texture,
-        material.diffuse_transmission_info.texture,
-        material.diffuse_transmission_color_info.texture,
+        packed.diffuse_transmission,
     }};
     for (Models::TextureHandle handle : candidates)
         appendTexture(handle, maximum, handles, seen);
@@ -70,6 +258,7 @@ void appendAdvancedTextures(
 
 GpuAdvancedMaterial encode(
     const Models::MaterialData& material,
+    const PackedTextures& packed,
     const std::unordered_map<Models::TextureHandle, std::int32_t>& slots)
 {
     auto slot = [&](Models::TextureHandle handle) -> std::int32_t {
@@ -92,7 +281,7 @@ GpuAdvancedMaterial encode(
         std::max(material.normal_scale, 0.0f),
     };
     gpu.specular = {
-        std::max(material.specular, 0.0f),
+        std::clamp(material.specular, 0.0f, 1.0f),
         material.specular_color.x,
         material.specular_color.y,
         material.specular_color.z,
@@ -139,27 +328,51 @@ GpuAdvancedMaterial encode(
         material.double_sided ? 1.0f : 0.0f,
         static_cast<float>(static_cast<std::uint8_t>(material.alpha_mode)),
     };
+
+    const std::int32_t mr = slot(packed.metallic_roughness);
+    const std::int32_t coat = slot(packed.clearcoat);
+    const std::int32_t sheen = slot(packed.sheen);
+    const std::int32_t transmission_thickness = slot(packed.transmission_thickness);
+    const std::int32_t specular = slot(packed.specular);
+    const std::int32_t iridescence = slot(packed.iridescence);
+    const std::int32_t diffuse_transmission = slot(packed.diffuse_transmission);
+
     gpu.tex0 = {
-        slot(material.diffuse_texture), slot(material.normal_texture),
-        slot(material.roughness_texture), slot(material.metallic_texture),
+        slot(material.diffuse_texture),
+        slot(material.normal_texture),
+        mr,
+        mr,
     };
     gpu.tex1 = {
-        slot(material.ambient_occlusion_texture), slot(material.emissive_texture),
-        slot(material.opacity_texture), slot(material.clearcoat_info.texture),
+        slot(material.ambient_occlusion_texture),
+        slot(material.emissive_texture),
+        slot(material.opacity_texture),
+        coat,
     };
     gpu.tex2 = {
-        slot(material.clearcoat_roughness_info.texture), slot(material.clearcoat_normal_info.texture),
-        slot(material.sheen_color_info.texture), slot(material.sheen_roughness_info.texture),
+        coat,
+        slot(material.clearcoat_normal_info.texture),
+        sheen,
+        sheen,
     };
     gpu.tex3 = {
-        slot(material.transmission_info.texture), slot(material.thickness_info.texture),
-        slot(material.specular_info.texture), slot(material.specular_color_info.texture),
+        transmission_thickness,
+        transmission_thickness,
+        specular,
+        specular,
     };
     gpu.tex4 = {
-        slot(material.iridescence_info.texture), slot(material.iridescence_thickness_info.texture),
-        slot(material.anisotropy_info.texture), slot(material.diffuse_transmission_info.texture),
+        iridescence,
+        iridescence,
+        slot(material.anisotropy_info.texture),
+        diffuse_transmission,
     };
-    gpu.tex5 = {slot(material.diffuse_transmission_color_info.texture), -1, -1, -1};
+    gpu.tex5 = {
+        diffuse_transmission,
+        std::bit_cast<std::int32_t>(std::max(material.clearcoat_normal_info.scale, 0.0f)),
+        -1,
+        -1,
+    };
     return gpu;
 }
 
@@ -173,17 +386,28 @@ bool MaterialSet::sync(
     if (error) error->clear();
     if (source_revision_ == scene.resourceRevision() && !materials_.empty()) return true;
 
-    texture_handles_ = scene.textureHandles();
-    if (texture_handles_.size() > maximum_texture_slots) {
-        if (error) *error = "trace material base texture count exceeds backend capacity";
-        return false;
-    }
-    base_texture_count_ = texture_handles_.size();
-    std::unordered_set<Models::TextureHandle> seen(texture_handles_.begin(), texture_handles_.end());
     const std::vector<Models::MaterialHandle> handles = materialHandles(scene);
-    for (Models::MaterialHandle handle : handles) {
-        const Models::MaterialData *material = Models::material(handle);
-        if (material) appendAdvancedTextures(*material, maximum_texture_slots, texture_handles_, seen);
+    std::vector<PackedTextures> packed(handles.size());
+    for (std::size_t index = 0u; index < handles.size(); ++index) {
+        const Models::MaterialData *material = Models::material(handles[index]);
+        if (material && !packedTextures(*material, &packed[index], error)) return false;
+    }
+
+    texture_handles_.clear();
+    std::unordered_set<Models::TextureHandle> seen;
+    if (!scene.textureHandles().empty())
+        appendTexture(scene.textureHandles().front(), maximum_texture_slots, texture_handles_, seen);
+    base_texture_count_ = texture_handles_.size();
+
+    for (std::size_t index = 0u; index < handles.size(); ++index) {
+        const Models::MaterialData *material = Models::material(handles[index]);
+        if (material)
+            appendMaterialTextures(
+                *material,
+                packed[index],
+                maximum_texture_slots,
+                texture_handles_,
+                seen);
     }
 
     std::unordered_map<Models::TextureHandle, std::int32_t> slots;
@@ -194,10 +418,10 @@ bool MaterialSet::sync(
     materials_.clear();
     materials_.push_back(GpuAdvancedMaterial{});
     materials_.reserve(handles.size() + 1u);
-    for (Models::MaterialHandle handle : handles) {
-        const Models::MaterialData *material = Models::material(handle);
+    for (std::size_t index = 0u; index < handles.size(); ++index) {
+        const Models::MaterialData *material = Models::material(handles[index]);
         if (!material) continue;
-        materials_.push_back(encode(*material, slots));
+        materials_.push_back(encode(*material, packed[index], slots));
     }
 
     source_revision_ = scene.resourceRevision();

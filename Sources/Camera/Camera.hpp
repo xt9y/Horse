@@ -5,6 +5,8 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Components.hpp"
 
+#include <cstdint>
+
 namespace Camera {
 
 enum class Projection {
@@ -12,15 +14,22 @@ enum class Projection {
     Orthographic,
 };
 
+enum class ToneMapping : std::uint8_t {
+    None,
+    ACES,
+};
+
 struct CameraComponent {
-    float fov_degrees = 0.0f;
-    float near_plane = 0.0f;
-    bool active = false;
+    float fov_degrees = 70.0f;
+    float near_plane = 0.01f;
+    bool active = true;
     Projection projection = Projection::Perspective;
-    float far_plane = 0.0f;
+    float far_plane = 1000.0f;
     float aspect_ratio = 0.0f;
     float xmag = 1.0f;
     float ymag = 1.0f;
+    float exposure_ev = 0.0f;
+    ToneMapping tone_mapping = ToneMapping::ACES;
 };
 
 Ecs::Entity activeCamera(const Ecs::World& world);

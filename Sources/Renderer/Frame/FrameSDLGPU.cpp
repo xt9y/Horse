@@ -53,6 +53,10 @@ bool Target::create()
         Renderer::SDLGPU::colorFormat(), ColorUsage,
         static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
         "Horse HDR Color");
+    display_ = Renderer::SDLGPU::createTexture(
+        Renderer::SDLGPU::colorFormat(), ColorUsage,
+        static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
+        "Horse Linear Display Color");
     velocity_ = Renderer::SDLGPU::createTexture(
         SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT, VelocityUsage,
         static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
@@ -66,7 +70,7 @@ bool Target::create()
         static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
         "Horse Linear Depth");
 
-    if (!color_ || !velocity_ || !depth_ || !linear_depth_) {
+    if (!color_ || !display_ || !velocity_ || !depth_ || !linear_depth_) {
         std::fprintf(stderr, "[Frame/SDL_GPU]: target creation failed: %s\n", SDL_GetError());
         destroy();
         return false;
@@ -82,9 +86,11 @@ void Target::destroy()
         if (camera_depth_) SDL_ReleaseGPUTexture(device, camera_depth_);
         if (depth_) SDL_ReleaseGPUTexture(device, depth_);
         if (velocity_) SDL_ReleaseGPUTexture(device, velocity_);
+        if (display_) SDL_ReleaseGPUTexture(device, display_);
         if (color_) SDL_ReleaseGPUTexture(device, color_);
     }
     color_ = nullptr;
+    display_ = nullptr;
     velocity_ = nullptr;
     depth_ = nullptr;
     camera_depth_ = nullptr;
@@ -95,7 +101,7 @@ bool Target::resize(int width, int height)
 {
     const int next_width = std::max(width, 1);
     const int next_height = std::max(height, 1);
-    if (next_width == width_ && next_height == height_ && color_) return true;
+    if (next_width == width_ && next_height == height_ && color_ && display_) return true;
     width_ = next_width;
     height_ = next_height;
     destroy();
@@ -119,7 +125,7 @@ SDL_GPUTexture *Target::cameraDepth()
 
 bool Target::begin(Internal::FrameOutput& output)
 {
-    if (!color_ && !create()) return false;
+    if ((!color_ || !display_) && !create()) return false;
     SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(Renderer::SDLGPU::device());
     if (!command) {
         std::fprintf(stderr, "[Frame/SDL_GPU]: command buffer acquisition failed: %s\n", SDL_GetError());
@@ -132,6 +138,8 @@ bool Target::begin(Internal::FrameOutput& output)
     output.height = height_;
     output.command = command;
     output.color_texture = color_;
+    output.display_texture = display_;
+    output.presentation_texture = color_;
     output.depth_texture = depth_;
     output.velocity_texture = velocity_;
     return true;
@@ -151,10 +159,31 @@ void present(Internal::FrameOutput& output)
 {
     auto *command = static_cast<SDL_GPUCommandBuffer *>(output.command);
     auto *color = static_cast<SDL_GPUTexture *>(output.color_texture);
+    auto *presentation = static_cast<SDL_GPUTexture *>(output.presentation_texture);
     if (!command) return;
 
-    if (!color || !Renderer::SDLGPU::blitToSwapchain(
-            command, color,
+    SDL_GPUTexture *source = color;
+    if (!Renderer::SDLGPU::linearSwapchain()) {
+        if (!color || !presentation || color == presentation ||
+            !Renderer::SDLGPU::transformColor(
+                command,
+                color,
+                presentation,
+                static_cast<std::uint32_t>(std::max(output.width, 1)),
+                static_cast<std::uint32_t>(std::max(output.height, 1)),
+                0.0f,
+                0u,
+                true))
+        {
+            Renderer::SDLGPU::cancel(command);
+            output.command = nullptr;
+            return;
+        }
+        source = presentation;
+    }
+
+    if (!source || !Renderer::SDLGPU::blitToSwapchain(
+            command, source,
             static_cast<std::uint32_t>(std::max(output.width, 1)),
             static_cast<std::uint32_t>(std::max(output.height, 1))))
     {

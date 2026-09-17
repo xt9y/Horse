@@ -25,11 +25,11 @@ public:
     void update(Ecs::World& world, float delta_seconds);
 
 private:
-    float speed_ = 0.0f;
-    float sprint_multiplier_ = 0.0f;
-    float mouse_sensitivity_ = 0.0f;
-    float minimum_pitch_ = 0.0f;
-    float maximum_pitch_ = 0.0f;
+    float speed_ = 5.0f;
+    float sprint_multiplier_ = 2.0f;
+    float mouse_sensitivity_ = 0.1f;
+    float minimum_pitch_ = -89.0f;
+    float maximum_pitch_ = 89.0f;
     bool mouse_initialized_ = false;
 };
 

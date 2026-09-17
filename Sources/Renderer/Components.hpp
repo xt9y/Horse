@@ -64,10 +64,10 @@ enum class LightType {
 };
 
 struct LightComponent {
-    LightType type = LightType::Directional;
-    Vec3 color{};
-    float intensity = 0.0f;
-    float range = 0.0f;
+    LightType type = LightType::Point;
+    Vec3 color {1.0f, 1.0f, 1.0f};
+    float intensity = 1.0f;
+    float range = 200.0f;
     float inner_cone_degrees = 20.0f;
     float outer_cone_degrees = 30.0f;
 };

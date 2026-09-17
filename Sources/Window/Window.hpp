@@ -6,7 +6,7 @@
 namespace Window {
 
 struct Settings {
-    const char *title = "Horse";
+    const char *title = "GAME";
     int width = 1280;
     int height = 720;
     bool resizable = true;

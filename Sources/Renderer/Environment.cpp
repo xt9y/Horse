@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
@@ -20,6 +21,14 @@ AverageCache& averages()
 {
     static AverageCache value;
     return value;
+}
+
+float srgbToLinear(float value)
+{
+    value = std::clamp(value, 0.0f, 1.0f);
+    return value <= 0.04045f
+        ? value / 12.92f
+        : std::pow((value + 0.055f) / 1.055f, 2.4f);
 }
 
 Vec3 textureAverage(Models::TextureHandle handle, Vec3 fallback)
@@ -46,9 +55,9 @@ Vec3 textureAverage(Models::TextureHandle handle, Vec3 fallback)
     const std::size_t step = std::max<std::size_t>(pixel_count / 4096u, 1u);
     for (std::size_t pixel = 0u; pixel < pixel_count; pixel += step) {
         const std::size_t offset = pixel * 4u;
-        red += static_cast<double>(asset->image.rgba[offset + 0u]) / 255.0;
-        green += static_cast<double>(asset->image.rgba[offset + 1u]) / 255.0;
-        blue += static_cast<double>(asset->image.rgba[offset + 2u]) / 255.0;
+        red += srgbToLinear(static_cast<float>(asset->image.rgba[offset + 0u]) / 255.0f);
+        green += srgbToLinear(static_cast<float>(asset->image.rgba[offset + 1u]) / 255.0f);
+        blue += srgbToLinear(static_cast<float>(asset->image.rgba[offset + 2u]) / 255.0f);
         ++count;
     }
     if (count == 0u) return fallback;

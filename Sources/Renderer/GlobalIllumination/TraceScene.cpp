@@ -53,6 +53,14 @@ Vec3 normalize(Vec3 value)
     return multiply(value, 1.0f / std::sqrt(length_squared));
 }
 
+float srgbToLinear(float value)
+{
+    value = std::clamp(value, 0.0f, 1.0f);
+    return value <= 0.04045f
+        ? value / 12.92f
+        : std::pow((value + 0.055f) / 1.055f, 2.4f);
+}
+
 bool aabbHit(
     const Scenes::GpuNode& node,
     Vec3 origin,
@@ -150,13 +158,10 @@ Vec3 textureColor(const Scenes::SceneCache& cache, int texture_index, Vec2 uv)
          static_cast<std::size_t>(x)) * 4u;
     if (offset + 2u >= asset->image.rgba.size()) return {1.0f, 1.0f, 1.0f};
 
-    const auto linear = [](std::uint8_t value) {
-        return std::pow(static_cast<float>(value) / 255.0f, 2.2f);
-    };
     return {
-        linear(asset->image.rgba[offset + 0u]),
-        linear(asset->image.rgba[offset + 1u]),
-        linear(asset->image.rgba[offset + 2u]),
+        srgbToLinear(static_cast<float>(asset->image.rgba[offset + 0u]) / 255.0f),
+        srgbToLinear(static_cast<float>(asset->image.rgba[offset + 1u]) / 255.0f),
+        srgbToLinear(static_cast<float>(asset->image.rgba[offset + 2u]) / 255.0f),
     };
 }
 

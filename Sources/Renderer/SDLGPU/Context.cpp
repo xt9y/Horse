@@ -13,9 +13,68 @@
 namespace Renderer::SDLGPU {
 namespace {
 
+inline constexpr const char *ColorTransformShader = R"HLSL(
+Texture2D<float4> Source : register(t0, space0);
+SamplerState SourceSampler : register(s0, space0);
+RWTexture2D<float4> Output : register(u0, space1);
+cbuffer TransformData : register(b0, space2) {
+    float ExposureEV;
+    uint ToneMapping;
+    uint EncodeSrgb;
+    uint Width;
+    uint Height;
+    uint3 Padding;
+};
+
+float3 Aces(float3 color)
+{
+    const float a = 2.51;
+    const float b = 0.03;
+    const float c = 2.43;
+    const float d = 0.59;
+    const float e = 0.14;
+    return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
+}
+
+float3 LinearToSrgb(float3 color)
+{
+    color = max(color, 0.0.xxx);
+    float3 low = color * 12.92;
+    float3 high = 1.055 * pow(color, 1.0 / 2.4) - 0.055;
+    return lerp(low, high, step(0.0031308.xxx, color));
+}
+
+[numthreads(8, 8, 1)]
+void Main(uint3 tid : SV_DispatchThreadID)
+{
+    if (tid.x >= Width || tid.y >= Height) return;
+    float2 uv = (float2(tid.xy) + 0.5.xx) / float2(Width, Height);
+    float4 source = Source.SampleLevel(SourceSampler, uv, 0.0);
+    float3 color = max(source.rgb, 0.0.xxx) * exp2(ExposureEV);
+    if (ToneMapping == 1u) color = Aces(color);
+    else color = saturate(color);
+    if (EncodeSrgb != 0u) color = LinearToSrgb(color);
+    Output[tid.xy] = float4(color, source.a);
+}
+)HLSL";
+
+struct alignas(16) ColorTransformData {
+    float exposure_ev = 0.0f;
+    std::uint32_t tone_mapping = 0u;
+    std::uint32_t encode_srgb = 0u;
+    std::uint32_t width = 1u;
+    std::uint32_t height = 1u;
+    std::uint32_t padding[3]{};
+};
+
+static_assert(sizeof(ColorTransformData) == 32u);
+
 struct State {
     SDL_GPUDevice *device = nullptr;
     SDL_GPUTextureFormat swapchain_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+    SDL_GPUSwapchainComposition composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+    SDL_GPUComputePipeline *color_transform = nullptr;
+    SDL_GPUSampler *color_sampler = nullptr;
     std::uint32_t references = 0u;
     bool shadercross = false;
 };
@@ -49,8 +108,6 @@ bool createDevice()
         return false;
     }
 
-    // Vulkan is Horse's preferred backend. SDL is allowed to choose a fallback
-    // (Metal on macOS, D3D12 on Windows) only when Vulkan cannot be created.
     if (SDL_GPUSupportsShaderFormats(formats, "vulkan"))
         value.device = SDL_CreateGPUDevice(formats, false, "vulkan");
     if (!value.device)
@@ -71,18 +128,23 @@ bool createDevice()
         return false;
     }
 
-    // The renderer stores lighting output in a linear floating point target.
-    // Request an sRGB swapchain so presentation performs the linear -> display
-    // conversion instead of treating linear values as already encoded SDR.
+    value.composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
     if (SDL_WindowSupportsGPUSwapchainComposition(
             value.device,
             window,
-            SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR))
-    {
+            SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR) &&
         SDL_SetGPUSwapchainParameters(
             value.device,
             window,
             SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR,
+            SDL_GPU_PRESENTMODE_VSYNC))
+    {
+        value.composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+    } else {
+        SDL_SetGPUSwapchainParameters(
+            value.device,
+            window,
+            SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
             SDL_GPU_PRESENTMODE_VSYNC);
     }
 
@@ -90,11 +152,14 @@ bool createDevice()
     SDL_SetGPUAllowedFramesInFlight(value.device, 2u);
     std::fprintf(
         stderr,
-        "[SDL_GPU]: %s backend active%s\n",
+        "[SDL_GPU]: %s backend active%s, %s swapchain\n",
         SDL_GetGPUDeviceDriver(value.device),
         std::strcmp(SDL_GetGPUDeviceDriver(value.device), "vulkan") == 0
             ? " (preferred)"
-            : " (Vulkan unavailable; fallback)"
+            : " (Vulkan unavailable; fallback)",
+        value.composition == SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR
+            ? "SDR_LINEAR"
+            : "SDR"
     );
     return true;
 }
@@ -104,12 +169,17 @@ void destroyDevice()
     State& value = state();
     if (value.device) {
         SDL_WaitForGPUIdle(value.device);
+        if (value.color_sampler) SDL_ReleaseGPUSampler(value.device, value.color_sampler);
+        if (value.color_transform) SDL_ReleaseGPUComputePipeline(value.device, value.color_transform);
+        value.color_sampler = nullptr;
+        value.color_transform = nullptr;
         if (SDL_Window *window = Window::Internal::window())
             SDL_ReleaseWindowFromGPUDevice(value.device, window);
         SDL_DestroyGPUDevice(value.device);
     }
     value.device = nullptr;
     value.swapchain_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+    value.composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
     if (value.shadercross) SDL_ShaderCross_Quit();
     value.shadercross = false;
 }
@@ -117,6 +187,19 @@ void destroyDevice()
 SDL_ShaderCross_ShaderStage stageFor(SDL_ShaderCross_ShaderStage stage)
 {
     return stage;
+}
+
+bool ensureColorTransform()
+{
+    State& value = state();
+    if (!value.device) return false;
+    if (!value.color_transform)
+        value.color_transform = compileComputePipeline(
+            ColorTransformShader,
+            "Horse Color Transform",
+            "Main");
+    if (!value.color_sampler) value.color_sampler = createLinearSampler();
+    return value.color_transform && value.color_sampler;
 }
 
 } // namespace
@@ -141,6 +224,7 @@ SDL_GPUDevice *device() { return state().device; }
 SDL_GPUTextureFormat swapchainFormat() { return state().swapchain_format; }
 SDL_GPUTextureFormat colorFormat() { return SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT; }
 const char *driver() { return state().device ? SDL_GetGPUDeviceDriver(state().device) : "none"; }
+bool linearSwapchain() { return state().composition == SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR; }
 
 SDL_GPUShader *compileGraphicsShader(
     const char *source,
@@ -413,6 +497,46 @@ SDL_GPUSampler *createNearestSampler()
     info.address_mode_v = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     return SDL_CreateGPUSampler(state().device, &info);
+}
+
+bool transformColor(
+    SDL_GPUCommandBuffer *command,
+    SDL_GPUTexture *source,
+    SDL_GPUTexture *destination,
+    std::uint32_t width,
+    std::uint32_t height,
+    float exposure_ev,
+    std::uint32_t tone_mapping,
+    bool encode_srgb)
+{
+    if (!command || !source || !destination || source == destination || width == 0u || height == 0u)
+        return false;
+    if (!ensureColorTransform()) return false;
+
+    const ColorTransformData data{
+        exposure_ev,
+        tone_mapping,
+        encode_srgb ? 1u : 0u,
+        width,
+        height,
+        {0u, 0u, 0u},
+    };
+    SDL_PushGPUComputeUniformData(command, 0u, &data, sizeof data);
+
+    SDL_GPUStorageTextureReadWriteBinding writable{};
+    writable.texture = destination;
+    SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(command, &writable, 1u, nullptr, 0u);
+    if (!pass) return false;
+    SDL_BindGPUComputePipeline(pass, state().color_transform);
+    const SDL_GPUTextureSamplerBinding sampled{source, state().color_sampler};
+    SDL_BindGPUComputeSamplers(pass, 0u, &sampled, 1u);
+    SDL_DispatchGPUCompute(
+        pass,
+        (static_cast<Uint32>(width) + 7u) / 8u,
+        (static_cast<Uint32>(height) + 7u) / 8u,
+        1u);
+    SDL_EndGPUComputePass(pass);
+    return true;
 }
 
 bool blitToSwapchain(
