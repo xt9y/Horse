@@ -140,6 +140,10 @@ void build(C_Build *b)
     c_sources(async_gltf_tests, "Tests/AsyncGltfLoading.cpp");
     configureTest(async_gltf_tests, library);
 
+    C_Target *async_model_cache_tests = c_test(b, "HorseAsyncModelCacheTests");
+    c_sources(async_model_cache_tests, "Tests/AsyncModelCache.cpp");
+    configureTest(async_model_cache_tests, library);
+
     C_Target *automatic_resource_pump_tests = c_test(b, "HorseAutomaticResourcePumpTests");
     c_sources(automatic_resource_pump_tests, "Tests/AutomaticResourcePump.cpp");
     configureTest(automatic_resource_pump_tests, library);
