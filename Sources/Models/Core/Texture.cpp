@@ -8,6 +8,7 @@
 #include <deque>
 #include <filesystem>
 #include <limits>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -83,7 +84,7 @@ bool applyOpacity(Images::Image *color, const Images::Image& opacity, std::strin
                 static_cast<int>(
                     (static_cast<long long>(x) * static_cast<long long>(opacity.width)) /
                     static_cast<long long>(color->width)
-            ),
+                ),
                 0,
                 opacity.width - 1
             );
@@ -108,6 +109,14 @@ bool applyOpacity(Images::Image *color, const Images::Image& opacity, std::strin
 
     color->meaningful_alpha = true;
     return true;
+}
+
+TextureHandle deferredAlphaSource(const std::string& key)
+{
+    static constexpr std::string_view marker = "\n@gltf-alpha:";
+    const std::size_t offset = key.rfind(marker);
+    if (offset == std::string::npos) return INVALID_TEXTURE;
+    return Internal::findTexture(key.substr(0u, offset));
 }
 
 } // namespace
@@ -271,6 +280,8 @@ TextureHandle registerTextureImage(
     }
 
     if (Internal::textureImportActive()) {
+        if (const TextureHandle source = deferredAlphaSource(cache_key); source != INVALID_TEXTURE)
+            return source;
         const TextureHandle deferred = Internal::registerDeferredDerivedKey(cache_key);
         if (deferred != INVALID_TEXTURE) return deferred;
     }
