@@ -1,10 +1,12 @@
 #include "Core/Jobs/Jobs.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -13,7 +15,14 @@ namespace {
 
 struct Job
 {
+    Group group = DefaultGroup;
     Work work;
+    Completion completion;
+};
+
+struct Completed
+{
+    Group group = DefaultGroup;
     Completion completion;
 };
 
@@ -23,8 +32,9 @@ struct Runtime
     std::condition_variable work_ready;
     std::condition_variable idle;
     std::deque<Job> work;
-    std::deque<Completion> completions;
+    std::deque<Completed> completions;
     std::vector<std::jthread> workers;
+    std::unordered_map<Group, std::size_t> running_by_group;
     std::size_t running = 0u;
     std::size_t capacity = 0u;
     bool started = false;
@@ -65,6 +75,7 @@ struct Runtime
                         job = std::move(work.front());
                         work.pop_front();
                         ++running;
+                        ++running_by_group[job.group];
                     }
 
                     try {
@@ -74,9 +85,16 @@ struct Runtime
 
                     {
                         std::lock_guard lock(mutex);
-                        if (job.completion) completions.push_back(std::move(job.completion));
+                        if (job.completion)
+                            completions.push_back({job.group, std::move(job.completion)});
                         if (running != 0u) --running;
-                        if (work.empty() && running == 0u) idle.notify_all();
+
+                        const auto group = running_by_group.find(job.group);
+                        if (group != running_by_group.end()) {
+                            if (group->second != 0u) --group->second;
+                            if (group->second == 0u) running_by_group.erase(group);
+                        }
+                        idle.notify_all();
                     }
                 }
             });
@@ -92,6 +110,7 @@ struct Runtime
             if (!started) {
                 work.clear();
                 completions.clear();
+                running_by_group.clear();
                 return;
             }
             stopping = true;
@@ -105,6 +124,7 @@ struct Runtime
         {
             std::lock_guard lock(mutex);
             completions.clear();
+            running_by_group.clear();
             running = 0u;
             capacity = 0u;
             stopping = false;
@@ -120,9 +140,38 @@ Runtime& runtime()
     return value;
 }
 
+bool queuedFor(const Runtime& state, Group group)
+{
+    return std::any_of(
+        state.work.begin(),
+        state.work.end(),
+        [group](const Job& job) { return job.group == group; }
+    );
+}
+
+std::size_t runningFor(const Runtime& state, Group group)
+{
+    const auto found = state.running_by_group.find(group);
+    return found == state.running_by_group.end() ? 0u : found->second;
+}
+
+std::atomic<Group>& nextGroup()
+{
+    static std::atomic<Group> value {1u};
+    return value;
+}
+
 } // namespace
 
-bool trySubmit(Work work, Completion completion)
+Group createGroup()
+{
+    Group group = nextGroup().fetch_add(1u, std::memory_order_relaxed);
+    if (group == DefaultGroup)
+        group = nextGroup().fetch_add(1u, std::memory_order_relaxed);
+    return group;
+}
+
+bool trySubmit(Group group, Work work, Completion completion)
 {
     if (!work) return false;
 
@@ -138,16 +187,46 @@ bool trySubmit(Work work, Completion completion)
         remaining -= state.running;
         if (state.completions.size() >= remaining) return false;
 
-        state.work.push_back({std::move(work), std::move(completion)});
+        state.work.push_back({group, std::move(work), std::move(completion)});
     }
     state.work_ready.notify_one();
     return true;
 }
 
+bool trySubmit(Work work, Completion completion)
+{
+    return trySubmit(DefaultGroup, std::move(work), std::move(completion));
+}
+
+std::size_t pump(Group group)
+{
+    Runtime& state = runtime();
+    std::deque<Completed> selected;
+    {
+        std::lock_guard lock(state.mutex);
+        for (auto iterator = state.completions.begin(); iterator != state.completions.end();) {
+            if (iterator->group == group) {
+                selected.push_back(std::move(*iterator));
+                iterator = state.completions.erase(iterator);
+            } else {
+                ++iterator;
+            }
+        }
+    }
+
+    const std::size_t count = selected.size();
+    while (!selected.empty()) {
+        Completion completion = std::move(selected.front().completion);
+        selected.pop_front();
+        if (completion) completion();
+    }
+    return count;
+}
+
 std::size_t pump()
 {
     Runtime& state = runtime();
-    std::deque<Completion> completions;
+    std::deque<Completed> completions;
     {
         std::lock_guard lock(state.mutex);
         completions.swap(state.completions);
@@ -155,11 +234,21 @@ std::size_t pump()
 
     const std::size_t count = completions.size();
     while (!completions.empty()) {
-        Completion completion = std::move(completions.front());
+        Completion completion = std::move(completions.front().completion);
         completions.pop_front();
         if (completion) completion();
     }
     return count;
+}
+
+void cancelPending(Group group)
+{
+    Runtime& state = runtime();
+    std::lock_guard lock(state.mutex);
+    std::erase_if(state.work, [group](const Job& job) {
+        return job.group == group;
+    });
+    state.idle.notify_all();
 }
 
 void cancelPending()
@@ -167,7 +256,17 @@ void cancelPending()
     Runtime& state = runtime();
     std::lock_guard lock(state.mutex);
     state.work.clear();
-    if (state.running == 0u) state.idle.notify_all();
+    state.idle.notify_all();
+}
+
+void wait(Group group)
+{
+    Runtime& state = runtime();
+    std::unique_lock lock(state.mutex);
+    if (!state.started) return;
+    state.idle.wait(lock, [&] {
+        return !queuedFor(state, group) && runningFor(state, group) == 0u;
+    });
 }
 
 void wait()
