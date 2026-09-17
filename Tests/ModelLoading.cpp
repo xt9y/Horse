@@ -269,10 +269,10 @@ void testGltfDependenciesRecordExternalBuffers()
     std::filesystem::remove_all(directory, ignored);
 }
 
-void testGltfModelReturnsWithPendingTextureAndFallback()
+void testGltfModelReturnsWithReadyTexture()
 {
     Models::clearCache();
-    const std::filesystem::path directory = temporaryDirectory("horse-model-loading-gltf-stream");
+    const std::filesystem::path directory = temporaryDirectory("horse-model-loading-gltf-sync");
     setCacheRoot(directory / "cache");
     const std::filesystem::path gltf = writeTriangleGltf(directory, true);
 
@@ -287,13 +287,13 @@ void testGltfModelReturnsWithPendingTextureAndFallback()
     assert(material != nullptr);
     const Models::TextureHandle texture = material->base_color_info.texture;
     assert(texture != Models::INVALID_TEXTURE);
-    assert(!Models::Internal::textureStorageReady(texture));
-    assert(Models::Internal::textureState(texture) != Models::Internal::TextureState::Ready);
+    assert(Models::Internal::textureStorageReady(texture));
+    assert(Models::Internal::textureState(texture) == Models::Internal::TextureState::Ready);
 
-    const Models::TextureAsset *fallback = Models::texture(texture);
-    assert(fallback != nullptr);
-    assert(fallback->image.width == 1 && fallback->image.height == 1);
-    assert(fallback->image.rgba == std::vector<std::uint8_t>({255u, 255u, 255u, 255u}));
+    const Models::TextureAsset *asset = Models::texture(texture);
+    assert(asset != nullptr);
+    assert(asset->image.width == 1 && asset->image.height == 1);
+    assert(asset->image.rgba == std::vector<std::uint8_t>({255u, 255u, 255u, 255u}));
 
     Models::clearCache();
     std::error_code ignored;
@@ -497,7 +497,7 @@ int main()
     testModelImportScopeDoesNotDecodeTextureMemorySynchronously();
     testSceneResourceSyncPumpsCompletedTextures();
     testGltfDependenciesRecordExternalBuffers();
-    testGltfModelReturnsWithPendingTextureAndFallback();
+    testGltfModelReturnsWithReadyTexture();
     testCompiledCacheRoundTripAndTextureGraph();
     testCompiledCacheInvalidatesDependenciesAndCorruption();
     testWarmModelLoadBypassesSourceImporter();
