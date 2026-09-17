@@ -38,7 +38,7 @@ struct TextureSourceDescriptor
     TextureHandle source = INVALID_TEXTURE;
     TextureHandle secondary = INVALID_TEXTURE;
     int channel = 0;
-    AlphaMode alpha_mode;
+    AlphaMode alpha_mode = static_cast<AlphaMode>(0);
     float factor = 1.0f;
     float cutoff = 0.5f;
 };
@@ -48,6 +48,7 @@ TextureHandle registerDeferredMemory(const std::string& key, std::vector<std::ui
 TextureHandle registerDeferredChannel(TextureHandle source, int channel, const std::string& label);
 TextureHandle registerDeferredAlpha(TextureHandle source, AlphaMode mode, float factor, float cutoff);
 TextureHandle registerDeferredOpacity(TextureHandle color, TextureHandle opacity);
+TextureHandle registerDeferredDescriptor(TextureSourceDescriptor descriptor);
 
 TextureState textureState(TextureHandle handle);
 bool textureDescriptor(TextureHandle handle, TextureSourceDescriptor *descriptor);
