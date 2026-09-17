@@ -18,11 +18,19 @@ namespace Models {
 using ModelHandle = std::uint32_t;
 using MeshHandle = std::uint32_t;
 using MaterialHandle = std::uint32_t;
+using LoadHandle = std::uint32_t;
 
 constexpr ModelHandle INVALID_MODEL = UINT32_MAX;
 constexpr MeshHandle INVALID_MESH = UINT32_MAX;
 constexpr MaterialHandle INVALID_MATERIAL = UINT32_MAX;
+constexpr LoadHandle INVALID_LOAD = UINT32_MAX;
 constexpr std::uint32_t INVALID_INDEX = UINT32_MAX;
+
+enum class LoadState : std::uint8_t {
+    Pending,
+    Ready,
+    Failed,
+};
 
 enum class PrimitiveMode : std::uint8_t {
     Points = 0,
@@ -228,6 +236,10 @@ struct InstanceData {
 };
 
 ModelHandle load(const std::string& path, std::string *error = nullptr);
+LoadHandle loadAsync(const std::string& path);
+LoadState loadState(LoadHandle handle);
+ModelHandle loadResult(LoadHandle handle, std::string *error = nullptr);
+
 const ModelPart *part(ModelHandle model, std::size_t index);
 const MeshData *mesh(MeshHandle handle);
 const MaterialData *material(MaterialHandle handle);
