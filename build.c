@@ -86,5 +86,13 @@ void build(C_Build *b)
     configurePlatform(model_loading_tests);
     c_link_target(model_loading_tests, library);
 
+    C_Target *job_shutdown_tests = c_test(b, "HorseJobShutdownTests");
+    c_sources(job_shutdown_tests, "Tests/JobsShutdown.cpp");
+    c_flag(job_shutdown_tests, "-std=c++20");
+    c_warnings_strict(job_shutdown_tests);
+    c_include(job_shutdown_tests, "Sources");
+    configurePlatform(job_shutdown_tests);
+    c_link_target(job_shutdown_tests, library);
+
     c_default_target(b, library);
 }
