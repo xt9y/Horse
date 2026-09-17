@@ -60,15 +60,14 @@ TextureState stateFor(TextureHandle handle)
 {
     const auto found = runtime().records.find(handle);
     if (found != runtime().records.end()) return found->second.state;
-    const TextureAsset *asset = texture(handle);
-    return asset && validImage(asset->image) ? TextureState::Ready : TextureState::Registered;
+    return textureStorageReady(handle) ? TextureState::Ready : TextureState::Registered;
 }
 
 bool dependencyReady(TextureHandle handle)
 {
-    if (handle == INVALID_TEXTURE || stateFor(handle) != TextureState::Ready) return false;
-    const TextureAsset *asset = texture(handle);
-    return asset && validImage(asset->image);
+    return handle != INVALID_TEXTURE &&
+        stateFor(handle) == TextureState::Ready &&
+        textureStorageReady(handle);
 }
 
 bool dependencyFailed(TextureHandle handle)
@@ -258,6 +257,7 @@ bool schedule(TextureHandle handle)
 TextureHandle registerDescriptor(TextureSourceDescriptor descriptor)
 {
     if (descriptor.key.empty()) return INVALID_TEXTURE;
+    const TextureHandle existing = findTexture(descriptor.key);
     const TextureHandle handle = reserveTexture(descriptor.key);
     if (handle == INVALID_TEXTURE) return INVALID_TEXTURE;
 
@@ -267,8 +267,9 @@ TextureHandle registerDescriptor(TextureSourceDescriptor descriptor)
     Record record;
     record.descriptor = std::move(descriptor);
     record.generation = state.generation;
-    const TextureAsset *asset = texture(handle);
-    record.state = asset && validImage(asset->image) ? TextureState::Ready : TextureState::Registered;
+    record.state = existing != INVALID_TEXTURE && textureStorageReady(handle)
+        ? TextureState::Ready
+        : TextureState::Registered;
     state.records.emplace(handle, std::move(record));
     schedule(handle);
     return handle;
