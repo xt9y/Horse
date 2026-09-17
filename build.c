@@ -124,5 +124,9 @@ void build(C_Build *b)
     c_sources(raster_topology_tests, "Tests/RasterTopologyRevision.cpp");
     configureTest(raster_topology_tests, library);
 
+    C_Target *staged_model_tests = c_test(b, "HorseStagedModelTests");
+    c_sources(staged_model_tests, "Tests/StagedModel.cpp");
+    configureTest(staged_model_tests, library);
+
     c_default_target(b, library);
 }
