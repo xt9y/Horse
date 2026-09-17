@@ -3,7 +3,6 @@
 #include "Camera/Camera.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/GaussianSplat.hpp"
-#include "Models/Internal/ResourcePump.hpp"
 #include "Renderer/Hierarchy.hpp"
 #include "Renderer/Internal/GeometryComponents.hpp"
 #include "Renderer/Lod.hpp"
@@ -108,7 +107,6 @@ void appendItem(
 
 void collectItems(const Ecs::World& world, bool gaussian, std::vector<RenderItem>& out)
 {
-    Models::Internal::pumpResources();
     out.clear();
     const CameraState camera = cameraState(world);
 
