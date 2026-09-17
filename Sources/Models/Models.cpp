@@ -4,6 +4,8 @@
 #include "Models/Core/Texture.hpp"
 #include "Models/Formats/Registry.hpp"
 #include "Models/Internal/Registry.hpp"
+#include "Models/Internal/ResourceRevision.hpp"
+#include "Models/Internal/TextureStreaming.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -47,7 +49,7 @@ std::unordered_map<std::string, ModelHandle>& cache() { static std::unordered_ma
 std::uint64_t& resourceRevisionStorage() { static std::uint64_t value = 1u; return value; }
 std::uint64_t& meshRevisionStorage() { static std::uint64_t value = 1u; return value; }
 
-void touchResources()
+void bumpResourceRevision()
 {
     std::uint64_t& value = resourceRevisionStorage();
     ++value;
@@ -146,6 +148,11 @@ const Model *modelFor(ModelHandle handle)
 
 } // namespace
 
+void Internal::touchResources()
+{
+    bumpResourceRevision();
+}
+
 ModelHandle load(const std::string& path, std::string *error)
 {
     if (error) error->clear();
@@ -179,7 +186,7 @@ MeshHandle Internal::registerMesh(MeshData mesh)
     meshes().push_back(std::move(mesh));
     const std::uint64_t revision = nextMeshRevision();
     meshRevisions().push_back({revision, revision});
-    touchResources();
+    Internal::touchResources();
     return handle;
 }
 
@@ -188,7 +195,7 @@ MaterialHandle Internal::registerMaterial(MaterialData material)
     if (materials().size() >= static_cast<std::size_t>(INVALID_MATERIAL)) return INVALID_MATERIAL;
     const MaterialHandle handle = static_cast<MaterialHandle>(materials().size());
     materials().push_back(std::move(material));
-    touchResources();
+    Internal::touchResources();
     return handle;
 }
 
@@ -215,7 +222,7 @@ bool Internal::updateMesh(MeshHandle handle, const MeshData& replacement)
     const std::uint64_t next_revision = nextMeshRevision();
     revision.geometry = next_revision;
     if (topology_changed) revision.topology = next_revision;
-    touchResources();
+    Internal::touchResources();
     return true;
 }
 
@@ -238,7 +245,7 @@ bool Internal::updateMaterial(MaterialHandle handle, const MaterialData& replace
 {
     if (handle >= materials().size()) return false;
     materials()[handle] = replacement;
-    touchResources();
+    Internal::touchResources();
     return true;
 }
 
@@ -438,6 +445,7 @@ std::uint64_t resourceRevision()
 
 void clearCache()
 {
+    Internal::clearTextureStreaming();
     cache().clear();
     models().clear();
     meshes().clear();
@@ -445,7 +453,7 @@ void clearCache()
     materials().clear();
     clearTextureCache();
     Animation::clearAssets();
-    touchResources();
+    Internal::touchResources();
 }
 
 } // namespace Models
