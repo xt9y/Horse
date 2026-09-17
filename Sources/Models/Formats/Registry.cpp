@@ -1,6 +1,7 @@
 #include "Models/Formats/Registry.hpp"
 
 #include "Models/Internal/ModelCache.hpp"
+#include "Models/Internal/TextureStreaming.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -44,6 +45,8 @@ bool cacheEligible(const std::string& path)
 bool cachedLoad(const std::string& path, Document *output, std::string *error)
 {
     if (!output) return false;
+    Internal::pumpTextureResources();
+
     const std::string extension = normalize(std::filesystem::path(path).extension().string());
     const auto found = loaders().find(extension);
     if (found == loaders().end() || !found->second) return false;
