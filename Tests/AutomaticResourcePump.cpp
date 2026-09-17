@@ -4,7 +4,7 @@
 #include "Models/Internal/TextureStorage.hpp"
 #include "Models/Internal/TextureStreaming.hpp"
 #include "Models/Models.hpp"
-#include "Renderer/Scenes/SceneCache.hpp"
+#include "Renderer/Scenes/Scene.hpp"
 
 #include <array>
 #include <cassert>
@@ -41,15 +41,12 @@ bool automaticModelLoader(
     return true;
 }
 
-void syncUntil(
-    Renderer::Scenes::SceneCache& cache,
+void pumpFrame(
     const Ecs::World& world,
-    const std::vector<Renderer::Scenes::Scene::RenderItem>& items,
+    std::vector<Renderer::Scenes::Scene::RenderItem>& items,
     const std::chrono::steady_clock::time_point deadline)
 {
-    std::string error;
-    assert(cache.syncResources(world, items, 31u, &error));
-    assert(error.empty());
+    Renderer::Scenes::Scene::collectRenderItems(world, items);
     if (std::chrono::steady_clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 }
@@ -75,12 +72,11 @@ int main()
     assert(!Models::Internal::textureStorageReady(texture));
 
     Ecs::World world;
-    Renderer::Scenes::SceneCache cache;
-    const std::vector<Renderer::Scenes::Scene::RenderItem> items;
+    std::vector<Renderer::Scenes::Scene::RenderItem> items;
     const auto texture_deadline = Clock::now() + std::chrono::seconds(2);
     while (!Models::Internal::textureStorageReady(texture) &&
            Clock::now() < texture_deadline)
-        syncUntil(cache, world, items, texture_deadline);
+        pumpFrame(world, items, texture_deadline);
 
     assert(Models::Internal::textureStorageReady(texture));
     assert(Models::Internal::textureState(texture) == Models::Internal::TextureState::Ready);
@@ -88,7 +84,6 @@ int main()
     Models::clearCache();
     assert(Models::Formats::registerLoader(".autopump", automaticModelLoader));
 
-    Renderer::Scenes::SceneCache model_cache;
     const std::uint64_t revision_before = Models::resourceRevision();
     const Models::LoadHandle request = Models::loadAsync("automatic-model.autopump");
     assert(request != Models::INVALID_LOAD);
@@ -96,7 +91,7 @@ int main()
     const auto model_deadline = Clock::now() + std::chrono::seconds(2);
     while (Models::resourceRevision() == revision_before &&
            Clock::now() < model_deadline)
-        syncUntil(model_cache, world, items, model_deadline);
+        pumpFrame(world, items, model_deadline);
 
     assert(Models::resourceRevision() > revision_before);
 
