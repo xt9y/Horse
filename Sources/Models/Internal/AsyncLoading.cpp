@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -101,7 +102,10 @@ void complete(
     if (state.in_flight != 0u) --state.in_flight;
 
     if (!result || !result->ok) {
-        fail(*request, result ? result->error : std::string("model load produced no result"));
+        const std::string reason = result && !result->error.empty()
+            ? result->error
+            : std::string("asynchronous model staging failed");
+        fail(*request, reason);
         return;
     }
 
@@ -145,7 +149,15 @@ bool schedule(LoadHandle handle)
     const bool queued = Core::Jobs::trySubmit(
         modelJobGroup(),
         [path, result] {
-            result->ok = Formats::stage(path, &result->staged, &result->error);
+            try {
+                result->ok = Formats::stage(path, &result->staged, &result->error);
+            } catch (const std::exception& exception) {
+                result->ok = false;
+                result->error = exception.what();
+            } catch (...) {
+                result->ok = false;
+                result->error = "asynchronous model loader threw an unknown exception";
+            }
         },
         [handle, generation, result] {
             complete(handle, generation, result);
