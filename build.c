@@ -43,6 +43,9 @@ static void configureTest(C_Target *target, C_Target *library)
     c_include(target, ".");
     c_include(target, "Sources");
     configurePlatform(target);
+#ifdef __APPLE__
+    c_link_flag(target, "-Wl,-rpath,@loader_path");
+#endif
     c_link_target(target, library);
 }
 
