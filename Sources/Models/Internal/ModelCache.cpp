@@ -5,6 +5,7 @@
 #include "Models/Internal/ModelCacheCodec.hpp"
 #include "Models/Internal/TextureStreaming.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
