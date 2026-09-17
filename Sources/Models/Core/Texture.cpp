@@ -1,6 +1,7 @@
 #include "Models/Core/Texture.hpp"
 
 #include "Models/Internal/ResourceRevision.hpp"
+#include "Models/Internal/StagedModel.hpp"
 #include "Models/Internal/TextureStorage.hpp"
 #include "Models/Internal/TextureStreaming.hpp"
 
@@ -133,6 +134,7 @@ std::string Internal::normalizeTexturePath(const std::string& path)
 
 TextureHandle Internal::findTexture(const std::string& key)
 {
+    if (Internal::stagingActive()) return Internal::findStagedTexture(key);
     const auto found = cache().find(key);
     return found == cache().end() ? INVALID_TEXTURE : found->second;
 }
@@ -303,6 +305,7 @@ TextureHandle registerTextureImage(
 
 const TextureAsset *texture(TextureHandle handle)
 {
+    if (Internal::isStagedTextureHandle(handle)) return Internal::stagedTexture(handle);
     return handle < assets().size() ? &assets()[handle] : nullptr;
 }
 
