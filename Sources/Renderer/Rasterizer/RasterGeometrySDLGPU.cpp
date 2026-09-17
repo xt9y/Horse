@@ -201,6 +201,8 @@ bool appendInfluences(
     std::string *error)
 {
     if (!offset || !count || vertex_index >= mesh.vertices.size())
+        return fail(error, "raster geometry references invalid source vertex");
+    if (influences.size() > UINT32_MAX)
         return fail(error, "raster influence buffer exceeds backend index range");
 
     *offset = static_cast<std::uint32_t>(influences.size());
