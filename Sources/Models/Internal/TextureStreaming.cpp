@@ -49,6 +49,12 @@ Runtime& runtime()
     return value;
 }
 
+Core::Jobs::Group textureJobGroup()
+{
+    static const Core::Jobs::Group value = Core::Jobs::createGroup();
+    return value;
+}
+
 bool validImage(const Images::Image& image)
 {
     if (image.width <= 0 || image.height <= 0) return false;
@@ -189,6 +195,7 @@ bool schedule(TextureHandle handle)
     const auto result = std::make_shared<DecodeResult>();
 
     const bool queued = Core::Jobs::trySubmit(
+        textureJobGroup(),
         [descriptor, source, secondary, result] {
             switch (descriptor.kind) {
                 case TextureSourceKind::File:
@@ -464,7 +471,7 @@ bool textureDescriptor(TextureHandle handle, TextureSourceDescriptor *descriptor
 
 std::size_t pumpTextureResources()
 {
-    const std::size_t completed = Core::Jobs::pump();
+    const std::size_t completed = Core::Jobs::pump(textureJobGroup());
     for (auto& [handle, record] : runtime().records) {
         (void)record;
         schedule(handle);
@@ -477,8 +484,9 @@ void clearTextureStreaming()
     Runtime& state = runtime();
     ++state.generation;
     if (state.generation == 0u) state.generation = 1u;
-    Core::Jobs::wait();
-    Core::Jobs::pump();
+    Core::Jobs::cancelPending(textureJobGroup());
+    Core::Jobs::wait(textureJobGroup());
+    Core::Jobs::pump(textureJobGroup());
     state.records.clear();
     state.in_flight = 0u;
 }
