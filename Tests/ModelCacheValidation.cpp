@@ -209,17 +209,16 @@ void testForeignCachePayloadIsRejected()
     std::filesystem::remove_all(directory, ignored);
 }
 
-struct RunModelCacheValidationTests
-{
-    RunModelCacheValidationTests()
-    {
-        testSourceMutationInvalidatesCache();
-        testExternalTextureMutationInvalidatesCache();
-        testSchemaMutationInvalidatesCache();
-        testForeignCachePayloadIsRejected();
-    }
-};
-
-const RunModelCacheValidationTests run_model_cache_validation_tests;
-
 } // namespace
+
+int main()
+{
+    testSourceMutationInvalidatesCache();
+    testExternalTextureMutationInvalidatesCache();
+    testSchemaMutationInvalidatesCache();
+    testForeignCachePayloadIsRejected();
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+    Core::Jobs::shutdown();
+    return 0;
+}
