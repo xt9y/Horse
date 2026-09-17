@@ -38,6 +38,16 @@ static void configureLibrary(C_Target *target)
 #endif
 }
 
+static void configureTest(C_Target *target, C_Target *library)
+{
+    c_flag(target, "-std=c++20");
+    c_warnings_strict(target);
+    c_include(target, ".");
+    c_include(target, "Sources");
+    configurePlatform(target);
+    c_link_target(target, library);
+}
+
 void build(C_Build *b)
 {
     C_Dependency *imgui = c_git(
@@ -77,22 +87,19 @@ void build(C_Build *b)
 
     C_Target *model_loading_tests = c_test(b, "HorseModelLoadingTests");
     c_sources(model_loading_tests, "Tests/ModelLoading.cpp");
-    c_sources(model_loading_tests, "Tests/ModelCacheValidation.cpp");
-    c_sources(model_loading_tests, "Tests/TextureStreamingBackpressure.cpp");
-    c_flag(model_loading_tests, "-std=c++20");
-    c_warnings_strict(model_loading_tests);
-    c_include(model_loading_tests, ".");
-    c_include(model_loading_tests, "Sources");
-    configurePlatform(model_loading_tests);
-    c_link_target(model_loading_tests, library);
+    configureTest(model_loading_tests, library);
+
+    C_Target *model_cache_tests = c_test(b, "HorseModelCacheValidationTests");
+    c_sources(model_cache_tests, "Tests/ModelCacheValidation.cpp");
+    configureTest(model_cache_tests, library);
+
+    C_Target *streaming_tests = c_test(b, "HorseTextureStreamingBackpressureTests");
+    c_sources(streaming_tests, "Tests/TextureStreamingBackpressure.cpp");
+    configureTest(streaming_tests, library);
 
     C_Target *job_shutdown_tests = c_test(b, "HorseJobShutdownTests");
     c_sources(job_shutdown_tests, "Tests/JobsShutdown.cpp");
-    c_flag(job_shutdown_tests, "-std=c++20");
-    c_warnings_strict(job_shutdown_tests);
-    c_include(job_shutdown_tests, "Sources");
-    configurePlatform(job_shutdown_tests);
-    c_link_target(job_shutdown_tests, library);
+    configureTest(job_shutdown_tests, library);
 
     c_default_target(b, library);
 }
