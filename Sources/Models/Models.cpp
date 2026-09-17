@@ -167,7 +167,10 @@ ModelHandle load(const std::string& path, std::string *error)
     }
 
     Formats::Document document;
-    if (!loader(key, &document, error)) return INVALID_MODEL;
+    {
+        Internal::TextureImportScope texture_import;
+        if (!loader(key, &document, error)) return INVALID_MODEL;
+    }
     const bool empty_asset = document.parts.empty() && document.nodes.empty() && document.scenes.empty() &&
         document.cameras.empty() && document.lights.empty() && document.skins.empty() &&
         document.model_animations.empty() && document.instances.empty() &&
