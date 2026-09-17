@@ -83,7 +83,7 @@ bool applyOpacity(Images::Image *color, const Images::Image& opacity, std::strin
                 static_cast<int>(
                     (static_cast<long long>(x) * static_cast<long long>(opacity.width)) /
                     static_cast<long long>(color->width)
-                ),
+            ),
                 0,
                 opacity.width - 1
             );
@@ -138,6 +138,11 @@ TextureHandle Internal::reserveTexture(const std::string& key)
     readiness().push_back(0u);
     cache().emplace(key, handle);
     return handle;
+}
+
+std::size_t Internal::textureStorageCount()
+{
+    return assets().size();
 }
 
 bool Internal::textureStorageReady(TextureHandle handle)
