@@ -19,6 +19,7 @@ namespace Models::Internal {
 namespace {
 
 thread_local std::size_t import_depth = 0u;
+constexpr std::size_t MaximumInFlightTextureJobs = 8u;
 
 struct DecodeResult
 {
@@ -39,6 +40,7 @@ struct Runtime
 {
     std::unordered_map<TextureHandle, Record> records;
     std::uint64_t generation = 1u;
+    std::size_t in_flight = 0u;
 };
 
 Runtime& runtime()
@@ -143,6 +145,7 @@ void complete(TextureHandle handle, std::uint64_t generation, const std::shared_
     const auto found = state.records.find(handle);
     if (found == state.records.end() || found->second.generation != generation) return;
 
+    if (state.in_flight != 0u) --state.in_flight;
     Record& record = found->second;
     if (result->ok && publishTexture(handle, std::move(result->image))) {
         record.state = TextureState::Ready;
@@ -179,6 +182,8 @@ bool schedule(TextureHandle handle)
         source = texture(descriptor.source);
         secondary = texture(descriptor.secondary);
     }
+
+    if (state.in_flight >= MaximumInFlightTextureJobs) return false;
 
     const std::uint64_t generation = record.generation;
     const auto result = std::make_shared<DecodeResult>();
@@ -250,6 +255,7 @@ bool schedule(TextureHandle handle)
     );
 
     if (!queued) return false;
+    ++state.in_flight;
     record.state = TextureState::Queued;
     return true;
 }
@@ -474,6 +480,7 @@ void clearTextureStreaming()
     Core::Jobs::wait();
     Core::Jobs::pump();
     state.records.clear();
+    state.in_flight = 0u;
 }
 
 } // namespace Models::Internal
