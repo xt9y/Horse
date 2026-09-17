@@ -8,13 +8,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 
 namespace Models::Internal {
 namespace {
+
+thread_local std::size_t import_depth = 0u;
 
 struct DecodeResult
 {
@@ -45,9 +49,11 @@ Runtime& runtime()
 
 bool validImage(const Images::Image& image)
 {
-    return image.width > 0 && image.height > 0 &&
-        image.rgba.size() == static_cast<std::size_t>(image.width) *
-            static_cast<std::size_t>(image.height) * 4u;
+    if (image.width <= 0 || image.height <= 0) return false;
+    const std::size_t width = static_cast<std::size_t>(image.width);
+    const std::size_t height = static_cast<std::size_t>(image.height);
+    return width <= SIZE_MAX / height && width * height <= SIZE_MAX / 4u &&
+        image.rgba.size() == width * height * 4u;
 }
 
 TextureState stateFor(TextureHandle handle)
@@ -115,6 +121,22 @@ bool applyOpacity(Images::Image *color, const Images::Image& opacity, std::strin
     return true;
 }
 
+void failRecord(Record& record, const std::string& error)
+{
+    if (record.state == TextureState::Failed) return;
+    record.state = TextureState::Failed;
+    touchResources();
+    if (record.diagnostic_emitted) return;
+    record.diagnostic_emitted = true;
+    std::fprintf(
+        stderr,
+        "[Models] texture streaming failed: %s%s%s\n",
+        record.descriptor.key.c_str(),
+        error.empty() ? "" : ": ",
+        error.c_str()
+    );
+}
+
 void complete(TextureHandle handle, std::uint64_t generation, const std::shared_ptr<DecodeResult>& result)
 {
     Runtime& state = runtime();
@@ -127,19 +149,7 @@ void complete(TextureHandle handle, std::uint64_t generation, const std::shared_
         record.state = TextureState::Ready;
         return;
     }
-
-    record.state = TextureState::Failed;
-    touchResources();
-    if (!record.diagnostic_emitted) {
-        record.diagnostic_emitted = true;
-        std::fprintf(
-            stderr,
-            "[Models] texture streaming failed: %s%s%s\n",
-            record.descriptor.key.c_str(),
-            result->error.empty() ? "" : ": ",
-            result->error.c_str()
-        );
-    }
+    failRecord(record, result->error);
 }
 
 bool schedule(TextureHandle handle)
@@ -156,16 +166,14 @@ bool schedule(TextureHandle handle)
 
     if (descriptor.kind == TextureSourceKind::Channel || descriptor.kind == TextureSourceKind::Alpha) {
         if (dependencyFailed(descriptor.source)) {
-            record.state = TextureState::Failed;
-            touchResources();
+            failRecord(record, "source texture failed");
             return true;
         }
         if (!dependencyReady(descriptor.source)) return false;
         source = texture(descriptor.source);
     } else if (descriptor.kind == TextureSourceKind::Opacity) {
         if (dependencyFailed(descriptor.source) || dependencyFailed(descriptor.secondary)) {
-            record.state = TextureState::Failed;
-            touchResources();
+            failRecord(record, "source texture failed");
             return true;
         }
         if (!dependencyReady(descriptor.source) || !dependencyReady(descriptor.secondary)) return false;
@@ -272,7 +280,33 @@ std::string pathFor(TextureHandle handle)
     return asset ? asset->path : std::string{};
 }
 
+bool parseFloat(std::string_view text, float *value)
+{
+    if (!value || text.empty()) return false;
+    std::string copy(text);
+    char *end = nullptr;
+    const float parsed = std::strtof(copy.c_str(), &end);
+    if (!end || end == copy.c_str() || *end != '\0' || !std::isfinite(parsed)) return false;
+    *value = parsed;
+    return true;
+}
+
 } // namespace
+
+TextureImportScope::TextureImportScope()
+{
+    ++import_depth;
+}
+
+TextureImportScope::~TextureImportScope()
+{
+    if (import_depth != 0u) --import_depth;
+}
+
+bool textureImportActive()
+{
+    return import_depth != 0u;
+}
 
 TextureHandle registerDeferredFile(const std::string& path)
 {
@@ -345,6 +379,66 @@ TextureHandle registerDeferredOpacity(TextureHandle color, TextureHandle opacity
 TextureHandle registerDeferredDescriptor(TextureSourceDescriptor descriptor)
 {
     return registerDescriptor(std::move(descriptor));
+}
+
+TextureHandle registerDeferredDerivedKey(const std::string& key)
+{
+    static constexpr std::string_view ChannelMarker = "\n@gltf-channel:";
+    static constexpr std::string_view AlphaMarker = "\n@gltf-alpha:";
+
+    if (const std::size_t marker = key.rfind(ChannelMarker); marker != std::string::npos) {
+        const TextureHandle source = findTexture(key.substr(0u, marker));
+        if (source == INVALID_TEXTURE) return INVALID_TEXTURE;
+        const std::string label = key.substr(marker + ChannelMarker.size());
+        int channel = -1;
+        if (label == "roughness") channel = 1;
+        else if (label == "metallic") channel = 2;
+        if (channel < 0) return INVALID_TEXTURE;
+
+        TextureSourceDescriptor descriptor;
+        descriptor.kind = TextureSourceKind::Channel;
+        descriptor.key = key;
+        descriptor.source = source;
+        descriptor.channel = channel;
+        return registerDescriptor(std::move(descriptor));
+    }
+
+    if (const std::size_t marker = key.rfind(AlphaMarker); marker != std::string::npos) {
+        const TextureHandle source = findTexture(key.substr(0u, marker));
+        if (source == INVALID_TEXTURE) return INVALID_TEXTURE;
+        const std::string suffix = key.substr(marker + AlphaMarker.size());
+
+        TextureSourceDescriptor descriptor;
+        descriptor.kind = TextureSourceKind::Alpha;
+        descriptor.key = key;
+        descriptor.source = source;
+        descriptor.factor = 1.0f;
+        descriptor.cutoff = 0.0f;
+
+        if (suffix == "opaque") {
+            descriptor.alpha_mode = AlphaMode::Opaque;
+            return registerDescriptor(std::move(descriptor));
+        }
+        if (!suffix.starts_with("mask:")) return INVALID_TEXTURE;
+
+        descriptor.alpha_mode = AlphaMode::Mask;
+        const std::string_view values(suffix.data() + 5u, suffix.size() - 5u);
+        const std::size_t separator = values.find(':');
+        if (separator == std::string_view::npos) {
+            if (!parseFloat(values, &descriptor.cutoff)) return INVALID_TEXTURE;
+        } else {
+            float factor_key = 0.0f;
+            float cutoff_key = 0.0f;
+            if (!parseFloat(values.substr(0u, separator), &factor_key) ||
+                !parseFloat(values.substr(separator + 1u), &cutoff_key))
+                return INVALID_TEXTURE;
+            descriptor.factor = std::clamp(factor_key / 65535.0f, 0.0f, 1.0f);
+            descriptor.cutoff = std::clamp(cutoff_key / 65535.0f, 0.0f, 1.0f);
+        }
+        return registerDescriptor(std::move(descriptor));
+    }
+
+    return INVALID_TEXTURE;
 }
 
 TextureState textureState(TextureHandle handle)
