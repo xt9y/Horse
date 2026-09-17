@@ -48,15 +48,27 @@ bool cachedLoad(const std::string& path, Document *output, std::string *error)
     if (!output) return false;
     Internal::pumpTextureResources();
 
-    Internal::StagedModel staged;
-    if (!stage(path, &staged, error)) return false;
+    const std::string extension = normalize(std::filesystem::path(path).extension().string());
+    const auto found = loaders().find(extension);
+    if (found == loaders().end() || !found->second) return false;
 
-    std::unordered_map<TextureHandle, TextureHandle> mapping;
-    if (!Internal::materializeStagedTextures(staged, &mapping, error) ||
-        !Internal::remapDocumentTextures(staged.document, mapping, error))
-        return false;
+    if (cacheEligible(path)) {
+        std::string cache_error;
+        if (Internal::ModelCache::load(path, output, &cache_error)) {
+            if (error) error->clear();
+            return true;
+        }
+    }
 
-    *output = std::move(staged.document);
+    sourceLoads().fetch_add(1u, std::memory_order_relaxed);
+    if (!found->second(path, output, error)) return false;
+
+    if (cacheEligible(path)) {
+        Internal::ModelCache::Payload payload;
+        std::string cache_error;
+        if (Internal::ModelCache::encode(path, *output, &payload, &cache_error))
+            Internal::ModelCache::writeAsync(path, std::move(payload));
+    }
     return true;
 }
 
