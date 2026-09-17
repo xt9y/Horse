@@ -110,15 +110,13 @@ void testSequentialModelLoadsAdvanceTextureStreaming()
     Models::clearCache();
 }
 
-struct RunTextureStreamingBackpressureTests
-{
-    RunTextureStreamingBackpressureTests()
-    {
-        testStreamingBoundsDecodedResultsBeforePump();
-        testSequentialModelLoadsAdvanceTextureStreaming();
-    }
-};
-
-const RunTextureStreamingBackpressureTests run_texture_streaming_backpressure_tests;
-
 } // namespace
+
+int main()
+{
+    testStreamingBoundsDecodedResultsBeforePump();
+    testSequentialModelLoadsAdvanceTextureStreaming();
+    Models::clearCache();
+    Core::Jobs::shutdown();
+    return 0;
+}
