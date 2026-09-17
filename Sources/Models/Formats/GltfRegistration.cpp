@@ -1,5 +1,6 @@
 #include "Models/Formats/GltfAlpha.hpp"
 #include "Models/Formats/GltfAugmentCompressed.hpp"
+#include "Models/Formats/GltfDependencies.hpp"
 #include "Models/Formats/GltfMaterialSources.hpp"
 #include "Models/Formats/GltfRequiredExtensions.hpp"
 #include "Models/Formats/Registry.hpp"
@@ -19,6 +20,7 @@ bool loadGltf(const std::string& path, Document *output, std::string *error)
         loaded = true;
     }
     return loaded &&
+        GltfDependencies::apply(path, output, load_error) &&
         GltfMaterialSources::apply(path, output, load_error) &&
         GltfAugmentCompressed::apply(path, output, load_error) &&
         GltfAlpha::apply(output, load_error);
