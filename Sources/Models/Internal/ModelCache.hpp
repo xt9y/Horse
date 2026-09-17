@@ -3,6 +3,7 @@
 
 #include "Models/Formats/Registry.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <string>
