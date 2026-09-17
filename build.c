@@ -66,6 +66,7 @@ void build(C_Build *b)
     C_Target *library = c_shared_library(b, "Horse");
 
     c_sources(library, "Sources/*/*.cpp");
+    c_sources(library, "Sources/Core/*/*.cpp");
     c_sources(library, "Sources/Models/*/*.cpp");
     c_sources(library, "Sources/Renderer/*/*.cpp");
     c_sources(library, "Sources/Renderer/GlobalIllumination/PhotonMapping/*.cpp");
