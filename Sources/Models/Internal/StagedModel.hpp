@@ -11,6 +11,8 @@
 
 namespace Models::Internal {
 
+inline constexpr TextureHandle StagedTextureBase = 0x80000000u;
+
 struct StagedTexture
 {
     TextureSourceDescriptor descriptor;
