@@ -434,27 +434,27 @@ void testCompiledCacheInvalidatesDependenciesAndCorruption()
     std::filesystem::remove_all(directory, ignored);
 }
 
-void testWarmModelLoadBypassesSourceImporter()
+void testSynchronousModelLoadBypassesCompiledCache()
 {
     Models::clearCache();
-    const std::filesystem::path directory = temporaryDirectory("horse-model-cache-warm-load");
+    const std::filesystem::path directory = temporaryDirectory("horse-model-sync-load");
     setCacheRoot(directory / "cache");
     const std::filesystem::path gltf = writeTriangleGltf(directory, false);
 
     const std::uint64_t before = Models::Formats::sourceLoaderInvocationCount();
     std::string error;
-    const Models::ModelHandle cold = Models::load(gltf.string(), &error);
-    assert(cold != Models::INVALID_MODEL);
+    const Models::ModelHandle first = Models::load(gltf.string(), &error);
+    assert(first != Models::INVALID_MODEL);
     assert(error.empty());
     assert(Models::Formats::sourceLoaderInvocationCount() == before + 1u);
     Core::Jobs::wait();
 
     Models::clearCache();
-    const std::uint64_t before_warm = Models::Formats::sourceLoaderInvocationCount();
-    const Models::ModelHandle warm = Models::load(gltf.string(), &error);
-    assert(warm != Models::INVALID_MODEL);
+    const std::uint64_t before_second = Models::Formats::sourceLoaderInvocationCount();
+    const Models::ModelHandle second = Models::load(gltf.string(), &error);
+    assert(second != Models::INVALID_MODEL);
     assert(error.empty());
-    assert(Models::Formats::sourceLoaderInvocationCount() == before_warm);
+    assert(Models::Formats::sourceLoaderInvocationCount() == before_second + 1u);
 
     Models::clearCache();
     std::error_code ignored;
@@ -500,7 +500,7 @@ int main()
     testGltfModelReturnsWithReadyTexture();
     testCompiledCacheRoundTripAndTextureGraph();
     testCompiledCacheInvalidatesDependenciesAndCorruption();
-    testWarmModelLoadBypassesSourceImporter();
+    testSynchronousModelLoadBypassesCompiledCache();
     testStaleTextureCompletionCannotReachNewGeneration();
     Models::clearCache();
     Core::Jobs::shutdown();
