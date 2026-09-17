@@ -1,0 +1,290 @@
+# Horse Model Loading Performance
+
+## Goal
+
+Horse keeps the existing model-first public API while removing synchronous texture decode and repeated source import work from normal model loading.
+
+Game code continues to use:
+
+    Models::load(path)
+    Renderer::ModelScene::instantiate(world, model, &instance)
+
+No async model API, futures, polling API or GAME-side loading system is required.
+
+## Current problem
+
+`Models::load()` currently runs the complete format loader before returning a model handle. glTF material import resolves texture references through `loadTexture()` / `loadTextureMemory()`, which immediately decodes image data into RGBA CPU memory. Derived channels and alpha normalization may also copy and transform whole decoded images during import.
+
+Large asset sets therefore serialize model parsing, buffer reads, image decode, RGBA allocation and resource registration on the caller thread. Loading many textured models can block the application for minutes before the first rendered frame.
+
+Horse already has stable model, mesh, material and texture handles plus `Models::resourceRevision()`-based renderer invalidation. The performance work must reuse those systems rather than create a second renderer-specific streaming path.
+
+## Public contract
+
+The public API remains unchanged.
+
+`Models::load()` is synchronous only for data required to publish a valid model handle: model metadata, geometry, materials, nodes, scenes, skins, animation metadata and stable texture references.
+
+Material textures may still be pending when the model handle is returned. Pending or failed textures render through the existing fallback texture. When a texture becomes ready, Horse updates the existing resource revision so renderer caches discover the new resource automatically.
+
+Model-critical failures such as malformed source data, invalid accessors or missing required geometry still make `Models::load()` fail normally. Texture decode failures do not invalidate an already published model.
+
+## Architecture
+
+The loading path is:
+
+    Models::load(path)
+        |
+        +-- memory model cache hit -> return existing handle
+        |
+        +-- valid Horse disk cache
+        |       |
+        |       +-- read compiled model data
+        |       +-- register deferred texture sources
+        |       +-- return model handle
+        |
+        +-- source import
+                |
+                +-- parse model / geometry
+                +-- register deferred texture sources
+                +-- queue compiled cache write
+                +-- return model handle
+
+Texture work runs through a generic internal Horse worker system:
+
+    texture source -> queued job -> worker decode/derive -> completion queue
+                                                       |
+                                                       v
+                                                main-thread commit
+                                                       |
+                                               resourceRevision++
+                                                       |
+                                            existing renderer resync
+
+Workers never mutate ECS, SDL_GPU resources, model registries or published texture assets directly.
+
+## Generic jobs
+
+Horse gains a small generic internal CPU job system under `Sources/Core/Jobs`.
+
+Its responsibilities are limited to:
+
+- fixed worker pool sized from hardware concurrency
+- bounded work queue
+- thread-safe completion queue
+- cancellation / generation invalidation
+- clean shutdown
+
+The internal shape is approximately:
+
+    Jobs::submit(work, completion)
+    Jobs::pump()
+    Jobs::shutdown()
+
+Model loading is one consumer of this generic system. The jobs system is not exposed as a gameplay API.
+
+## Deferred textures
+
+A `TextureHandle` becomes a stable reference to a texture resource that may not yet contain decoded pixels.
+
+Internally a texture has a lifecycle equivalent to:
+
+    Registered -> Queued -> Loading -> Ready
+                               |
+                               +-> Failed
+
+A deferred texture stores its source description separately from decoded image data. Source kinds include:
+
+- external file
+- embedded compressed bytes
+- derived channel from another texture
+- alpha-normalized texture
+- combined opacity texture
+
+Derived textures form dependencies on source texture handles instead of forcing immediate whole-image copies during glTF import.
+
+While a texture is not ready, renderer resource code uses Horse's existing white fallback instead of treating missing RGBA data as a fatal scene error.
+
+Once a worker finishes, the result is committed on the main thread, the texture becomes Ready, and `Models::resourceRevision()` advances.
+
+Failed textures keep the fallback for the process lifetime and emit one diagnostic. They are not retried every frame.
+
+## Renderer integration
+
+Streaming remains renderer-independent.
+
+`SceneCache::syncResources()` is the shared resource synchronization boundary. Before resource signatures are evaluated, Horse pumps completed model resource work there through an internal model-resource function.
+
+Existing renderer code continues to use model/material/texture handles and revision checks. Backends do not own their own model loaders or streaming queues.
+
+`SceneResourcesSDLGPU` already owns a white fallback texture and revision-based texture synchronization. Pending textures therefore map naturally to the fallback binding until their resource becomes available.
+
+Other systems that use `Models::resourceRevision()` continue to invalidate through the same mechanism.
+
+## Thread-safety and lifetime
+
+Worker threads may:
+
+- read files
+- decode images
+- derive image channels / alpha variants
+- prepare cache payloads
+
+Worker threads may not:
+
+- mutate `Ecs::World`
+- access or create GPU resources
+- mutate model / mesh / material registries
+- mutate published `TextureAsset` state directly
+- call renderer backend state
+
+Every resource job carries the model-resource generation that created it.
+
+`Models::clearCache()` is a synchronization boundary:
+
+1. invalidate queued work from the current generation
+2. allow already-running work to finish or be discarded safely
+3. drain/discard stale completions
+4. clear model and texture registries
+5. advance the generation
+
+A completion from an old generation may never publish into a newly reused handle.
+
+Shutdown performs the same invalidation/drain sequence before joining worker threads.
+
+## Automatic compiled model cache
+
+Horse transparently stores compiled model data in the platform cache directory.
+
+Preferred roots:
+
+    macOS   ~/Library/Caches/Horse/Models/
+    Linux  $XDG_CACHE_HOME/Horse/Models/
+           ~/.cache/Horse/Models/
+    Windows %LOCALAPPDATA%/Horse/Models/
+
+The cache is an implementation detail. Callers only use `Models::load(path)`.
+
+A compiled model entry contains normalized Horse runtime data rather than source glTF JSON:
+
+- cache/schema version
+- importer version
+- dependency manifest
+- model metadata
+- meshes / vertices / indices
+- nodes / scenes
+- skins
+- animation metadata
+- material parameters
+- texture source descriptors
+
+External textures remain compressed source dependencies and are still streamed lazily. Embedded images remain compressed in their source representation. The model cache must not duplicate all texture data as uncompressed RGBA.
+
+## Cache validation
+
+The dependency manifest tracks the source model, external buffers and referenced external textures.
+
+Normal validation uses:
+
+- cache schema version
+- importer version
+- normalized absolute dependency path
+- file size
+- last-write timestamp
+
+Horse does not hash every large texture on every startup because doing so would defeat fast cache lookup.
+
+Any changed dependency invalidates the entry and causes a normal source import.
+
+Cache corruption is never fatal. Invalid header/version, impossible counts, truncation, overflow or checksum failure is treated as a cache miss.
+
+Cache readers enforce hard sanity limits for section sizes and element counts before allocation.
+
+Cache writes use a temporary file and atomic rename so an interrupted write cannot become a valid-looking cache entry.
+
+## Import scope
+
+Phase one keeps geometry/model publication synchronous. Only expensive texture processing and cache writing are moved off the caller path.
+
+This preserves current `ModelHandle`, `ModelScene`, animation and inspection semantics.
+
+After this work is measured, geometry parsing may be reconsidered separately if it remains the dominant caller-thread cost. It is not part of this change unless measurements prove it is required.
+
+## Error behavior
+
+Model-critical import errors preserve current behavior and return `Models::INVALID_MODEL`.
+
+Texture errors are noncritical once the model is valid:
+
+- texture state becomes Failed
+- renderer keeps fallback texture
+- one diagnostic is recorded/emitted
+- no per-frame retries occur
+
+A corrupt disk-cache entry falls back to source import. Failure to write the optional disk cache never prevents a model from loading.
+
+## Verification contract
+
+Tests and benchmarks cover cold import, warm cache import and streamed texture completion.
+
+Required behavior:
+
+1. `Models::load()` does not decode external material textures synchronously.
+2. A valid model handle is returned when geometry/material metadata is ready.
+3. `Renderer::ModelScene::instantiate()` works while textures are pending.
+4. Pending and failed textures render through fallback resources without scene errors.
+5. Completing a texture advances `Models::resourceRevision()`.
+6. Existing `SceneCache` / renderer resource paths discover the new revision automatically.
+7. Warm cache loads bypass source glTF re-import and geometry reconstruction.
+8. Corrupt or stale caches fall back to source import without changing correctness.
+9. `Models::clearCache()` and shutdown leave no publishable stale jobs/completions.
+10. Multiple models referencing one normalized texture source share one texture handle and one decode job.
+
+A deterministic regression asset uses tiny geometry with a deliberately large external image. The test verifies that `Models::load()` returns while that texture is still pending, then pumps resource completion until it becomes Ready and confirms the model resource revision changed.
+
+Cache invalidation tests mutate the source model, external buffer, referenced texture, cache schema version and cache contents independently.
+
+Threading stress tests repeatedly load many models, pump resources, clear caches, load again and shut down. Sanitizer builds should cover stale-generation commits, duplicate decode, dangling handles and jobs surviving shutdown.
+
+## Performance contract
+
+Performance assertions are relative rather than tied to one machine.
+
+Cold model load:
+
+- caller-thread external texture decode cost is approximately zero
+- texture decode overlaps later model/source work through the worker pool
+
+Warm model load:
+
+- compiled cache path is substantially faster than source import
+- glTF parsing and geometry conversion are skipped
+
+Duplicate texture use:
+
+- one normalized texture resource
+- one queued decode
+- one decoded image
+
+Large multi-model loads should scale primarily with geometry/model parsing on the caller thread rather than total texture decode cost.
+
+Internal debug timing may measure:
+
+- cache lookup / validation
+- cache read
+- source parse
+- geometry conversion
+- texture registration
+- texture decode
+- cache write
+- resource commit
+
+These timings remain internal diagnostics and do not expand the normal public API.
+
+## Scope
+
+This change is Horse-only.
+
+GAME requires no loading-system changes and continues to use the current `Models::load()` / `ModelScene::instantiate()` calls.
+
+The implementation must remain model-first, renderer-independent, modular, minimal at the public API boundary, and reuse Horse's existing handles, scene-resource synchronization and resource revision systems.
