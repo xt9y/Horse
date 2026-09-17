@@ -1,6 +1,9 @@
 #include <Core/Jobs/Jobs.hpp>
 #include <Ecs/Ecs.hpp>
 #include <Models/Core/Texture.hpp>
+#include <Models/Formats/GltfDependencies.hpp>
+#include <Models/Formats/Registry.hpp>
+#include <Models/Internal/TextureStorage.hpp>
 #include <Models/Internal/TextureStreaming.hpp>
 #include <Renderer/Scenes/SceneCache.hpp>
 
@@ -8,6 +11,8 @@
 #include <atomic>
 #include <cassert>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -21,6 +26,25 @@ constexpr std::array<std::uint8_t, 67> TinyPng{{
     0x02,0x00,0x01,0xe5,0x27,0xd4,0xa2,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,
     0x42,0x60,0x82
 }};
+
+std::filesystem::path temporaryDirectory(const char *name)
+{
+    const std::filesystem::path directory =
+        std::filesystem::temp_directory_path() / name;
+    std::error_code error;
+    std::filesystem::remove_all(directory, error);
+    std::filesystem::create_directories(directory, error);
+    assert(!error);
+    return directory;
+}
+
+void writeText(const std::filesystem::path& path, const std::string& text)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    assert(file);
+    file.write(text.data(), static_cast<std::streamsize>(text.size()));
+    assert(file.good());
+}
 
 void testJobsRunWorkOffThreadAndCompletionOnCaller()
 {
@@ -62,7 +86,7 @@ void testDeferredTexturePublishesOnlyAfterPump()
     assert(handle != Models::INVALID_TEXTURE);
     const Models::TextureAsset *before = Models::texture(handle);
     assert(before != nullptr);
-    assert(before->image.rgba.empty());
+    assert(!Models::Internal::textureStorageReady(handle));
     assert(Models::Internal::textureState(handle) != Models::Internal::TextureState::Ready);
 
     Core::Jobs::wait();
@@ -70,6 +94,7 @@ void testDeferredTexturePublishesOnlyAfterPump()
 
     const Models::TextureAsset *after = Models::texture(handle);
     assert(after != nullptr);
+    assert(Models::Internal::textureStorageReady(handle));
     assert(Models::Internal::textureState(handle) == Models::Internal::TextureState::Ready);
     assert(after->image.width == 1);
     assert(after->image.height == 1);
@@ -101,9 +126,7 @@ void testModelImportScopeDoesNotDecodeTextureMemorySynchronously()
     }
 
     assert(handle != Models::INVALID_TEXTURE);
-    const Models::TextureAsset *asset = Models::texture(handle);
-    assert(asset != nullptr);
-    assert(asset->image.rgba.empty());
+    assert(!Models::Internal::textureStorageReady(handle));
     assert(Models::Internal::textureState(handle) != Models::Internal::TextureState::Ready);
 }
 
@@ -128,6 +151,29 @@ void testSceneResourceSyncPumpsCompletedTextures()
     assert(Models::Internal::textureState(handle) == Models::Internal::TextureState::Ready);
 }
 
+void testGltfDependenciesRecordExternalBuffers()
+{
+    const std::filesystem::path directory = temporaryDirectory("horse-model-loading-dependencies");
+    const std::filesystem::path gltf = directory / "model.gltf";
+    const std::filesystem::path bin = directory / "mesh.bin";
+    writeText(bin, "abcd");
+    writeText(
+        gltf,
+        R"({"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin","byteLength":4}]})"
+    );
+
+    Models::Formats::Document document;
+    std::string error;
+    assert(Models::Formats::GltfDependencies::apply(gltf.string(), &document, &error));
+    assert(error.empty());
+    assert(document.dependencies.size() == 1u);
+    assert(std::filesystem::path(document.dependencies.front()).lexically_normal() ==
+        std::filesystem::absolute(bin).lexically_normal());
+
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
 } // namespace
 
 int main()
@@ -137,6 +183,7 @@ int main()
     testDeferredTextureDeduplicatesSource();
     testModelImportScopeDoesNotDecodeTextureMemorySynchronously();
     testSceneResourceSyncPumpsCompletedTextures();
+    testGltfDependenciesRecordExternalBuffers();
     Models::Internal::clearTextureStreaming();
     Models::clearTextureCache();
     Core::Jobs::shutdown();
