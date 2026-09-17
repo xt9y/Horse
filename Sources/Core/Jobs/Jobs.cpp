@@ -132,6 +132,12 @@ bool trySubmit(Work work, Completion completion)
         if (state.closed) return false;
         state.startLocked();
         if (state.stopping || state.work.size() >= state.capacity) return false;
+
+        std::size_t remaining = state.capacity - state.work.size();
+        if (state.running >= remaining) return false;
+        remaining -= state.running;
+        if (state.completions.size() >= remaining) return false;
+
         state.work.push_back({std::move(work), std::move(completion)});
     }
     state.work_ready.notify_one();
