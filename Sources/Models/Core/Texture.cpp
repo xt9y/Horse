@@ -143,7 +143,7 @@ TextureHandle Internal::reserveTexture(const std::string& key)
 {
     if (key.empty()) return INVALID_TEXTURE;
     if (const TextureHandle existing = findTexture(key); existing != INVALID_TEXTURE) return existing;
-    if (assets().size() >= static_cast<std::size_t>(INVALID_TEXTURE)) return INVALID_TEXTURE;
+    if (assets().size() >= static_cast<std::size_t>(Internal::StagedTextureBase)) return INVALID_TEXTURE;
     const TextureHandle handle = static_cast<TextureHandle>(assets().size());
     assets().push_back({key, fallbackImage()});
     readiness().push_back(0u);
