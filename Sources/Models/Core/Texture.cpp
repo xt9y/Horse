@@ -2,6 +2,7 @@
 
 #include "Models/Internal/ResourceRevision.hpp"
 #include "Models/Internal/TextureStorage.hpp"
+#include "Models/Internal/TextureStreaming.hpp"
 
 #include <algorithm>
 #include <deque>
@@ -9,6 +10,7 @@
 #include <limits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace Models {
 namespace {
@@ -139,6 +141,8 @@ TextureHandle loadTexture(const std::string& path, std::string *error)
     }
 
     const std::string key = Internal::normalizeTexturePath(path);
+    if (Internal::textureImportActive()) return Internal::registerDeferredFile(key);
+
     const TextureHandle existing = Internal::findTexture(key);
     if (existing != INVALID_TEXTURE) {
         const TextureAsset *asset = texture(existing);
@@ -184,6 +188,11 @@ TextureHandle combineTextureOpacity(
         return INVALID_TEXTURE;
     }
 
+    if (Internal::textureImportActive() ||
+        Internal::textureState(color) != Internal::TextureState::Ready ||
+        Internal::textureState(opacity) != Internal::TextureState::Ready)
+        return Internal::registerDeferredOpacity(color, opacity);
+
     const std::string key = color_asset->path + "\n@opacity:" + opacity_asset->path;
     if (const TextureHandle found = Internal::findTexture(key); found != INVALID_TEXTURE) return found;
 
@@ -202,6 +211,18 @@ TextureHandle loadTextureMemory(
     if (cache_key.empty()) {
         if (error) *error = "empty embedded texture cache key";
         return INVALID_TEXTURE;
+    }
+    if (!data || size == 0u) {
+        if (error) *error = "empty embedded texture data";
+        return INVALID_TEXTURE;
+    }
+
+    if (Internal::textureImportActive()) {
+        const auto *bytes = static_cast<const std::uint8_t *>(data);
+        return Internal::registerDeferredMemory(
+            cache_key,
+            std::vector<std::uint8_t>(bytes, bytes + size)
+        );
     }
 
     const TextureHandle existing = Internal::findTexture(cache_key);
@@ -229,6 +250,10 @@ TextureHandle registerTextureImage(
         return INVALID_TEXTURE;
     }
     if (!validImage(image)) {
+        if (Internal::textureImportActive()) {
+            const TextureHandle deferred = Internal::registerDeferredDerivedKey(cache_key);
+            if (deferred != INVALID_TEXTURE) return deferred;
+        }
         if (error) *error = "invalid texture image";
         return INVALID_TEXTURE;
     }
