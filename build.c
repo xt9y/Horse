@@ -93,6 +93,10 @@ void build(C_Build *b)
     c_sources(model_cache_tests, "Tests/ModelCacheValidation.cpp");
     configureTest(model_cache_tests, library);
 
+    C_Target *model_cache_binary_tests = c_test(b, "HorseModelCacheBinaryTests");
+    c_sources(model_cache_binary_tests, "Tests/ModelCacheBinary.cpp");
+    configureTest(model_cache_binary_tests, library);
+
     C_Target *streaming_tests = c_test(b, "HorseTextureStreamingBackpressureTests");
     c_sources(streaming_tests, "Tests/TextureStreamingBackpressure.cpp");
     configureTest(streaming_tests, library);
