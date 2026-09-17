@@ -3,7 +3,7 @@
 #include "Models/Internal/TextureStorage.hpp"
 #include "Models/Internal/TextureStreaming.hpp"
 #include "Models/Models.hpp"
-#include "Renderer/Scenes/Scene.hpp"
+#include "Renderer/Scenes/SceneCache.hpp"
 
 #include <array>
 #include <cassert>
@@ -41,12 +41,15 @@ int main()
     assert(!Models::Internal::textureStorageReady(handle));
 
     Ecs::World world;
-    std::vector<Renderer::Scenes::Scene::RenderItem> items;
+    Renderer::Scenes::SceneCache cache;
+    const std::vector<Renderer::Scenes::Scene::RenderItem> items;
+    std::string error;
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (!Models::Internal::textureStorageReady(handle) &&
            std::chrono::steady_clock::now() < deadline)
     {
-        Renderer::Scenes::Scene::collectRenderItems(world, items);
+        assert(cache.syncResources(world, items, 31u, &error));
+        assert(error.empty());
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
