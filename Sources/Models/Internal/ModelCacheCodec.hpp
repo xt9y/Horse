@@ -19,8 +19,9 @@ struct DependencyStamp {
 
 bool encode(
     const Formats::Document& document,
-    std::vector<DependencyStamp> dependencies,
+    const std::vector<DependencyStamp>& dependencies,
     std::vector<std::uint8_t> *bytes,
+    std::vector<std::string> *texture_dependencies,
     std::string *error = nullptr
 );
 
