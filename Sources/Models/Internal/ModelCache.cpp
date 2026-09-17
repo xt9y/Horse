@@ -379,6 +379,10 @@ bool load(const std::string& source, Formats::Document *document, std::string *e
         if (error) *error = "invalid model cache dependency manifest";
         return false;
     }
+    if (manifest.empty() || normalizedPath(manifest.front().path) != normalizedPath(source)) {
+        if (error) *error = "model cache source identity mismatch";
+        return false;
+    }
     for (const DependencyStamp& dependency : manifest) {
         if (!sameStamp(dependency)) return false;
     }
