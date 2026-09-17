@@ -97,6 +97,10 @@ void build(C_Build *b)
     c_sources(streaming_tests, "Tests/TextureStreamingBackpressure.cpp");
     configureTest(streaming_tests, library);
 
+    C_Target *model_scene_tests = c_test(b, "HorseModelScenePendingTests");
+    c_sources(model_scene_tests, "Tests/ModelScenePending.cpp");
+    configureTest(model_scene_tests, library);
+
     C_Target *job_shutdown_tests = c_test(b, "HorseJobShutdownTests");
     c_sources(job_shutdown_tests, "Tests/JobsShutdown.cpp");
     configureTest(job_shutdown_tests, library);
