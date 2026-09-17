@@ -4,6 +4,7 @@
 #include "Animation/Animation.hpp"
 #include "Models/Models.hpp"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -51,6 +52,7 @@ using Loader = bool (*)(const std::string&, Document *, std::string *);
 
 bool registerLoader(std::string extension, Loader loader);
 Loader loaderFor(std::string_view extension);
+std::uint64_t sourceLoaderInvocationCount();
 
 class Registration {
 public:
