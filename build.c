@@ -128,5 +128,17 @@ void build(C_Build *b)
     c_sources(staged_model_tests, "Tests/StagedModel.cpp");
     configureTest(staged_model_tests, library);
 
+    C_Target *async_model_tests = c_test(b, "HorseAsyncModelLoadingTests");
+    c_sources(async_model_tests, "Tests/AsyncModelLoading.cpp");
+    configureTest(async_model_tests, library);
+
+    C_Target *async_model_lifetime_tests = c_test(b, "HorseAsyncModelLoadingLifetimeTests");
+    c_sources(async_model_lifetime_tests, "Tests/AsyncModelLoadingLifetime.cpp");
+    configureTest(async_model_lifetime_tests, library);
+
+    C_Target *automatic_resource_pump_tests = c_test(b, "HorseAutomaticResourcePumpTests");
+    c_sources(automatic_resource_pump_tests, "Tests/AutomaticResourcePump.cpp");
+    configureTest(automatic_resource_pump_tests, library);
+
     c_default_target(b, library);
 }
