@@ -88,6 +88,10 @@ void build(C_Build *b)
     c_sources(model_cache_binary_tests, "Tests/ModelCacheBinary.cpp");
     configureTest(model_cache_binary_tests, library);
 
+    C_Target *gltf_material_dependency_tests = c_test(b, "HorseGltfMaterialDependencyTests");
+    c_sources(gltf_material_dependency_tests, "Tests/GltfMaterialDependencies.cpp");
+    configureTest(gltf_material_dependency_tests, library);
+
     C_Target *gltf_texture_derivation_tests = c_test(b, "HorseGltfTextureDerivationTests");
     c_sources(gltf_texture_derivation_tests, "Tests/GltfTextureDerivation.cpp");
     configureTest(gltf_texture_derivation_tests, library);
