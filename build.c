@@ -78,6 +78,7 @@ void build(C_Build *b)
     C_Target *model_loading_tests = c_test(b, "HorseModelLoadingTests");
     c_sources(model_loading_tests, "Tests/ModelLoading.cpp");
     c_sources(model_loading_tests, "Tests/ModelCacheValidation.cpp");
+    c_sources(model_loading_tests, "Tests/TextureStreamingBackpressure.cpp");
     c_flag(model_loading_tests, "-std=c++20");
     c_warnings_strict(model_loading_tests);
     c_include(model_loading_tests, ".");
