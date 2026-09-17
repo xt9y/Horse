@@ -175,6 +175,40 @@ void testSchemaMutationInvalidatesCache()
     std::filesystem::remove_all(directory, ignored);
 }
 
+void testForeignCachePayloadIsRejected()
+{
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+
+    const std::filesystem::path directory = directoryFor("horse-model-cache-identity-validation");
+    setCacheRoot(directory / "cache");
+    const std::filesystem::path source_a = directory / "a.gltf";
+    const std::filesystem::path source_b = directory / "b.gltf";
+    writeText(source_a, "same-source-data");
+    writeText(source_b, "same-source-data");
+
+    const Models::Formats::Document document = documentWithTexture(Models::INVALID_TEXTURE);
+    writeCache(source_a, document);
+
+    const std::filesystem::path cache_a = Models::Internal::ModelCache::pathFor(source_a.string());
+    const std::filesystem::path cache_b = Models::Internal::ModelCache::pathFor(source_b.string());
+    std::error_code copy_error;
+    std::filesystem::copy_file(
+        cache_a,
+        cache_b,
+        std::filesystem::copy_options::overwrite_existing,
+        copy_error
+    );
+    assert(!copy_error);
+
+    Models::Formats::Document restored;
+    std::string error;
+    assert(!Models::Internal::ModelCache::load(source_b.string(), &restored, &error));
+
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
 struct RunModelCacheValidationTests
 {
     RunModelCacheValidationTests()
@@ -182,6 +216,7 @@ struct RunModelCacheValidationTests
         testSourceMutationInvalidatesCache();
         testExternalTextureMutationInvalidatesCache();
         testSchemaMutationInvalidatesCache();
+        testForeignCachePayloadIsRejected();
     }
 };
 
