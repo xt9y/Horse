@@ -33,12 +33,16 @@ bool loadPendingScene(
     if (error) error->clear();
     if (!document) return false;
 
-    const Models::TextureHandle texture = Models::loadTextureMemory(
-        "pending-scene.png",
-        TinyPng.data(),
-        TinyPng.size(),
-        error
-    );
+    Models::TextureHandle texture = Models::INVALID_TEXTURE;
+    {
+        Models::Internal::TextureImportScope import;
+        texture = Models::loadTextureMemory(
+            "pending-scene.png",
+            TinyPng.data(),
+            TinyPng.size(),
+            error
+        );
+    }
     if (texture == Models::INVALID_TEXTURE) return false;
 
     Models::Formats::Part part;
