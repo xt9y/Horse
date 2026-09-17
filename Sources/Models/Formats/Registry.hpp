@@ -10,6 +10,10 @@
 #include <unordered_map>
 #include <vector>
 
+namespace Models::Internal {
+struct StagedModel;
+}
+
 namespace Models::Formats {
 
 struct VariantMaterial {
@@ -52,6 +56,7 @@ using Loader = bool (*)(const std::string&, Document *, std::string *);
 
 bool registerLoader(std::string extension, Loader loader);
 Loader loaderFor(std::string_view extension);
+bool stage(const std::string& path, Internal::StagedModel *output, std::string *error = nullptr);
 std::uint64_t sourceLoaderInvocationCount();
 
 class Registration {
