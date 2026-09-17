@@ -75,14 +75,14 @@ void build(C_Build *b)
     configureLibrary(library);
     c_use(library, imgui);
 
-    C_Target *model_loading_tests = c_executable(b, "HorseModelLoadingTests");
+    C_Target *model_loading_tests = c_test(b, "HorseModelLoadingTests");
     c_sources(model_loading_tests, "Tests/ModelLoading.cpp");
     c_flag(model_loading_tests, "-std=c++20");
     c_warnings_strict(model_loading_tests);
     c_include(model_loading_tests, ".");
     c_include(model_loading_tests, "Sources");
     configurePlatform(model_loading_tests);
-    c_use(model_loading_tests, library);
+    c_link_target(model_loading_tests, library);
 
     c_default_target(b, library);
 }
