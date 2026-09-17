@@ -14,6 +14,17 @@ enum class AlphaMode : std::uint8_t;
 
 namespace Models::Internal {
 
+class TextureImportScope
+{
+public:
+    TextureImportScope();
+    ~TextureImportScope();
+    TextureImportScope(const TextureImportScope&) = delete;
+    TextureImportScope& operator=(const TextureImportScope&) = delete;
+};
+
+bool textureImportActive();
+
 enum class TextureState : std::uint8_t {
     Registered,
     Queued,
@@ -49,6 +60,7 @@ TextureHandle registerDeferredChannel(TextureHandle source, int channel, const s
 TextureHandle registerDeferredAlpha(TextureHandle source, AlphaMode mode, float factor, float cutoff);
 TextureHandle registerDeferredOpacity(TextureHandle color, TextureHandle opacity);
 TextureHandle registerDeferredDescriptor(TextureSourceDescriptor descriptor);
+TextureHandle registerDeferredDerivedKey(const std::string& key);
 
 TextureState textureState(TextureHandle handle);
 bool textureDescriptor(TextureHandle handle, TextureSourceDescriptor *descriptor);
