@@ -162,12 +162,15 @@ std::uint64_t shadowSignature(
 std::uint64_t topologySignature(const std::vector<Scenes::Scene::RenderItem>& items)
 {
     std::uint64_t hash = 1469598103934665603ull;
-    hashValue(hash, Models::resourceRevision());
     hashValue(hash, items.size());
     for (const Scenes::Scene::RenderItem& item : items) {
         hashValue(hash, item.entity);
         hashValue(hash, item.instance_index);
-        hashValue(hash, item.mesh_component ? item.mesh_component->mesh : Models::INVALID_MESH);
+        const Models::MeshHandle mesh = item.mesh_component
+            ? item.mesh_component->mesh
+            : Models::INVALID_MESH;
+        hashValue(hash, mesh);
+        hashValue(hash, Models::Internal::meshRevision(mesh));
         hashValue(hash, item.mesh_component ? item.mesh_component->material : Models::INVALID_MATERIAL);
         hashValue(hash, item.mesh ? item.mesh->vertices.size() : 0u);
         hashValue(hash, item.mesh ? item.mesh->indices.size() : 0u);
@@ -198,8 +201,6 @@ bool appendInfluences(
     std::string *error)
 {
     if (!offset || !count || vertex_index >= mesh.vertices.size())
-        return fail(error, "raster geometry references invalid source vertex");
-    if (influences.size() > UINT32_MAX)
         return fail(error, "raster influence buffer exceeds backend index range");
 
     *offset = static_cast<std::uint32_t>(influences.size());
