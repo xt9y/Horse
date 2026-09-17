@@ -1,0 +1,168 @@
+# Asynchronous Model Loading Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add a non-blocking model request API while preserving synchronous `Models::load()`, move async glTF/cache staging off the caller thread, automatically pump model/texture completions from rendering, and make pending textures transparently transition from fallback white to their real GPU textures.
+
+**Architecture:** Introduce a staged import layer that redirects texture registration to worker-local descriptors. Async requests stage `Formats::Document` plus texture descriptors on `Core::Jobs`; the main thread materializes descriptors, remaps texture handles, publishes normal Horse model registries, and marks the request Ready. Renderer resource synchronization pumps model and texture completions every frame so applications never call Jobs APIs.
+
+**Tech Stack:** C++20, Horse ECS/model/renderer APIs, SDL3/SDL_GPU, existing `Core::Jobs` runtime.
+
+**Spec:** `ASYNC_MODEL_LOADING_DESIGN`
+
+## Global Constraints
+
+- Keep existing `Models::load(const std::string&, std::string*)` semantics unchanged.
+- Public async API is `LoadHandle`, `LoadState`, `loadAsync`, `loadState`, `loadResult`.
+- Worker jobs may not mutate published model, mesh, material, animation, texture, ECS, SDL_GPU, scene, or renderer registries.
+- `Ready` means a real published `ModelHandle` exists.
+- Duplicate normalized paths deduplicate.
+- `Models::clearCache()` is a generation boundary and prevents stale publication.
+- Renderer frames automatically pump both model and texture completions.
+- A synchronously loaded textured model must resolve its textures without any application Jobs calls.
+- Do not create `docs/superpowers` files.
+
+---
+
+### Task 1: Worker-local staged texture registry
+
+**Files:**
+- Create: `Sources/Models/Internal/StagedModel.hpp`
+- Create: `Sources/Models/Internal/StagedModel.cpp`
+- Modify: `Sources/Models/Core/Texture.cpp`
+- Modify: `Sources/Models/Internal/TextureStreaming.cpp`
+- Test: `Tests/StagedModel.cpp`
+- Modify: `build.c`
+
+**Interfaces:**
+- Produces `Models::Internal::StagedModel`, `StagedTexture`, `StagingScope`, `stagingActive()`, `materializeStagedTextures(...)`, and temporary handle remapping.
+- Existing glTF-facing texture calls continue using `loadTexture`, `loadTextureMemory`, deferred channel/alpha/opacity helpers; when a `StagingScope` is active they operate only on the staged registry.
+
+- [ ] **Step 1: Write the failing staged-texture test.** Create a staging scope, call file/memory/derived registration functions, assert global `textureStorageCount()` is unchanged, assert staged descriptors exist, and assert temporary handles are distinct and never `INVALID_TEXTURE`.
+- [ ] **Step 2: Build/run `HorseStagedModelTests` and verify RED** because staging interfaces do not exist.
+- [ ] **Step 3: Implement `StagedModel` and thread-local `StagingScope`.** Use worker-local descriptor vectors/maps; temporary texture handles encode local indices from `0x80000000u` upward while reserving `UINT32_MAX` for invalid. Implement path lookup and descriptor dependency references using temporary handles.
+- [ ] **Step 4: Redirect texture registration/lookup when staging is active.** `loadTexture`, `loadTextureMemory`, deferred channel/alpha/opacity registration and descriptor lookup must avoid global storage under the scope.
+- [ ] **Step 5: Implement main-thread materialization.** Materialize descriptors in dependency order via the existing deferred texture streamer and return a local-to-global texture map.
+- [ ] **Step 6: Run staged-texture tests GREEN and commit.**
+
+### Task 2: Document texture-handle remapping and staged importer entry point
+
+**Files:**
+- Modify: `Sources/Models/Formats/Registry.hpp`
+- Modify: `Sources/Models/Formats/Registry.cpp`
+- Modify: `Sources/Models/Internal/StagedModel.hpp/.cpp`
+- Test: `Tests/StagedModel.cpp`
+
+**Interfaces:**
+- Produces `bool Formats::stage(const std::string&, Internal::StagedModel*, std::string*)` and `bool Internal::remapDocumentTextures(Formats::Document&, const std::unordered_map<TextureHandle, TextureHandle>&, std::string*)`.
+
+- [ ] **Step 1: Add RED tests** building a `Formats::Document` with legacy texture handles plus every `TextureInfo` field in `MaterialData`, then verify remapping changes all staged handles and leaves invalid handles untouched.
+- [ ] **Step 2: Implement exhaustive remapping** for part materials and variant materials: legacy diffuse/normal/roughness/metallic/AO/emissive/opacity plus base-color, metallic-roughness, normal, occlusion, emissive, clearcoat, sheen, transmission, thickness, specular, iridescence, anisotropy and diffuse-transmission `TextureInfo` fields.
+- [ ] **Step 3: Split the loader registry into staging and publish-neutral loading.** `Formats::stage()` creates `StagingScope`, performs cache lookup or source-loader parse, and stores descriptors with the resulting document. Keep `loaderFor()` compatibility for synchronous callers through the same staging path.
+- [ ] **Step 4: Run tests GREEN and commit.**
+
+### Task 3: Cache staging without global texture publication
+
+**Files:**
+- Modify: `Sources/Models/Internal/ModelCache.cpp/.hpp`
+- Modify: `Sources/Models/Internal/ModelCacheCodec.cpp/.hpp`
+- Modify: `Sources/Models/Formats/Registry.cpp`
+- Test: `Tests/ModelLoading.cpp`
+- Test: `Tests/ModelCacheValidation.cpp`
+
+**Interfaces:**
+- Cache decode and encode operate correctly while `StagingScope` is active; decoded texture descriptors remain staged rather than registering global handles.
+
+- [ ] **Step 1: Add RED cache regression**: decode a cached textured document inside staging scope and assert no global texture-storage growth.
+- [ ] **Step 2: Make cache descriptor recreation staging-aware** by routing descriptor registration through the staging-aware texture functions.
+- [ ] **Step 3: Keep cache encoding worker-safe** by reading descriptors from the active staged registry before falling back to global texture streaming descriptors.
+- [ ] **Step 4: Run model-cache/model-loading tests GREEN and commit.**
+
+### Task 4: Async request runtime and public API
+
+**Files:**
+- Create: `Sources/Models/Internal/AsyncLoading.hpp`
+- Create: `Sources/Models/Internal/AsyncLoading.cpp`
+- Modify: `Sources/Models/Models.hpp`
+- Modify: `Sources/Models/Models.cpp`
+- Test: `Tests/AsyncModelLoading.cpp`
+- Test: `Tests/AsyncModelLoadingLifetime.cpp`
+- Modify: `build.c`
+
+**Interfaces:**
+- Public:
+  `using LoadHandle = std::uint32_t;`
+  `constexpr LoadHandle INVALID_LOAD = UINT32_MAX;`
+  `enum class LoadState : std::uint8_t { Pending, Ready, Failed };`
+  `LoadHandle loadAsync(const std::string& path);`
+  `LoadState loadState(LoadHandle handle);`
+  `ModelHandle loadResult(LoadHandle handle, std::string *error = nullptr);`
+- Internal: `pumpModelLoads()`, `clearModelLoads()`, dedicated Jobs group.
+
+- [ ] **Step 1: Add RED non-blocking test** with a registered fake loader that sleeps about 150 ms. Measure `loadAsync()` itself and require it to return well before the loader delay; verify state starts Pending.
+- [ ] **Step 2: Add RED dedupe/error/publication tests.** Same normalized path returns same `LoadHandle`; a failing loader yields Failed and its error; successful request becomes Ready only after completion publication and returns a valid `ModelHandle`.
+- [ ] **Step 3: Implement request runtime.** Normalize paths, check existing model cache first, dedupe in-flight/completed paths, submit stage work to a dedicated Jobs group, own `StagedModel` result in request state, and queue only completion metadata.
+- [ ] **Step 4: Implement main-thread publication.** Pump job completions; materialize staged textures, remap document texture handles, publish using the existing `storeModel` path, then set Ready. Failed staging/publish stores error and sets Failed.
+- [ ] **Step 5: Add generation-safe clear test.** Queue a slow request, call `clearCache()`, and prove its completion cannot publish afterward.
+- [ ] **Step 6: Wire `Models::clearCache()` to cancel/wait the async group before registry clearing and increment the request generation.
+- [ ] **Step 7: Run async request tests GREEN and commit.**
+
+### Task 5: Automatic engine resource pumping and pending-texture fallback
+
+**Files:**
+- Create: `Sources/Models/Internal/ResourcePump.hpp`
+- Create: `Sources/Models/Internal/ResourcePump.cpp`
+- Modify: `Sources/Models/Models.cpp`
+- Modify: `Sources/Renderer/Scenes/SceneCache.cpp`
+- Modify: `Sources/Renderer/Scenes/SceneResourcesSDLGPU.cpp`
+- Test: `Tests/AutomaticResourcePump.cpp`
+- Modify: `build.c`
+
+**Interfaces:**
+- Internal `std::size_t pumpResources()` calls model-load completion pumping followed by texture completion pumping.
+- `Models::resourceRevision()` becomes a pure accessor.
+
+- [ ] **Step 1: Add RED texture-progress regression.** Register a deferred texture, let its worker complete, call the same resource-sync entry used by the renderer without any Jobs/pump calls, and assert texture state becomes Ready and resource revision advances.
+- [ ] **Step 2: Implement shared resource pump** and call it once at the beginning of `SceneCache::syncResources(...)` before resource signatures are calculated.
+- [ ] **Step 3: Remove pumping side effect from `Models::resourceRevision()`** so it only returns the revision.
+- [ ] **Step 4: Fix `SceneResources::textureFor()`.** Invalid handles keep normal fallback/error behavior; a valid pending handle whose decoded image is not ready returns Horse's existing `white_` GPU texture instead of failing. Do not insert that fallback into the final texture cache for the pending handle, so a later revision can create/upload the real texture.
+- [ ] **Step 5: Run automatic-pump tests GREEN and commit.**
+
+### Task 6: Real minimal async glTF equivalence
+
+**Files:**
+- Create: `Tests/AsyncGltfLoading.cpp`
+- Modify: `build.c`
+
+**Interfaces:**
+- Uses only public model request APIs plus ordinary model/material inspection.
+
+- [ ] **Step 1: Generate a minimal temporary glTF** with external binary geometry and a tiny embedded/external material texture using the same test patterns as existing glTF tests.
+- [ ] **Step 2: Load synchronously, capture part/node/material structure, clear cache, then load asynchronously and pump through public state queries/resource pump until Ready.
+- [ ] **Step 3: Assert equivalent part count, node structure, material scalar values and valid texture assignments; assert no synchronous source parse occurs on the async caller thread.
+- [ ] **Step 4: Run GREEN and commit.**
+
+### Task 7: GAME showcase consumes async requests
+
+**Files:**
+- Modify: `xt9y-org/GAME/Sources/Showcase/Showcase.hpp`
+- Modify: `xt9y-org/GAME/Sources/Showcase/Showcase.cpp`
+- Modify only if required by interface shape: `xt9y-org/GAME/Sources/main.cpp`
+
+**Interfaces:**
+- `Showcase::prepare()` creates `Models::LoadHandle`s.
+- `Showcase::step()` performs no `Models::load()` and only observes request state, instantiates Ready requests, and reports Failed requests.
+
+- [ ] **Step 1: Add/adjust the existing showcase regression** to assert preparation queues requests and step contains no synchronous model load.
+- [ ] **Step 2: Replace per-frame `Models::load()` calls with `loadState/loadResult` handling.** Preserve existing placement, reporting and one-ready-instantiation-per-step behavior.
+- [ ] **Step 3: Verify GAME compiles against updated Horse API and commit.**
+
+### Task 8: Full verification
+
+**Files:** none unless a failing regression exposes a scoped bug.
+
+- [ ] **Step 1: Run all Horse tests** including staged model, cache, async request, lifetime, async glTF, automatic pump, existing texture streaming and raster topology regression targets.
+- [ ] **Step 2: Run a clean Horse build with strict warnings.**
+- [ ] **Step 3: Run GAME build against Horse `main`.**
+- [ ] **Step 4: Inspect final diffs** and verify no worker path mutates global registries, no public Jobs calls are required, and `Models::load()` signature/semantics remain intact.
+- [ ] **Step 5: Runtime verification on macOS/Metal:** run GAME showcase and the GEOPOL Earth sample. Expected behavior: window remains responsive during async showcase staging; Earth may begin with fallback white textures but transitions to real textures through ordinary `renderer.render(world)` calls without `Core::Jobs::wait()` or manual pumping.
