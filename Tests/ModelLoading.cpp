@@ -6,10 +6,12 @@
 #include <Models/Internal/ModelCache.hpp>
 #include <Models/Internal/TextureStorage.hpp>
 #include <Models/Internal/TextureStreaming.hpp>
+#include <Models/Models.hpp>
 #include <Renderer/Scenes/SceneCache.hpp>
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
@@ -48,6 +50,15 @@ void writeText(const std::filesystem::path& path, const std::string& text)
     assert(file.good());
 }
 
+void writeBytes(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    assert(file);
+    if (!bytes.empty())
+        file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    assert(file.good());
+}
+
 void setCacheRoot(const std::filesystem::path& path)
 {
 #ifdef _WIN32
@@ -55,6 +66,60 @@ void setCacheRoot(const std::filesystem::path& path)
 #else
     assert(setenv("HORSE_MODEL_CACHE_DIR", path.string().c_str(), 1) == 0);
 #endif
+}
+
+void appendU16(std::vector<std::uint8_t> *bytes, std::uint16_t value)
+{
+    assert(bytes);
+    bytes->push_back(static_cast<std::uint8_t>(value));
+    bytes->push_back(static_cast<std::uint8_t>(value >> 8u));
+}
+
+void appendF32(std::vector<std::uint8_t> *bytes, float value)
+{
+    assert(bytes);
+    const std::uint32_t bits = std::bit_cast<std::uint32_t>(value);
+    for (unsigned int shift = 0u; shift < 32u; shift += 8u)
+        bytes->push_back(static_cast<std::uint8_t>(bits >> shift));
+}
+
+std::filesystem::path writeTriangleGltf(const std::filesystem::path& directory, bool textured)
+{
+    std::vector<std::uint8_t> binary;
+    for (float value : std::array<float, 9>{{
+            0.0f, 0.0f, 0.0f,
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f}})
+        appendF32(&binary, value);
+    appendU16(&binary, 0u);
+    appendU16(&binary, 1u);
+    appendU16(&binary, 2u);
+    writeBytes(directory / "mesh.bin", binary);
+
+    std::string material;
+    std::string image;
+    std::string texture;
+    std::string primitive_material;
+    if (textured) {
+        writeBytes(directory / "white.png", std::vector<std::uint8_t>(TinyPng.begin(), TinyPng.end()));
+        image = R"(,"images":[{"uri":"white.png"}])";
+        texture = R"(,"textures":[{"source":0}])";
+        material = R"(,"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}])";
+        primitive_material = R"(,"material":0)";
+    }
+
+    const std::string json =
+        R"({"asset":{"version":"2.0"},"buffers":[{"uri":"mesh.bin","byteLength":42}],)"
+        R"("bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36},{"buffer":0,"byteOffset":36,"byteLength":6}],)"
+        R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3"},{"bufferView":1,"componentType":5123,"count":3,"type":"SCALAR"}])" +
+        image + texture + material +
+        R"(,"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1)" +
+        primitive_material +
+        R"(}]}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0})";
+
+    const std::filesystem::path path = directory / "model.gltf";
+    writeText(path, json);
+    return path;
 }
 
 void testJobsRunWorkOffThreadAndCompletionOnCaller()
@@ -109,6 +174,23 @@ void testDeferredTexturePublishesOnlyAfterPump()
     assert(after->image.width == 1);
     assert(after->image.height == 1);
     assert(after->image.rgba.size() == 4u);
+}
+
+void testResourceRevisionAdvancesOnlyOnCommit()
+{
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+    const std::uint64_t before = Models::resourceRevision();
+    const Models::TextureHandle handle = Models::Internal::registerDeferredMemory(
+        "revision-texture.png",
+        std::vector<std::uint8_t>(TinyPng.begin(), TinyPng.end())
+    );
+    assert(handle != Models::INVALID_TEXTURE);
+    assert(Models::resourceRevision() == before);
+    Core::Jobs::wait();
+    assert(Models::resourceRevision() == before);
+    Models::Internal::pumpTextureResources();
+    assert(Models::resourceRevision() > before);
 }
 
 void testDeferredTextureDeduplicatesSource()
@@ -180,6 +262,37 @@ void testGltfDependenciesRecordExternalBuffers()
     assert(std::filesystem::path(document.dependencies.front()).lexically_normal() ==
         std::filesystem::absolute(bin).lexically_normal());
 
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
+void testGltfModelReturnsWithPendingTextureAndFallback()
+{
+    Models::clearCache();
+    const std::filesystem::path directory = temporaryDirectory("horse-model-loading-gltf-stream");
+    setCacheRoot(directory / "cache");
+    const std::filesystem::path gltf = writeTriangleGltf(directory, true);
+
+    std::string error;
+    const Models::ModelHandle model = Models::load(gltf.string(), &error);
+    assert(model != Models::INVALID_MODEL);
+    assert(error.empty());
+    assert(Models::partCount(model) == 1u);
+    const Models::ModelPart *part = Models::part(model, 0u);
+    assert(part != nullptr);
+    const Models::MaterialData *material = Models::material(part->material);
+    assert(material != nullptr);
+    const Models::TextureHandle texture = material->base_color_info.texture;
+    assert(texture != Models::INVALID_TEXTURE);
+    assert(!Models::Internal::textureStorageReady(texture));
+    assert(Models::Internal::textureState(texture) != Models::Internal::TextureState::Ready);
+
+    const Models::TextureAsset *fallback = Models::texture(texture);
+    assert(fallback != nullptr);
+    assert(fallback->image.width == 1 && fallback->image.height == 1);
+    assert(fallback->image.rgba == std::vector<std::uint8_t>({255u, 255u, 255u, 255u}));
+
+    Models::clearCache();
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
 }
@@ -261,6 +374,8 @@ void testCompiledCacheRoundTripAndTextureGraph()
     assert(descriptor.kind == Models::Internal::TextureSourceKind::Memory);
     assert(descriptor.bytes.size() == TinyPng.size());
 
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
 }
@@ -316,20 +431,75 @@ void testCompiledCacheInvalidatesDependenciesAndCorruption()
     std::filesystem::remove_all(directory, ignored);
 }
 
+void testWarmModelLoadBypassesSourceImporter()
+{
+    Models::clearCache();
+    const std::filesystem::path directory = temporaryDirectory("horse-model-cache-warm-load");
+    setCacheRoot(directory / "cache");
+    const std::filesystem::path gltf = writeTriangleGltf(directory, false);
+
+    const std::uint64_t before = Models::Formats::sourceLoaderInvocationCount();
+    std::string error;
+    const Models::ModelHandle cold = Models::load(gltf.string(), &error);
+    assert(cold != Models::INVALID_MODEL);
+    assert(error.empty());
+    assert(Models::Formats::sourceLoaderInvocationCount() == before + 1u);
+    Core::Jobs::wait();
+
+    Models::clearCache();
+    const std::uint64_t before_warm = Models::Formats::sourceLoaderInvocationCount();
+    const Models::ModelHandle warm = Models::load(gltf.string(), &error);
+    assert(warm != Models::INVALID_MODEL);
+    assert(error.empty());
+    assert(Models::Formats::sourceLoaderInvocationCount() == before_warm);
+
+    Models::clearCache();
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
+void testStaleTextureCompletionCannotReachNewGeneration()
+{
+    for (int iteration = 0; iteration < 16; ++iteration) {
+        Models::Internal::clearTextureStreaming();
+        Models::clearTextureCache();
+        const Models::TextureHandle stale = Models::Internal::registerDeferredMemory(
+            "generation-texture",
+            std::vector<std::uint8_t>{0u, 1u, 2u, 3u}
+        );
+        assert(stale != Models::INVALID_TEXTURE);
+
+        Models::Internal::clearTextureStreaming();
+        Models::clearTextureCache();
+        const Models::TextureHandle current = Models::Internal::registerDeferredMemory(
+            "generation-texture",
+            std::vector<std::uint8_t>(TinyPng.begin(), TinyPng.end())
+        );
+        assert(current != Models::INVALID_TEXTURE);
+        Core::Jobs::wait();
+        Models::Internal::pumpTextureResources();
+        assert(Models::Internal::textureState(current) == Models::Internal::TextureState::Ready);
+        assert(Models::Internal::textureStorageReady(current));
+    }
+}
+
 } // namespace
 
 int main()
 {
     testJobsRunWorkOffThreadAndCompletionOnCaller();
     testDeferredTexturePublishesOnlyAfterPump();
+    testResourceRevisionAdvancesOnlyOnCommit();
     testDeferredTextureDeduplicatesSource();
     testModelImportScopeDoesNotDecodeTextureMemorySynchronously();
     testSceneResourceSyncPumpsCompletedTextures();
     testGltfDependenciesRecordExternalBuffers();
+    testGltfModelReturnsWithPendingTextureAndFallback();
     testCompiledCacheRoundTripAndTextureGraph();
     testCompiledCacheInvalidatesDependenciesAndCorruption();
-    Models::Internal::clearTextureStreaming();
-    Models::clearTextureCache();
+    testWarmModelLoadBypassesSourceImporter();
+    testStaleTextureCompletionCannotReachNewGeneration();
+    Models::clearCache();
     Core::Jobs::shutdown();
     return 0;
 }
