@@ -21,6 +21,12 @@ std::deque<TextureAsset>& assets()
     return values;
 }
 
+std::vector<std::uint8_t>& readiness()
+{
+    static std::vector<std::uint8_t> values;
+    return values;
+}
+
 std::unordered_map<std::string, TextureHandle>& cache()
 {
     static std::unordered_map<std::string, TextureHandle> values;
@@ -38,12 +44,21 @@ bool validImage(const Images::Image& image)
     return image.rgba.size() == pixels * 4u;
 }
 
+Images::Image fallbackImage()
+{
+    Images::Image image;
+    image.width = 1;
+    image.height = 1;
+    image.rgba = {255u, 255u, 255u, 255u};
+    image.meaningful_alpha = false;
+    return image;
+}
+
 TextureHandle store(std::string key, Images::Image image)
 {
     const TextureHandle handle = Internal::reserveTexture(key);
     if (handle == INVALID_TEXTURE) return INVALID_TEXTURE;
-    const TextureAsset *current = texture(handle);
-    if (current && !current->image.rgba.empty()) return handle;
+    if (Internal::textureStorageReady(handle)) return handle;
     return Internal::publishTexture(handle, std::move(image)) ? handle : INVALID_TEXTURE;
 }
 
@@ -119,15 +134,22 @@ TextureHandle Internal::reserveTexture(const std::string& key)
     if (const TextureHandle existing = findTexture(key); existing != INVALID_TEXTURE) return existing;
     if (assets().size() >= static_cast<std::size_t>(INVALID_TEXTURE)) return INVALID_TEXTURE;
     const TextureHandle handle = static_cast<TextureHandle>(assets().size());
-    assets().push_back({key, {}});
+    assets().push_back({key, fallbackImage()});
+    readiness().push_back(0u);
     cache().emplace(key, handle);
     return handle;
 }
 
+bool Internal::textureStorageReady(TextureHandle handle)
+{
+    return handle < readiness().size() && readiness()[handle] != 0u;
+}
+
 bool Internal::publishTexture(TextureHandle handle, Images::Image image)
 {
-    if (handle >= assets().size() || !validImage(image)) return false;
+    if (handle >= assets().size() || handle >= readiness().size() || !validImage(image)) return false;
     assets()[handle].image = std::move(image);
+    readiness()[handle] = 1u;
     Internal::touchResources();
     return true;
 }
@@ -144,16 +166,12 @@ TextureHandle loadTexture(const std::string& path, std::string *error)
     if (Internal::textureImportActive()) return Internal::registerDeferredFile(key);
 
     const TextureHandle existing = Internal::findTexture(key);
-    if (existing != INVALID_TEXTURE) {
-        const TextureAsset *asset = texture(existing);
-        if (asset && !asset->image.rgba.empty()) return existing;
-        Images::Image image;
-        if (!Images::load(key, &image, error)) return INVALID_TEXTURE;
-        return Internal::publishTexture(existing, std::move(image)) ? existing : INVALID_TEXTURE;
-    }
+    if (existing != INVALID_TEXTURE && Internal::textureStorageReady(existing)) return existing;
 
     Images::Image image;
     if (!Images::load(key, &image, error)) return INVALID_TEXTURE;
+    if (existing != INVALID_TEXTURE)
+        return Internal::publishTexture(existing, std::move(image)) ? existing : INVALID_TEXTURE;
     return store(key, std::move(image));
 }
 
@@ -194,7 +212,8 @@ TextureHandle combineTextureOpacity(
         return Internal::registerDeferredOpacity(color, opacity);
 
     const std::string key = color_asset->path + "\n@opacity:" + opacity_asset->path;
-    if (const TextureHandle found = Internal::findTexture(key); found != INVALID_TEXTURE) return found;
+    if (const TextureHandle found = Internal::findTexture(key); found != INVALID_TEXTURE &&
+        Internal::textureStorageReady(found)) return found;
 
     Images::Image image = color_asset->image;
     if (!applyOpacity(&image, opacity_asset->image, error)) return INVALID_TEXTURE;
@@ -226,16 +245,12 @@ TextureHandle loadTextureMemory(
     }
 
     const TextureHandle existing = Internal::findTexture(cache_key);
-    if (existing != INVALID_TEXTURE) {
-        const TextureAsset *asset = texture(existing);
-        if (asset && !asset->image.rgba.empty()) return existing;
-        Images::Image image;
-        if (!Images::loadMemory(data, size, &image, error)) return INVALID_TEXTURE;
-        return Internal::publishTexture(existing, std::move(image)) ? existing : INVALID_TEXTURE;
-    }
+    if (existing != INVALID_TEXTURE && Internal::textureStorageReady(existing)) return existing;
 
     Images::Image image;
     if (!Images::loadMemory(data, size, &image, error)) return INVALID_TEXTURE;
+    if (existing != INVALID_TEXTURE)
+        return Internal::publishTexture(existing, std::move(image)) ? existing : INVALID_TEXTURE;
     return store(cache_key, std::move(image));
 }
 
@@ -249,21 +264,21 @@ TextureHandle registerTextureImage(
         if (error) *error = "empty texture image cache key";
         return INVALID_TEXTURE;
     }
+
+    if (Internal::textureImportActive()) {
+        const TextureHandle deferred = Internal::registerDeferredDerivedKey(cache_key);
+        if (deferred != INVALID_TEXTURE) return deferred;
+    }
+
     if (!validImage(image)) {
-        if (Internal::textureImportActive()) {
-            const TextureHandle deferred = Internal::registerDeferredDerivedKey(cache_key);
-            if (deferred != INVALID_TEXTURE) return deferred;
-        }
         if (error) *error = "invalid texture image";
         return INVALID_TEXTURE;
     }
 
     const TextureHandle existing = Internal::findTexture(cache_key);
-    if (existing != INVALID_TEXTURE) {
-        const TextureAsset *asset = texture(existing);
-        if (asset && !asset->image.rgba.empty()) return existing;
+    if (existing != INVALID_TEXTURE && Internal::textureStorageReady(existing)) return existing;
+    if (existing != INVALID_TEXTURE)
         return Internal::publishTexture(existing, std::move(image)) ? existing : INVALID_TEXTURE;
-    }
 
     const TextureHandle handle = store(cache_key, std::move(image));
     if (handle == INVALID_TEXTURE && error) *error = "texture handle space exhausted";
@@ -279,6 +294,7 @@ void clearTextureCache()
 {
     cache().clear();
     assets().clear();
+    readiness().clear();
 }
 
 } // namespace Models
