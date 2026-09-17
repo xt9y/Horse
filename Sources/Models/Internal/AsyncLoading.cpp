@@ -27,6 +27,7 @@ struct WorkResult
 
 struct Request
 {
+    LoadHandle handle = INVALID_LOAD;
     std::string path;
     LoadState state = LoadState::Pending;
     ModelHandle model = INVALID_MODEL;
@@ -39,8 +40,10 @@ struct Request
 struct Runtime
 {
     std::vector<Request> requests;
+    std::unordered_map<LoadHandle, std::size_t> request_indices;
     std::unordered_map<std::string, LoadHandle> paths;
     std::uint64_t generation = 1u;
+    LoadHandle next_handle = 0u;
     std::size_t in_flight = 0u;
 };
 
@@ -54,6 +57,22 @@ Core::Jobs::Group modelJobGroup()
 {
     static const Core::Jobs::Group value = Core::Jobs::createGroup();
     return value;
+}
+
+Request *requestFor(Runtime& state, LoadHandle handle)
+{
+    const auto found = state.request_indices.find(handle);
+    if (found == state.request_indices.end() || found->second >= state.requests.size())
+        return nullptr;
+    return &state.requests[found->second];
+}
+
+const Request *requestFor(const Runtime& state, LoadHandle handle)
+{
+    const auto found = state.request_indices.find(handle);
+    if (found == state.request_indices.end() || found->second >= state.requests.size())
+        return nullptr;
+    return &state.requests[found->second];
 }
 
 void fail(Request& request, std::string error)
@@ -71,17 +90,18 @@ void complete(
     const std::shared_ptr<WorkResult>& result)
 {
     Runtime& state = runtime();
-    if (generation != state.generation || handle >= state.requests.size()) return;
+    if (generation != state.generation) return;
 
-    Request& request = state.requests[handle];
-    if (request.generation != generation || request.state != LoadState::Pending || !request.submitted)
+    Request *request = requestFor(state, handle);
+    if (!request || request->generation != generation ||
+        request->state != LoadState::Pending || !request->submitted)
         return;
 
-    request.submitted = false;
+    request->submitted = false;
     if (state.in_flight != 0u) --state.in_flight;
 
     if (!result || !result->ok) {
-        fail(request, result ? result->error : std::string("model load produced no result"));
+        fail(*request, result ? result->error : std::string("model load produced no result"));
         return;
     }
 
@@ -90,36 +110,36 @@ void complete(
     if (!materializeStagedTextures(result->staged, &mapping, &error) ||
         !remapDocumentTextures(result->staged.document, mapping, &error))
     {
-        fail(request, std::move(error));
+        fail(*request, std::move(error));
         return;
     }
 
     const ModelHandle model = publishDocument(
-        request.path,
+        request->path,
         std::move(result->staged.document),
         &error);
     if (model == INVALID_MODEL) {
-        fail(request, std::move(error));
+        fail(*request, std::move(error));
         return;
     }
 
-    request.model = model;
-    request.error.clear();
-    request.work.reset();
-    request.state = LoadState::Ready;
+    request->model = model;
+    request->error.clear();
+    request->work.reset();
+    request->state = LoadState::Ready;
 }
 
 bool schedule(LoadHandle handle)
 {
     Runtime& state = runtime();
-    if (handle >= state.requests.size() || state.in_flight >= MaximumInFlightModelJobs)
+    if (state.in_flight >= MaximumInFlightModelJobs) return false;
+
+    Request *request = requestFor(state, handle);
+    if (!request || request->state != LoadState::Pending || request->submitted)
         return false;
 
-    Request& request = state.requests[handle];
-    if (request.state != LoadState::Pending || request.submitted) return false;
-
-    const std::uint64_t generation = request.generation;
-    const std::string path = request.path;
+    const std::uint64_t generation = request->generation;
+    const std::string path = request->path;
     const auto result = std::make_shared<WorkResult>();
 
     const bool queued = Core::Jobs::trySubmit(
@@ -133,8 +153,8 @@ bool schedule(LoadHandle handle)
     );
     if (!queued) return false;
 
-    request.work = result;
-    request.submitted = true;
+    request->work = result;
+    request->submitted = true;
     ++state.in_flight;
     return true;
 }
@@ -143,11 +163,10 @@ void schedulePending()
 {
     Runtime& state = runtime();
     if (state.in_flight >= MaximumInFlightModelJobs) return;
-    for (std::size_t index = 0u;
-         index < state.requests.size() && state.in_flight < MaximumInFlightModelJobs;
-         ++index)
-    {
-        schedule(static_cast<LoadHandle>(index));
+
+    for (const Request& request : state.requests) {
+        if (state.in_flight >= MaximumInFlightModelJobs) break;
+        schedule(request.handle);
     }
 }
 
@@ -161,10 +180,10 @@ LoadHandle requestModelLoad(const std::string& path)
 
     if (const auto found = state.paths.find(normalized); found != state.paths.end())
         return found->second;
-    if (state.requests.size() >= static_cast<std::size_t>(INVALID_LOAD))
-        return INVALID_LOAD;
+    if (state.next_handle == INVALID_LOAD) return INVALID_LOAD;
 
     Request request;
+    request.handle = state.next_handle++;
     request.path = normalized;
     request.generation = state.generation;
 
@@ -173,20 +192,23 @@ LoadHandle requestModelLoad(const std::string& path)
         request.model = existing;
     }
 
-    const LoadHandle handle = static_cast<LoadHandle>(state.requests.size());
+    const LoadHandle handle = request.handle;
+    const std::size_t index = state.requests.size();
     state.requests.push_back(std::move(request));
+    state.request_indices.emplace(handle, index);
     state.paths.emplace(normalized, handle);
 
-    if (state.requests[handle].state == LoadState::Pending) schedulePending();
+    if (state.requests[index].state == LoadState::Pending) schedulePending();
     return handle;
 }
 
 LoadState modelLoadState(LoadHandle handle)
 {
     pumpModelLoads();
-    Runtime& state = runtime();
-    if (handle >= state.requests.size()) return LoadState::Failed;
-    return state.requests[handle].state;
+
+    const Runtime& state = runtime();
+    const Request *request = requestFor(state, handle);
+    return request ? request->state : LoadState::Failed;
 }
 
 ModelHandle modelLoadResult(LoadHandle handle, std::string *error)
@@ -194,15 +216,15 @@ ModelHandle modelLoadResult(LoadHandle handle, std::string *error)
     if (error) error->clear();
     pumpModelLoads();
 
-    Runtime& state = runtime();
-    if (handle >= state.requests.size()) {
+    const Runtime& state = runtime();
+    const Request *request = requestFor(state, handle);
+    if (!request) {
         if (error) *error = "invalid model load handle";
         return INVALID_MODEL;
     }
 
-    const Request& request = state.requests[handle];
-    if (request.state == LoadState::Ready) return request.model;
-    if (request.state == LoadState::Failed && error) *error = request.error;
+    if (request->state == LoadState::Ready) return request->model;
+    if (request->state == LoadState::Failed && error) *error = request->error;
     return INVALID_MODEL;
 }
 
@@ -224,6 +246,7 @@ void clearModelLoads()
     Core::Jobs::pump(modelJobGroup());
 
     state.requests.clear();
+    state.request_indices.clear();
     state.paths.clear();
     state.in_flight = 0u;
 }
