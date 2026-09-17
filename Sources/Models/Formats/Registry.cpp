@@ -46,6 +46,7 @@ bool cacheEligible(const std::string& path)
 bool cachedLoad(const std::string& path, Document *output, std::string *error)
 {
     if (!output) return false;
+    Internal::pumpTextureResources();
 
     Internal::StagedModel staged;
     if (!stage(path, &staged, error)) return false;
@@ -122,7 +123,7 @@ std::uint64_t sourceLoaderInvocationCount()
 
 Registration::Registration(const char *extension, Loader loader)
 {
-    if (extension) registerLoader(std::move(extension), loader);
+    if (extension) registerLoader(extension, loader);
 }
 
 } // namespace Models::Formats
