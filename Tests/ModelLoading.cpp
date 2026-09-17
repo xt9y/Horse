@@ -3,6 +3,7 @@
 #include <Models/Core/Texture.hpp>
 #include <Models/Formats/GltfDependencies.hpp>
 #include <Models/Formats/Registry.hpp>
+#include <Models/Internal/ModelCache.hpp>
 #include <Models/Internal/TextureStorage.hpp>
 #include <Models/Internal/TextureStreaming.hpp>
 #include <Renderer/Scenes/SceneCache.hpp>
@@ -11,6 +12,7 @@
 #include <atomic>
 #include <cassert>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -44,6 +46,15 @@ void writeText(const std::filesystem::path& path, const std::string& text)
     assert(file);
     file.write(text.data(), static_cast<std::streamsize>(text.size()));
     assert(file.good());
+}
+
+void setCacheRoot(const std::filesystem::path& path)
+{
+#ifdef _WIN32
+    assert(_putenv_s("HORSE_MODEL_CACHE_DIR", path.string().c_str()) == 0);
+#else
+    assert(setenv("HORSE_MODEL_CACHE_DIR", path.string().c_str(), 1) == 0);
+#endif
 }
 
 void testJobsRunWorkOffThreadAndCompletionOnCaller()
@@ -84,8 +95,7 @@ void testDeferredTexturePublishesOnlyAfterPump()
         std::vector<std::uint8_t>(TinyPng.begin(), TinyPng.end())
     );
     assert(handle != Models::INVALID_TEXTURE);
-    const Models::TextureAsset *before = Models::texture(handle);
-    assert(before != nullptr);
+    assert(Models::texture(handle) != nullptr);
     assert(!Models::Internal::textureStorageReady(handle));
     assert(Models::Internal::textureState(handle) != Models::Internal::TextureState::Ready);
 
@@ -174,6 +184,138 @@ void testGltfDependenciesRecordExternalBuffers()
     std::filesystem::remove_all(directory, ignored);
 }
 
+Models::Formats::Document cacheDocument(Models::TextureHandle texture)
+{
+    Models::Formats::Document document;
+    Models::Formats::Part part;
+    part.mesh.vertices = {
+        {{0.0f, 0.0f, 0.0f}},
+        {{1.0f, 0.0f, 0.0f}},
+        {{0.0f, 1.0f, 0.0f}},
+    };
+    part.mesh.indices = {0u, 1u, 2u};
+    part.mesh.bounds.minimum = {0.0f, 0.0f, 0.0f};
+    part.mesh.bounds.maximum = {1.0f, 1.0f, 0.0f};
+    part.material.name = "cache-material";
+    part.material.color = {0.25f, 0.5f, 0.75f};
+    part.material.diffuse_texture = texture;
+    part.material.base_color_info.texture = texture;
+    document.parts.push_back(std::move(part));
+
+    Models::NodeData node;
+    node.name = "cache-node";
+    node.parts = {0u};
+    document.nodes.push_back(std::move(node));
+
+    Models::SceneData scene;
+    scene.name = "cache-scene";
+    scene.nodes = {0u};
+    document.scenes.push_back(std::move(scene));
+    document.default_scene = 0u;
+    return document;
+}
+
+void testCompiledCacheRoundTripAndTextureGraph()
+{
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+
+    const std::filesystem::path directory = temporaryDirectory("horse-model-cache-roundtrip");
+    setCacheRoot(directory / "cache");
+    const std::filesystem::path source = directory / "source.gltf";
+    writeText(source, "source");
+
+    const Models::TextureHandle texture = Models::Internal::registerDeferredMemory(
+        "cache-embedded-image",
+        std::vector<std::uint8_t>(TinyPng.begin(), TinyPng.end())
+    );
+    assert(texture != Models::INVALID_TEXTURE);
+    Models::Formats::Document document = cacheDocument(texture);
+
+    Models::Internal::ModelCache::Payload payload;
+    std::string error;
+    assert(Models::Internal::ModelCache::encode(source.string(), document, &payload, &error));
+    assert(error.empty());
+    assert(!payload.bytes.empty());
+    Models::Internal::ModelCache::writeAsync(source.string(), std::move(payload));
+    Core::Jobs::wait();
+
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+
+    Models::Formats::Document restored;
+    assert(Models::Internal::ModelCache::load(source.string(), &restored, &error));
+    assert(error.empty());
+    assert(restored.parts.size() == 1u);
+    assert(restored.parts[0].mesh.vertices.size() == 3u);
+    assert(restored.parts[0].mesh.indices == std::vector<std::uint32_t>({0u, 1u, 2u}));
+    assert(restored.parts[0].material.name == "cache-material");
+    assert(restored.nodes.size() == 1u && restored.nodes[0].name == "cache-node");
+    assert(restored.scenes.size() == 1u && restored.scenes[0].name == "cache-scene");
+    assert(restored.default_scene == 0u);
+
+    const Models::TextureHandle restored_texture = restored.parts[0].material.diffuse_texture;
+    assert(restored_texture != Models::INVALID_TEXTURE);
+    Models::Internal::TextureSourceDescriptor descriptor;
+    assert(Models::Internal::textureDescriptor(restored_texture, &descriptor));
+    assert(descriptor.kind == Models::Internal::TextureSourceKind::Memory);
+    assert(descriptor.bytes.size() == TinyPng.size());
+
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
+void testCompiledCacheInvalidatesDependenciesAndCorruption()
+{
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+
+    const std::filesystem::path directory = temporaryDirectory("horse-model-cache-invalidation");
+    setCacheRoot(directory / "cache");
+    const std::filesystem::path source = directory / "source.gltf";
+    const std::filesystem::path bin = directory / "mesh.bin";
+    writeText(source, "source");
+    writeText(bin, "mesh");
+
+    Models::Formats::Document document = cacheDocument(Models::INVALID_TEXTURE);
+    document.dependencies.push_back(bin.string());
+
+    Models::Internal::ModelCache::Payload payload;
+    std::string error;
+    assert(Models::Internal::ModelCache::encode(source.string(), document, &payload, &error));
+    Models::Internal::ModelCache::writeAsync(source.string(), std::move(payload));
+    Core::Jobs::wait();
+
+    Models::Formats::Document restored;
+    assert(Models::Internal::ModelCache::load(source.string(), &restored, &error));
+
+    writeText(bin, "mesh-mutated");
+    assert(!Models::Internal::ModelCache::load(source.string(), &restored, &error));
+
+    writeText(bin, "mesh");
+    Models::Internal::ModelCache::Payload fresh;
+    assert(Models::Internal::ModelCache::encode(source.string(), document, &fresh, &error));
+    Models::Internal::ModelCache::writeAsync(source.string(), std::move(fresh));
+    Core::Jobs::wait();
+
+    const std::filesystem::path cache_path = Models::Internal::ModelCache::pathFor(source.string());
+    {
+        std::fstream file(cache_path, std::ios::binary | std::ios::in | std::ios::out);
+        assert(file);
+        file.seekg(-1, std::ios::end);
+        char byte = 0;
+        file.read(&byte, 1);
+        byte ^= 0x5a;
+        file.seekp(-1, std::ios::end);
+        file.write(&byte, 1);
+        assert(file.good());
+    }
+    assert(!Models::Internal::ModelCache::load(source.string(), &restored, &error));
+
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+}
+
 } // namespace
 
 int main()
@@ -184,6 +326,8 @@ int main()
     testModelImportScopeDoesNotDecodeTextureMemorySynchronously();
     testSceneResourceSyncPumpsCompletedTextures();
     testGltfDependenciesRecordExternalBuffers();
+    testCompiledCacheRoundTripAndTextureGraph();
+    testCompiledCacheInvalidatesDependenciesAndCorruption();
     Models::Internal::clearTextureStreaming();
     Models::clearTextureCache();
     Core::Jobs::shutdown();
