@@ -69,6 +69,12 @@ int main()
     started.store(false, std::memory_order_release);
     const Models::LoadHandle current = Models::loadAsync("generation.asynclife");
     assert(current != Models::INVALID_LOAD);
+    assert(current != stale);
+
+    error.clear();
+    assert(Models::loadResult(stale, &error) == Models::INVALID_MODEL);
+    assert(!error.empty());
+
     assert(waitFor(current) == Models::LoadState::Ready);
     const Models::ModelHandle model = Models::loadResult(current, &error);
     assert(model != Models::INVALID_MODEL);
