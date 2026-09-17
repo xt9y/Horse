@@ -7,7 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <string>
-#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace Models::Internal::ModelCacheBinary {
@@ -85,6 +85,7 @@ public:
         return true;
     }
 
+    void invalidate() { ok_ = false; }
     bool good() const { return ok_; }
     const std::vector<std::uint8_t>& bytes() const { return bytes_; }
     std::vector<std::uint8_t> take() { return std::move(bytes_); }
@@ -118,7 +119,7 @@ public:
     {
         if (!value || remaining() < 2u) return fail();
         *value = static_cast<std::uint16_t>(data_[offset_]) |
-            static_cast<std::uint16_t>(data_[offset_ + 1u] << 8u);
+            static_cast<std::uint16_t>(static_cast<std::uint16_t>(data_[offset_ + 1u]) << 8u);
         offset_ += 2u;
         return true;
     }
