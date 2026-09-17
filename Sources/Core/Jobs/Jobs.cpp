@@ -29,6 +29,7 @@ struct Runtime
     std::size_t capacity = 0u;
     bool started = false;
     bool stopping = false;
+    bool closed = false;
 
     ~Runtime()
     {
@@ -37,7 +38,7 @@ struct Runtime
 
     void startLocked()
     {
-        if (started) return;
+        if (started || closed) return;
 
         const unsigned int hardware = std::thread::hardware_concurrency();
         const std::size_t count = std::max<std::size_t>(
@@ -87,6 +88,7 @@ struct Runtime
         std::vector<std::jthread> joined;
         {
             std::lock_guard lock(mutex);
+            closed = true;
             if (!started) {
                 work.clear();
                 completions.clear();
@@ -127,6 +129,7 @@ bool trySubmit(Work work, Completion completion)
     Runtime& state = runtime();
     {
         std::lock_guard lock(state.mutex);
+        if (state.closed) return false;
         state.startLocked();
         if (state.stopping || state.work.size() >= state.capacity) return false;
         state.work.push_back({std::move(work), std::move(completion)});
