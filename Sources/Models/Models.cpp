@@ -1,5 +1,6 @@
 #include "Models/Models.hpp"
 
+#include "Models/Internal/AsyncLoading.hpp"
 #include "Models/Internal/MeshRevision.hpp"
 #include "Models/Core/Texture.hpp"
 #include "Models/Formats/Registry.hpp"
@@ -153,11 +154,47 @@ void Internal::touchResources()
     bumpResourceRevision();
 }
 
+std::string Internal::normalizeModelPath(const std::string& path)
+{
+    return normalizedPath(path);
+}
+
+ModelHandle Internal::loadedModelForPath(const std::string& normalized_path)
+{
+    const auto found = cache().find(normalized_path);
+    return found == cache().end() ? INVALID_MODEL : found->second;
+}
+
+ModelHandle Internal::publishDocument(
+    const std::string& normalized_path,
+    Formats::Document document,
+    std::string *error)
+{
+    if (error) error->clear();
+    if (const ModelHandle existing = loadedModelForPath(normalized_path); existing != INVALID_MODEL)
+        return existing;
+
+    const bool empty_asset = document.parts.empty() && document.nodes.empty() && document.scenes.empty() &&
+        document.cameras.empty() && document.lights.empty() && document.skins.empty() &&
+        document.model_animations.empty() && document.instances.empty() &&
+        document.extras_json.empty() && document.extensions_json.empty();
+    if (empty_asset) {
+        if (error) *error = "model contains no loadable asset data: " + normalized_path;
+        return INVALID_MODEL;
+    }
+
+    const ModelHandle handle = storeModel(normalized_path, std::move(document));
+    if (handle == INVALID_MODEL && error && error->empty())
+        *error = "failed to publish model: " + normalized_path;
+    return handle;
+}
+
 ModelHandle load(const std::string& path, std::string *error)
 {
     if (error) error->clear();
-    const std::string key = normalizedPath(path);
-    if (const auto found = cache().find(key); found != cache().end()) return found->second;
+    const std::string key = Internal::normalizeModelPath(path);
+    if (const ModelHandle existing = Internal::loadedModelForPath(key); existing != INVALID_MODEL)
+        return existing;
 
     const std::string extension = lowerExtension(key);
     const Formats::Loader loader = Formats::loaderFor(extension);
@@ -167,19 +204,23 @@ ModelHandle load(const std::string& path, std::string *error)
     }
 
     Formats::Document document;
-    {
-        Internal::TextureImportScope texture_import;
-        if (!loader(key, &document, error)) return INVALID_MODEL;
-    }
-    const bool empty_asset = document.parts.empty() && document.nodes.empty() && document.scenes.empty() &&
-        document.cameras.empty() && document.lights.empty() && document.skins.empty() &&
-        document.model_animations.empty() && document.instances.empty() &&
-        document.extras_json.empty() && document.extensions_json.empty();
-    if (empty_asset) {
-        if (error) *error = "model contains no loadable asset data: " + key;
-        return INVALID_MODEL;
-    }
-    return storeModel(key, std::move(document));
+    if (!loader(key, &document, error)) return INVALID_MODEL;
+    return Internal::publishDocument(key, std::move(document), error);
+}
+
+LoadHandle loadAsync(const std::string& path)
+{
+    return Internal::requestModelLoad(path);
+}
+
+LoadState loadState(LoadHandle handle)
+{
+    return Internal::modelLoadState(handle);
+}
+
+ModelHandle loadResult(LoadHandle handle, std::string *error)
+{
+    return Internal::modelLoadResult(handle, error);
 }
 
 MeshHandle Internal::registerMesh(MeshData mesh)
@@ -449,7 +490,7 @@ std::uint64_t resourceRevision()
 
 void clearCache()
 {
-    Internal::clearTextureStreaming();
+    Internal::clearModelLoads();
     cache().clear();
     models().clear();
     meshes().clear();
