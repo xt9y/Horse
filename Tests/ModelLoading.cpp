@@ -11,6 +11,14 @@
 
 namespace {
 
+constexpr std::array<std::uint8_t, 67> TinyPng{{
+    0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
+    0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,
+    0x89,0x00,0x00,0x00,0x0a,0x49,0x44,0x41,0x54,0x78,0x9c,0x63,0x60,0x00,0x00,0x00,
+    0x02,0x00,0x01,0xe5,0x27,0xd4,0xa2,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,
+    0x42,0x60,0x82
+}};
+
 void testJobsRunWorkOffThreadAndCompletionOnCaller()
 {
     const std::thread::id caller = std::this_thread::get_id();
@@ -41,20 +49,12 @@ void testJobsRunWorkOffThreadAndCompletionOnCaller()
 
 void testDeferredTexturePublishesOnlyAfterPump()
 {
-    static constexpr std::array<std::uint8_t, 67> Png{{
-        0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
-        0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,
-        0x89,0x00,0x00,0x00,0x0a,0x49,0x44,0x41,0x54,0x78,0x9c,0x63,0x60,0x00,0x00,0x00,
-        0x02,0x00,0x01,0xe5,0x27,0xd4,0xa2,0x00,0x00,0x00,0x00,0x49,0x45,0x4e,0x44,0xae,
-        0x42,0x60,0x82
-    }};
-
     Models::Internal::clearTextureStreaming();
     Models::clearTextureCache();
 
     const auto handle = Models::Internal::registerDeferredMemory(
         "model-loading-test.png",
-        std::vector<std::uint8_t>(Png.begin(), Png.end())
+        std::vector<std::uint8_t>(TinyPng.begin(), TinyPng.end())
     );
     assert(handle != Models::INVALID_TEXTURE);
     const Models::TextureAsset *before = Models::texture(handle);
@@ -82,6 +82,28 @@ void testDeferredTextureDeduplicatesSource()
     assert(first == second);
 }
 
+void testModelImportScopeDoesNotDecodeTextureMemorySynchronously()
+{
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+
+    Models::TextureHandle handle = Models::INVALID_TEXTURE;
+    {
+        Models::Internal::TextureImportScope import;
+        handle = Models::loadTextureMemory(
+            "scoped-model-texture.png",
+            TinyPng.data(),
+            TinyPng.size()
+        );
+    }
+
+    assert(handle != Models::INVALID_TEXTURE);
+    const Models::TextureAsset *asset = Models::texture(handle);
+    assert(asset != nullptr);
+    assert(asset->image.rgba.empty());
+    assert(Models::Internal::textureState(handle) != Models::Internal::TextureState::Ready);
+}
+
 } // namespace
 
 int main()
@@ -89,6 +111,7 @@ int main()
     testJobsRunWorkOffThreadAndCompletionOnCaller();
     testDeferredTexturePublishesOnlyAfterPump();
     testDeferredTextureDeduplicatesSource();
+    testModelImportScopeDoesNotDecodeTextureMemorySynchronously();
     Models::Internal::clearTextureStreaming();
     Models::clearTextureCache();
     Core::Jobs::shutdown();
