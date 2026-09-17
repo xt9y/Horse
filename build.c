@@ -27,9 +27,7 @@ static void configureLibrary(C_Target *target)
     c_warnings_strict(target);
     c_include(target, ".");
     c_include(target, "Sources");
-
     configurePlatform(target);
-
 #ifdef __APPLE__
     c_link_flag(target, "-Wl,-install_name,@rpath/libHorse.dylib");
 #else
@@ -50,12 +48,7 @@ static void configureTest(C_Target *target, C_Target *library)
 
 void build(C_Build *b)
 {
-    C_Dependency *imgui = c_git(
-        b,
-        "imgui",
-        "https://github.com/ocornut/imgui.git",
-        "v1.92.9b"
-    );
+    C_Dependency *imgui = c_git(b, "imgui", "https://github.com/ocornut/imgui.git", "v1.92.9b");
     c_dep_source(imgui);
     c_dep_include(imgui, ".");
     c_dep_include(imgui, "backends");
@@ -74,13 +67,11 @@ void build(C_Build *b)
     c_dep_flag(imgui, "-I/usr/local/include");
 
     C_Target *library = c_shared_library(b, "Horse");
-
     c_sources(library, "Sources/*/*.cpp");
     c_sources(library, "Sources/Core/*/*.cpp");
     c_sources(library, "Sources/Models/*/*.cpp");
     c_sources(library, "Sources/Renderer/*/*.cpp");
     c_sources(library, "Sources/Renderer/GlobalIllumination/PhotonMapping/*.cpp");
-
     c_flag(library, "-std=c++20");
     configureLibrary(library);
     c_use(library, imgui);
@@ -104,6 +95,10 @@ void build(C_Build *b)
     C_Target *texture_cache_clear_tests = c_test(b, "HorseTextureCacheClearTests");
     c_sources(texture_cache_clear_tests, "Tests/TextureCacheClear.cpp");
     configureTest(texture_cache_clear_tests, library);
+
+    C_Target *streaming_failure_tests = c_test(b, "HorseTextureStreamingFailureTests");
+    c_sources(streaming_failure_tests, "Tests/TextureStreamingFailure.cpp");
+    configureTest(streaming_failure_tests, library);
 
     C_Target *streaming_tests = c_test(b, "HorseTextureStreamingBackpressureTests");
     c_sources(streaming_tests, "Tests/TextureStreamingBackpressure.cpp");
