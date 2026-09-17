@@ -16,6 +16,8 @@
 namespace Models::Internal {
 namespace {
 
+constexpr std::size_t MaximumInFlightModelJobs = 2u;
+
 struct WorkResult
 {
     bool ok = false;
@@ -31,6 +33,7 @@ struct Request
     std::string error;
     std::uint64_t generation = 0u;
     std::shared_ptr<WorkResult> work;
+    bool submitted = false;
 };
 
 struct Runtime
@@ -38,6 +41,7 @@ struct Runtime
     std::vector<Request> requests;
     std::unordered_map<std::string, LoadHandle> paths;
     std::uint64_t generation = 1u;
+    std::size_t in_flight = 0u;
 };
 
 Runtime& runtime()
@@ -57,6 +61,7 @@ void fail(Request& request, std::string error)
     request.model = INVALID_MODEL;
     request.error = std::move(error);
     request.work.reset();
+    request.submitted = false;
     request.state = LoadState::Failed;
 }
 
@@ -69,7 +74,12 @@ void complete(
     if (generation != state.generation || handle >= state.requests.size()) return;
 
     Request& request = state.requests[handle];
-    if (request.generation != generation || request.state != LoadState::Pending) return;
+    if (request.generation != generation || request.state != LoadState::Pending || !request.submitted)
+        return;
+
+    request.submitted = false;
+    if (state.in_flight != 0u) --state.in_flight;
+
     if (!result || !result->ok) {
         fail(request, result ? result->error : std::string("model load produced no result"));
         return;
@@ -99,6 +109,48 @@ void complete(
     request.state = LoadState::Ready;
 }
 
+bool schedule(LoadHandle handle)
+{
+    Runtime& state = runtime();
+    if (handle >= state.requests.size() || state.in_flight >= MaximumInFlightModelJobs)
+        return false;
+
+    Request& request = state.requests[handle];
+    if (request.state != LoadState::Pending || request.submitted) return false;
+
+    const std::uint64_t generation = request.generation;
+    const std::string path = request.path;
+    const auto result = std::make_shared<WorkResult>();
+
+    const bool queued = Core::Jobs::trySubmit(
+        modelJobGroup(),
+        [path, result] {
+            result->ok = Formats::stage(path, &result->staged, &result->error);
+        },
+        [handle, generation, result] {
+            complete(handle, generation, result);
+        }
+    );
+    if (!queued) return false;
+
+    request.work = result;
+    request.submitted = true;
+    ++state.in_flight;
+    return true;
+}
+
+void schedulePending()
+{
+    Runtime& state = runtime();
+    if (state.in_flight >= MaximumInFlightModelJobs) return;
+    for (std::size_t index = 0u;
+         index < state.requests.size() && state.in_flight < MaximumInFlightModelJobs;
+         ++index)
+    {
+        schedule(static_cast<LoadHandle>(index));
+    }
+}
+
 } // namespace
 
 LoadHandle requestModelLoad(const std::string& path)
@@ -125,24 +177,7 @@ LoadHandle requestModelLoad(const std::string& path)
     state.requests.push_back(std::move(request));
     state.paths.emplace(normalized, handle);
 
-    Request& stored = state.requests[handle];
-    if (stored.state == LoadState::Ready) return handle;
-
-    const std::uint64_t generation = stored.generation;
-    const auto result = std::make_shared<WorkResult>();
-    stored.work = result;
-
-    const bool queued = Core::Jobs::trySubmit(
-        modelJobGroup(),
-        [normalized, result] {
-            result->ok = Formats::stage(normalized, &result->staged, &result->error);
-        },
-        [handle, generation, result] {
-            complete(handle, generation, result);
-        }
-    );
-
-    if (!queued) fail(stored, "model load queue is full");
+    if (state.requests[handle].state == LoadState::Pending) schedulePending();
     return handle;
 }
 
@@ -173,7 +208,9 @@ ModelHandle modelLoadResult(LoadHandle handle, std::string *error)
 
 std::size_t pumpModelLoads()
 {
-    return Core::Jobs::pump(modelJobGroup());
+    const std::size_t completed = Core::Jobs::pump(modelJobGroup());
+    schedulePending();
+    return completed;
 }
 
 void clearModelLoads()
@@ -188,6 +225,7 @@ void clearModelLoads()
 
     state.requests.clear();
     state.paths.clear();
+    state.in_flight = 0u;
 }
 
 } // namespace Models::Internal
