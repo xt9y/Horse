@@ -208,7 +208,8 @@ public:
     {
         std::uint64_t count_value = 0u;
         if (!u64(&count_value) || count_value > maximum ||
-            count_value > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) || !value)
+            count_value > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) ||
+            count_value > static_cast<std::uint64_t>(remaining()) || !value)
             return fail();
         *value = static_cast<std::size_t>(count_value);
         return true;
