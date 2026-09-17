@@ -105,12 +105,15 @@ int main()
 {
     const std::filesystem::path root =
         std::filesystem::temp_directory_path() / "horse-async-gltf-loading";
-    const std::filesystem::path model_path = writeFixture(root / "asset");
+    std::error_code ec;
+    std::filesystem::remove_all(root, ec);
+    const std::filesystem::path sync_path = writeFixture(root / "sync-asset");
+    const std::filesystem::path async_path = writeFixture(root / "async-asset");
     setCacheRoot(root / "cache");
 
     Models::clearCache();
     std::string error;
-    const Models::ModelHandle sync = Models::load(model_path.string(), &error);
+    const Models::ModelHandle sync = Models::load(sync_path.string(), &error);
     assert(sync != Models::INVALID_MODEL);
     assert(error.empty());
     assert(Models::partCount(sync) == 1u);
@@ -124,11 +127,9 @@ int main()
     assert(sync_material->diffuse_texture != Models::INVALID_TEXTURE);
 
     Models::clearCache();
-    std::error_code ec;
-    std::filesystem::remove_all(root / "cache", ec);
 
     const auto begin = std::chrono::steady_clock::now();
-    const Models::LoadHandle request = Models::loadAsync(model_path.string());
+    const Models::LoadHandle request = Models::loadAsync(async_path.string());
     const auto submit_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - begin);
     assert(request != Models::INVALID_LOAD);
@@ -150,6 +151,5 @@ int main()
     assert(async_material->diffuse_texture != Models::INVALID_TEXTURE);
 
     Models::clearCache();
-    std::filesystem::remove_all(root, ec);
     return 0;
 }
