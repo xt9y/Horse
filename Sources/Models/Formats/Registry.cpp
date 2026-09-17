@@ -3,6 +3,7 @@
 #include "Models/Internal/ModelCache.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <string>
@@ -28,6 +29,12 @@ std::unordered_map<std::string, Loader>& loaders()
     return values;
 }
 
+std::atomic<std::uint64_t>& sourceLoads()
+{
+    static std::atomic<std::uint64_t> value {0u};
+    return value;
+}
+
 bool cacheEligible(const std::string& path)
 {
     const std::string extension = normalize(std::filesystem::path(path).extension().string());
@@ -49,6 +56,7 @@ bool cachedLoad(const std::string& path, Document *output, std::string *error)
         }
     }
 
+    sourceLoads().fetch_add(1u, std::memory_order_relaxed);
     if (!found->second(path, output, error)) return false;
 
     if (cacheEligible(path)) {
@@ -75,6 +83,11 @@ Loader loaderFor(std::string_view extension)
 {
     const auto found = loaders().find(normalize(std::string(extension)));
     return found == loaders().end() ? nullptr : cachedLoad;
+}
+
+std::uint64_t sourceLoaderInvocationCount()
+{
+    return sourceLoads().load(std::memory_order_relaxed);
 }
 
 Registration::Registration(const char *extension, Loader loader)
