@@ -105,5 +105,9 @@ void build(C_Build *b)
     c_sources(job_shutdown_tests, "Tests/JobsShutdown.cpp");
     configureTest(job_shutdown_tests, library);
 
+    C_Target *job_group_tests = c_test(b, "HorseJobGroupTests");
+    c_sources(job_group_tests, "Tests/JobGroups.cpp");
+    configureTest(job_group_tests, library);
+
     c_default_target(b, library);
 }
