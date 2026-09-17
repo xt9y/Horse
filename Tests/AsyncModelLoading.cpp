@@ -3,6 +3,7 @@
 
 #include <cassert>
 #include <chrono>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -37,6 +38,14 @@ bool failingLoader(
     return false;
 }
 
+bool throwingLoader(
+    const std::string&,
+    Models::Formats::Document *,
+    std::string *)
+{
+    throw std::runtime_error("intentional async loader exception");
+}
+
 Models::LoadState waitFor(Models::LoadHandle handle)
 {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
@@ -58,6 +67,7 @@ int main()
     Models::clearCache();
     assert(Models::Formats::registerLoader(".asyncslow", slowLoader));
     assert(Models::Formats::registerLoader(".asyncfail", failingLoader));
+    assert(Models::Formats::registerLoader(".asyncthrow", throwingLoader));
 
     const auto begin = Clock::now();
     const Models::LoadHandle first = Models::loadAsync("async-model.asyncslow");
@@ -88,6 +98,13 @@ int main()
     error.clear();
     assert(Models::loadResult(failed, &error) == Models::INVALID_MODEL);
     assert(error == "intentional async loader failure");
+
+    const Models::LoadHandle threw = Models::loadAsync("throwing.asyncthrow");
+    assert(threw != Models::INVALID_LOAD);
+    assert(waitFor(threw) == Models::LoadState::Failed);
+    error.clear();
+    assert(Models::loadResult(threw, &error) == Models::INVALID_MODEL);
+    assert(!error.empty());
 
     Models::clearCache();
     return 0;
