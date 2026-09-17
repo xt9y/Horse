@@ -11,6 +11,7 @@
 namespace {
 
 std::atomic<int> calls{0};
+std::atomic<bool> started{false};
 
 bool lifetimeLoader(
     const std::string&,
@@ -18,6 +19,7 @@ bool lifetimeLoader(
     std::string *error)
 {
     ++calls;
+    started.store(true, std::memory_order_release);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     if (error) error->clear();
     if (!document) return false;
@@ -50,12 +52,21 @@ int main()
 
     const Models::LoadHandle stale = Models::loadAsync("generation.asynclife");
     assert(stale != Models::INVALID_LOAD);
+
+    const auto started_deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!started.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < started_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    assert(started.load(std::memory_order_acquire));
+
     Models::clearCache();
 
     std::string error;
     assert(Models::loadResult(stale, &error) == Models::INVALID_MODEL);
     assert(!error.empty());
 
+    started.store(false, std::memory_order_release);
     const Models::LoadHandle current = Models::loadAsync("generation.asynclife");
     assert(current != Models::INVALID_LOAD);
     assert(waitFor(current) == Models::LoadState::Ready);
