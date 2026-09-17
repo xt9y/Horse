@@ -1,6 +1,7 @@
 #include "Renderer/Internal/SceneResourcesSDLGPU.hpp"
 
 #include "Models/Core/Texture.hpp"
+#include "Models/Internal/TextureStorage.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
@@ -81,7 +82,13 @@ SDL_GPUTexture *SceneResources::textureFor(Models::TextureHandle handle, std::st
         return found->second;
 
     const Models::TextureAsset *asset = Models::texture(handle);
-    if (!asset || asset->image.width <= 0 || asset->image.height <= 0 || asset->image.rgba.empty()) {
+    if (!asset) {
+        if (error) *error = "scene texture handle is invalid";
+        return nullptr;
+    }
+    if (!Models::Internal::textureStorageReady(handle))
+        return white_;
+    if (asset->image.width <= 0 || asset->image.height <= 0 || asset->image.rgba.empty()) {
         if (error) *error = "scene texture has no RGBA image data";
         return nullptr;
     }
