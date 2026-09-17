@@ -1,11 +1,14 @@
 #include <Core/Jobs/Jobs.hpp>
+#include <Ecs/Ecs.hpp>
 #include <Models/Core/Texture.hpp>
 #include <Models/Internal/TextureStreaming.hpp>
+#include <Renderer/Scenes/SceneCache.hpp>
 
 #include <array>
 #include <atomic>
 #include <cassert>
 #include <cstdint>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -104,6 +107,27 @@ void testModelImportScopeDoesNotDecodeTextureMemorySynchronously()
     assert(Models::Internal::textureState(handle) != Models::Internal::TextureState::Ready);
 }
 
+void testSceneResourceSyncPumpsCompletedTextures()
+{
+    Models::Internal::clearTextureStreaming();
+    Models::clearTextureCache();
+
+    const Models::TextureHandle handle = Models::Internal::registerDeferredMemory(
+        "scene-pump-texture.png",
+        std::vector<std::uint8_t>(TinyPng.begin(), TinyPng.end())
+    );
+    assert(handle != Models::INVALID_TEXTURE);
+    Core::Jobs::wait();
+    assert(Models::Internal::textureState(handle) != Models::Internal::TextureState::Ready);
+
+    Ecs::World world;
+    Renderer::Scenes::SceneCache cache;
+    std::string error;
+    assert(cache.syncResources(world, 31u, &error));
+    assert(error.empty());
+    assert(Models::Internal::textureState(handle) == Models::Internal::TextureState::Ready);
+}
+
 } // namespace
 
 int main()
@@ -112,6 +136,7 @@ int main()
     testDeferredTexturePublishesOnlyAfterPump();
     testDeferredTextureDeduplicatesSource();
     testModelImportScopeDoesNotDecodeTextureMemorySynchronously();
+    testSceneResourceSyncPumpsCompletedTextures();
     Models::Internal::clearTextureStreaming();
     Models::clearTextureCache();
     Core::Jobs::shutdown();
