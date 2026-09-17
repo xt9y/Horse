@@ -1,12 +1,10 @@
 #include "Models/Formats/GltfAlpha.hpp"
 
 #include "Models/Core/Texture.hpp"
+#include "Models/Internal/TextureStreaming.hpp"
 
 #include <algorithm>
-#include <cmath>
-#include <cstdint>
 #include <string>
-#include <utility>
 
 namespace Models::Formats::GltfAlpha {
 namespace {
@@ -24,31 +22,21 @@ TextureHandle deriveAlpha(
     float cutoff,
     std::string *error)
 {
-    const TextureAsset *asset = texture(source);
-    if (!asset) return INVALID_TEXTURE;
+    if (error) error->clear();
+    if (!texture(source)) {
+        if (error) *error = "invalid glTF alpha source texture";
+        return INVALID_TEXTURE;
+    }
     if (mode == AlphaMode::Blend) return source;
 
-    Images::Image image = asset->image;
-    const float safe_factor = std::clamp(factor, 0.0f, 1.0f);
-    const float safe_cutoff = std::clamp(cutoff, 0.0f, 1.0f);
-    if (mode == AlphaMode::Opaque) {
-        if (!image.meaningful_alpha) return source;
-        for (std::size_t offset = 3u; offset < image.rgba.size(); offset += 4u) image.rgba[offset] = 255u;
-        image.meaningful_alpha = false;
-    } else {
-        for (std::size_t offset = 3u; offset < image.rgba.size(); offset += 4u) {
-            const float alpha = (static_cast<float>(image.rgba[offset]) / 255.0f) * safe_factor;
-            image.rgba[offset] = alpha >= safe_cutoff ? 255u : 0u;
-        }
-        image.meaningful_alpha = true;
-    }
-
-    const std::uint32_t factor_key = static_cast<std::uint32_t>(safe_factor * 65535.0f + 0.5f);
-    const std::uint32_t cutoff_key = static_cast<std::uint32_t>(safe_cutoff * 65535.0f + 0.5f);
-    const std::string suffix = mode == AlphaMode::Opaque
-        ? "opaque"
-        : "mask:" + std::to_string(factor_key) + ":" + std::to_string(cutoff_key);
-    return registerTextureImage(asset->path + "\n@gltf-alpha:" + suffix, std::move(image), error);
+    const TextureHandle handle = Internal::registerDeferredAlpha(
+        source,
+        mode,
+        std::clamp(factor, 0.0f, 1.0f),
+        std::clamp(cutoff, 0.0f, 1.0f)
+    );
+    if (handle == INVALID_TEXTURE && error) *error = "failed to register deferred glTF alpha texture";
+    return handle;
 }
 
 bool material(MaterialData *value, std::string *error)
@@ -76,10 +64,6 @@ bool material(MaterialData *value, std::string *error)
     } else {
         value->opacity = factor;
         if (original != INVALID_TEXTURE) value->diffuse_texture = original;
-        if (value->opacity >= 1.0f && original != INVALID_TEXTURE) {
-            const TextureAsset *asset = texture(original);
-            if (asset && asset->image.meaningful_alpha) value->opacity = std::nextafter(1.0f, 0.0f);
-        }
     }
 
     if (value->diffuse_texture != INVALID_TEXTURE) {
