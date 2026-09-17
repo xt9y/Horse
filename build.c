@@ -101,6 +101,10 @@ void build(C_Build *b)
     c_sources(gltf_texture_derivation_tests, "Tests/GltfTextureDerivation.cpp");
     configureTest(gltf_texture_derivation_tests, library);
 
+    C_Target *texture_cache_clear_tests = c_test(b, "HorseTextureCacheClearTests");
+    c_sources(texture_cache_clear_tests, "Tests/TextureCacheClear.cpp");
+    configureTest(texture_cache_clear_tests, library);
+
     C_Target *streaming_tests = c_test(b, "HorseTextureStreamingBackpressureTests");
     c_sources(streaming_tests, "Tests/TextureStreamingBackpressure.cpp");
     configureTest(streaming_tests, library);
