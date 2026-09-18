@@ -24,27 +24,27 @@ struct GpuBounds {
     uint4 meta;
 };
 
-StructuredBuffer<GpuBounds> Bounds : register(t0, space0);
+Texture2D<float> HiZ0  : register(t0,  space0); SamplerState Samp0  : register(s0,  space0);
+Texture2D<float> HiZ1  : register(t1,  space0); SamplerState Samp1  : register(s1,  space0);
+Texture2D<float> HiZ2  : register(t2,  space0); SamplerState Samp2  : register(s2,  space0);
+Texture2D<float> HiZ3  : register(t3,  space0); SamplerState Samp3  : register(s3,  space0);
+Texture2D<float> HiZ4  : register(t4,  space0); SamplerState Samp4  : register(s4,  space0);
+Texture2D<float> HiZ5  : register(t5,  space0); SamplerState Samp5  : register(s5,  space0);
+Texture2D<float> HiZ6  : register(t6,  space0); SamplerState Samp6  : register(s6,  space0);
+Texture2D<float> HiZ7  : register(t7,  space0); SamplerState Samp7  : register(s7,  space0);
+Texture2D<float> HiZ8  : register(t8,  space0); SamplerState Samp8  : register(s8,  space0);
+Texture2D<float> HiZ9  : register(t9,  space0); SamplerState Samp9  : register(s9,  space0);
+Texture2D<float> HiZ10 : register(t10, space0); SamplerState Samp10 : register(s10, space0);
+Texture2D<float> HiZ11 : register(t11, space0); SamplerState Samp11 : register(s11, space0);
+Texture2D<float> HiZ12 : register(t12, space0); SamplerState Samp12 : register(s12, space0);
+Texture2D<float> HiZ13 : register(t13, space0); SamplerState Samp13 : register(s13, space0);
+Texture2D<float> HiZ14 : register(t14, space0); SamplerState Samp14 : register(s14, space0);
+Texture2D<float> HiZ15 : register(t15, space0); SamplerState Samp15 : register(s15, space0);
+StructuredBuffer<GpuBounds> Bounds : register(t16, space0);
+
 RWStructuredBuffer<uint> Visibility : register(u0, space1);
 
-Texture2D<float> HiZ0  : register(t0,  space2); SamplerState Samp0  : register(s0,  space2);
-Texture2D<float> HiZ1  : register(t1,  space2); SamplerState Samp1  : register(s1,  space2);
-Texture2D<float> HiZ2  : register(t2,  space2); SamplerState Samp2  : register(s2,  space2);
-Texture2D<float> HiZ3  : register(t3,  space2); SamplerState Samp3  : register(s3,  space2);
-Texture2D<float> HiZ4  : register(t4,  space2); SamplerState Samp4  : register(s4,  space2);
-Texture2D<float> HiZ5  : register(t5,  space2); SamplerState Samp5  : register(s5,  space2);
-Texture2D<float> HiZ6  : register(t6,  space2); SamplerState Samp6  : register(s6,  space2);
-Texture2D<float> HiZ7  : register(t7,  space2); SamplerState Samp7  : register(s7,  space2);
-Texture2D<float> HiZ8  : register(t8,  space2); SamplerState Samp8  : register(s8,  space2);
-Texture2D<float> HiZ9  : register(t9,  space2); SamplerState Samp9  : register(s9,  space2);
-Texture2D<float> HiZ10 : register(t10, space2); SamplerState Samp10 : register(s10, space2);
-Texture2D<float> HiZ11 : register(t11, space2); SamplerState Samp11 : register(s11, space2);
-Texture2D<float> HiZ12 : register(t12, space2); SamplerState Samp12 : register(s12, space2);
-Texture2D<float> HiZ13 : register(t13, space2); SamplerState Samp13 : register(s13, space2);
-Texture2D<float> HiZ14 : register(t14, space2); SamplerState Samp14 : register(s14, space2);
-Texture2D<float> HiZ15 : register(t15, space2); SamplerState Samp15 : register(s15, space2);
-
-cbuffer FrameData : register(b0, space3) {
+cbuffer FrameData : register(b0, space2) {
     float4 CameraPositionNear;
     float4 CameraForwardFar;
     float4 CameraRightAspect;
@@ -56,7 +56,7 @@ cbuffer FrameData : register(b0, space3) {
     uint4 PathPolicy;
 };
 
-cbuffer VisibilityData : register(b1, space3) {
+cbuffer VisibilityData : register(b1, space2) {
     uint4 Info;
     float4 Params;
 };
@@ -84,6 +84,9 @@ float SampleHiZ(uint level, float2 uv)
 
 bool ProjectCorner(float3 position, out float2 uv, out float depth)
 {
+    uv = 0.0.xx;
+    depth = 1.0;
+
     float3 delta = position - CameraPositionNear.xyz;
     float forward_depth = dot(delta, CameraForwardFar.xyz);
     float near_plane = max(CameraPositionNear.w, 1.0e-5);
