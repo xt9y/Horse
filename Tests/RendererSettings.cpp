@@ -69,6 +69,15 @@ int main()
     Camera::setEnabled(true);
 
     Renderer::Rasterizer rasterizer;
+    assert(rasterizer.depthPrepass());
+    assert(rasterizer.hiZ());
+    rasterizer.setDepthPrepass(false);
+    rasterizer.setHiZ(false);
+    assert(!rasterizer.depthPrepass());
+    assert(!rasterizer.hiZ());
+    rasterizer.setDepthPrepass(true);
+    rasterizer.setHiZ(true);
+
     rasterizer.setShadowQuality(Renderer::Quality::Low);
     assert(rasterizer.shadowQuality() == Renderer::Quality::Low);
     assert(rasterizer.shadowResolution() == 256);
