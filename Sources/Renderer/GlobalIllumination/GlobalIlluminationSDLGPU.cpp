@@ -1,6 +1,9 @@
 #include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
 
+#include "Models/Core/Texture.hpp"
 #include "Renderer/Environment.hpp"
+#include "Renderer/Features.hpp"
+#include "Renderer/Reflections/Reflections.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
 
@@ -22,6 +25,9 @@ std::size_t capacity = 0u;
 std::uint64_t uploaded_revision = std::numeric_limits<std::uint64_t>::max();
 std::uint64_t uploaded_environment = std::numeric_limits<std::uint64_t>::max();
 std::uint64_t uploaded_lighting = std::numeric_limits<std::uint64_t>::max();
+Quality uploaded_reflection_quality = Quality::High;
+float uploaded_reflection_strength = -1.0f;
+bool uploaded_reflection_enabled = false;
 bool uploaded_valid = false;
 
 bool upload(const GlobalIllumination::Field *field)
@@ -32,8 +38,14 @@ bool upload(const GlobalIllumination::Field *field)
     const ShadingState& shading = shadingState();
     const std::uint64_t environment_revision = environmentSignature(shading.environment);
     const std::uint64_t lighting_revision = shading.lighting.revision;
+    const Reflections::Settings& reflection_settings = Reflections::currentSettings();
+    const bool reflections_enabled =
+        Features::currentSettings().reflections && reflection_settings.strength > 0.0f;
     if (buffer && revision == uploaded_revision && environment_revision == uploaded_environment &&
-        lighting_revision == uploaded_lighting && valid == uploaded_valid)
+        lighting_revision == uploaded_lighting && valid == uploaded_valid &&
+        reflection_settings.quality == uploaded_reflection_quality &&
+        reflection_settings.strength == uploaded_reflection_strength &&
+        reflections_enabled == uploaded_reflection_enabled)
         return true;
 
     const std::size_t light_count = shading.lighting.lights.size();
@@ -58,6 +70,21 @@ bool upload(const GlobalIllumination::Field *field)
         data[28] = std::max(environment.fog_density, 0.0f); data[29] = std::max(environment.fog_start, 0.0f);
         data[30] = std::max(environment.fog_end, environment.fog_start + 1.0e-4f); data[31] = environment.rotation_degrees * (Pi / 180.0f);
     }
+
+    std::uint32_t reflection_mip_levels = 1u;
+    if (environment.valid && environment.texture != Models::INVALID_TEXTURE) {
+        const Models::TextureAsset *asset = Models::texture(environment.texture);
+        if (asset && asset->image.width > 0 && asset->image.height > 0) {
+            reflection_mip_levels = Reflections::environmentMipLevels(
+                static_cast<std::uint32_t>(asset->image.width),
+                static_cast<std::uint32_t>(asset->image.height),
+                reflection_settings.quality
+            );
+        }
+    }
+    data[32] = reflections_enabled ? 1.0f : 0.0f;
+    data[33] = std::max(reflection_settings.strength, 0.0f);
+    data[34] = static_cast<float>(reflection_mip_levels);
 
     data[46] = static_cast<float>(light_count);
     data[47] = static_cast<float>(light_base);
@@ -127,6 +154,9 @@ bool upload(const GlobalIllumination::Field *field)
     uploaded_revision = revision;
     uploaded_environment = environment_revision;
     uploaded_lighting = lighting_revision;
+    uploaded_reflection_quality = reflection_settings.quality;
+    uploaded_reflection_strength = reflection_settings.strength;
+    uploaded_reflection_enabled = reflections_enabled;
     uploaded_valid = valid;
     return true;
 }
@@ -164,6 +194,9 @@ void shutdownGlobalIlluminationSDLGPU()
     uploaded_revision = std::numeric_limits<std::uint64_t>::max();
     uploaded_environment = std::numeric_limits<std::uint64_t>::max();
     uploaded_lighting = std::numeric_limits<std::uint64_t>::max();
+    uploaded_reflection_quality = Quality::High;
+    uploaded_reflection_strength = -1.0f;
+    uploaded_reflection_enabled = false;
     uploaded_valid = false;
 }
 
