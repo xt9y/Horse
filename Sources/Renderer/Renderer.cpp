@@ -1,5 +1,6 @@
 #include "Renderer/Renderer.hpp"
 
+#include "Renderer/Features.hpp"
 #include "Renderer/Internal/DebugRenderPass.hpp"
 #include "Renderer/Internal/Display.hpp"
 #include "Renderer/Internal/FontPass.hpp"
@@ -16,12 +17,14 @@ namespace Renderer {
 void IRenderer::render(const Ecs::World& world)
 {
     Internal::updateShadingState(world);
+    const Features::Settings& features = Features::currentSettings();
+
     Internal::FrameOutput output;
-    if (GlobalIllumination::enabled(world))
+    if (features.global_illumination && GlobalIllumination::enabled(world))
         output.global_illumination = GlobalIllumination::update(world);
     if (!renderScene(world, output)) return;
-    if (!GaussianSplat::render(world, output)) return;
-    if (!Volumetrics::render(world, output)) return;
+    if (features.gaussian_splat && !GaussianSplat::render(world, output)) return;
+    if (features.volumetrics && !Volumetrics::render(world, output)) return;
     if (post_process_ && !post_process_->process(output)) return;
     if (!Internal::renderDisplay(world, output)) return;
     if (!compose(output)) return;
