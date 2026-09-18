@@ -74,6 +74,7 @@ void build(C_Build *b)
     c_sources(library, "Sources/Core/*/*.cpp");
     c_sources(library, "Sources/Models/*/*.cpp");
     c_sources(library, "Sources/Renderer/*/*.cpp");
+    c_sources(library, "Sources/Renderer/Reconstruction/*.cpp");
     c_sources(library, "Sources/Renderer/GlobalIllumination/PhotonMapping/*.cpp");
     c_flag(library, "-std=c++20");
     configureLibrary(library);
@@ -154,6 +155,10 @@ void build(C_Build *b)
     C_Target *renderer_settings_tests = c_test(b, "HorseRendererSettingsTests");
     c_sources(renderer_settings_tests, "Tests/RendererSettings.cpp");
     configureTest(renderer_settings_tests, library);
+
+    C_Target *reconstruction_tests = c_test(b, "HorseReconstructionTests");
+    c_sources(reconstruction_tests, "Tests/Reconstruction.cpp");
+    configureTest(reconstruction_tests, library);
 
     c_default_target(b, library);
 }
