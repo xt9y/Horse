@@ -2,6 +2,7 @@
 #define HORSE_RENDERER_RASTERIZER_HPP
 
 #include "Renderer/Components.hpp"
+#include "Renderer/Quality.hpp"
 #include "Renderer/Renderer.hpp"
 
 namespace Renderer {
@@ -9,7 +10,8 @@ namespace Renderer {
 struct RasterizerSettings {
     bool enabled = true;
     bool viewport_culling = true;
-    int shadow_resolution = 512;
+    Quality shadow_quality = Quality::High;
+    int shadow_resolution = 1024;
     int shadow_cascades = 4;
     float shadow_distance = 80.0f;
     float shadow_near_plane = 0.05f;
@@ -35,6 +37,7 @@ public:
     void setEnabled(bool enabled) override;
 
     void setViewportCulling(bool value);
+    void setShadowQuality(Quality value);
     void setShadowResolution(int value);
     void setShadowCascades(int value);
     void setShadowDistance(float value);
@@ -42,6 +45,7 @@ public:
     void setClearColor(Vec4 value);
 
     bool viewportCulling() const;
+    Quality shadowQuality() const;
     int shadowResolution() const;
     int shadowCascades() const;
     float shadowDistance() const;
