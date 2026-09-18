@@ -1,6 +1,6 @@
 #include <Renderer/GaussianSplat/GaussianSplat.hpp>
 #include <Renderer/GlobalIllumination/GlobalIllumination.hpp>
-#include <Renderer/SDLGPU/PBRTraceShaders.hpp>
+#include <Renderer/SDLGPU/Shaders.hpp>
 
 #include <cassert>
 #include <cctype>
@@ -84,7 +84,7 @@ int main()
     world.get<Renderer::GlobalIlluminationComponent>(gi_entity)->enabled = true;
     assert(Renderer::GlobalIllumination::enabled(world));
 
-    assert(!containsIdentifier(Renderer::SDLGPU::PBRTraceShaders::Trace, "triangle"));
+    assert(!containsIdentifier(Renderer::SDLGPU::Shaders::Trace, "triangle"));
 
     Renderer::GlobalIllumination::setPaused(false);
     return 0;
