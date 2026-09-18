@@ -34,6 +34,12 @@ std::unordered_map<std::string, TextureHandle>& cache()
     return values;
 }
 
+std::uint64_t& storageGeneration()
+{
+    static std::uint64_t value = 1u;
+    return value;
+}
+
 bool validImage(const Images::Image& image)
 {
     if (image.width <= 0 || image.height <= 0) return false;
@@ -145,6 +151,11 @@ TextureHandle Internal::reserveTexture(const std::string& key)
 std::size_t Internal::textureStorageCount()
 {
     return assets().size();
+}
+
+std::uint64_t Internal::textureStorageGeneration()
+{
+    return storageGeneration();
 }
 
 bool Internal::textureStorageReady(TextureHandle handle)
@@ -304,6 +315,8 @@ void clearTextureCache()
     cache().clear();
     assets().clear();
     readiness().clear();
+    ++storageGeneration();
+    if (storageGeneration() == 0u) storageGeneration() = 1u;
 }
 
 } // namespace Models
