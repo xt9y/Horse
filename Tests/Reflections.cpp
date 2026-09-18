@@ -21,6 +21,13 @@ int main()
     assert(settings.strength == 1.0f);
     assert(Reflections::quality() == Quality::High);
 
+    assert(Reflections::limitEnvironmentMipLevels(13u, Quality::Low) == 5u);
+    assert(Reflections::limitEnvironmentMipLevels(13u, Quality::Medium) == 7u);
+    assert(Reflections::limitEnvironmentMipLevels(13u, Quality::High) == 9u);
+    assert(Reflections::limitEnvironmentMipLevels(13u, Quality::Ultra) == 13u);
+    assert(Reflections::limitEnvironmentMipLevels(3u, Quality::Low) == 3u);
+    assert(Reflections::limitEnvironmentMipLevels(0u, Quality::Ultra) == 1u);
+
     assert(Reflections::environmentMipLevels(4096u, 2048u, Quality::Low) == 5u);
     assert(Reflections::environmentMipLevels(4096u, 2048u, Quality::Medium) == 7u);
     assert(Reflections::environmentMipLevels(4096u, 2048u, Quality::High) == 9u);
