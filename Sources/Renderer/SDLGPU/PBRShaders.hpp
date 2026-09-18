@@ -74,12 +74,14 @@ Texture2D<float4> Tex13 : register(t13, space2); SamplerState Samp13 : register(
 Texture2D<float4> Tex14 : register(t14, space2); SamplerState Samp14 : register(s14, space2);
 Texture2DArray<float> ShadowMaps : register(t15, space2);
 SamplerComparisonState ShadowSampler : register(s15, space2);
-StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t16, space2);
-StructuredBuffer<GpuMaterial> PMaterials : register(t17, space2);
-StructuredBuffer<float4> PGI : register(t18, space2);
-StructuredBuffer<float4> PShadows : register(t19, space2);
-StructuredBuffer<uint> PForwardTileCounts : register(t20, space2);
-StructuredBuffer<uint> PForwardLightIndices : register(t21, space2);
+Texture2D<float4> AmbientOcclusion : register(t16, space2);
+SamplerState AmbientOcclusionSampler : register(s16, space2);
+StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t17, space2);
+StructuredBuffer<GpuMaterial> PMaterials : register(t18, space2);
+StructuredBuffer<float4> PGI : register(t19, space2);
+StructuredBuffer<float4> PShadows : register(t20, space2);
+StructuredBuffer<uint> PForwardTileCounts : register(t21, space2);
+StructuredBuffer<uint> PForwardLightIndices : register(t22, space2);
 cbuffer PixelFrame : register(b0, space3) {
     float4 PCameraPositionNear;
     float4 PCameraForwardFar;
@@ -92,6 +94,7 @@ cbuffer PixelFrame : register(b0, space3) {
     uint4 PPathPolicy;
 };
 cbuffer PixelForward : register(b1, space3) { uint4 PForward; };
+cbuffer PixelAmbientOcclusion : register(b2, space3) { uint4 PAmbientOcclusion; };
 
 static const float PI = 3.14159265359;
 
@@ -576,6 +579,16 @@ float3 EnvironmentSpecular(Surface s, float3 view) {
     return reflected * f * roughness_loss;
 }
 
+float ScreenAmbientOcclusion(float2 pixel_position) {
+    if (PAmbientOcclusion.x == 0u) return 1.0;
+    float2 size = max(
+        float2((float)PAmbientOcclusion.y, (float)PAmbientOcclusion.z),
+        1.0.xx
+    );
+    float2 uv = saturate(pixel_position / size);
+    return saturate(AmbientOcclusion.SampleLevel(AmbientOcclusionSampler, uv, 0.0).r);
+}
+
 uint ShadowLightCount() { return (uint)max(PShadows[0].x, 0.0); }
 uint ShadowViewBase() { return 1u + ShadowLightCount(); }
 float4 ShadowView(uint view_index, uint field) {
@@ -743,10 +756,11 @@ PSOut PSMain(VSOut i, bool front_face : SV_IsFrontFace) {
 
     float3 view = normalize(PCameraPositionNear.xyz - i.world);
     float3 direct = DirectLighting(i.world, s, view, i.position.xy);
+    float screen_ao = ScreenAmbientOcclusion(i.position.xy);
     float3 diffuse_indirect = SampleGI(i.world, s.normal) * s.albedo *
-        (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao;
+        (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao * screen_ao;
     float3 ambient = PGI[6].xyz * PGI[6].w * s.albedo *
-        (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao;
+        (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao * screen_ao;
     float3 specular_environment = EnvironmentSpecular(s, view);
     float3 transmission = TransmissionEnvironment(s, view);
     float3 diffuse_transmission_environment = EnvironmentColor(-s.normal) * s.albedo *
