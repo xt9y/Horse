@@ -1,8 +1,32 @@
 #include <Renderer/GaussianSplat/GaussianSplat.hpp>
 #include <Renderer/GlobalIllumination/GlobalIllumination.hpp>
+#include <Renderer/SDLGPU/PBRTraceShaders.hpp>
 
 #include <cassert>
+#include <cctype>
 #include <cstdint>
+#include <string_view>
+
+namespace {
+
+bool containsIdentifier(std::string_view source, std::string_view identifier)
+{
+    std::size_t position = 0u;
+    while ((position = source.find(identifier, position)) != std::string_view::npos) {
+        const auto identifierCharacter = [](char value) {
+            const unsigned char c = static_cast<unsigned char>(value);
+            return std::isalnum(c) != 0 || value == '_';
+        };
+        const bool left = position > 0u && identifierCharacter(source[position - 1u]);
+        const std::size_t end = position + identifier.size();
+        const bool right = end < source.size() && identifierCharacter(source[end]);
+        if (!left && !right) return true;
+        position = end;
+    }
+    return false;
+}
+
+} // namespace
 
 int main()
 {
@@ -49,6 +73,18 @@ int main()
     assert(current.maximum_photon_count == 12345u);
     assert(current.paused);
     assert(Renderer::GlobalIllumination::paused());
+
+    Ecs::World world;
+    const Ecs::Entity gi_entity = world.createEntity();
+    world.add<Renderer::GlobalIlluminationComponent>(
+        gi_entity,
+        Renderer::GlobalIlluminationComponent{.enabled = false}
+    );
+    assert(!Renderer::GlobalIllumination::enabled(world));
+    world.get<Renderer::GlobalIlluminationComponent>(gi_entity)->enabled = true;
+    assert(Renderer::GlobalIllumination::enabled(world));
+
+    assert(!containsIdentifier(Renderer::SDLGPU::PBRTraceShaders::Trace, "triangle"));
 
     Renderer::GlobalIllumination::setPaused(false);
     return 0;
