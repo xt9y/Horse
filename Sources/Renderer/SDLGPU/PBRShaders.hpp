@@ -176,6 +176,7 @@ struct VSOut {
     float3 normal : TEXCOORD1;
     float2 uv : TEXCOORD2;
     nointerpolation uint material : TEXCOORD3;
+    nointerpolation uint mirrored : TEXCOORD4;
 };
 
 float3 RasterTransformPoint(float4 c0, float4 c1, float4 c2, float4 c3, float3 p) {
@@ -232,6 +233,7 @@ VSOut VSMain(uint vertex_id : SV_VertexID) {
         o.normal = float3(0.0, 1.0, 0.0);
         o.uv = 0.0.xx;
         o.material = 0u;
+        o.mirrored = 0u;
         return o;
     }
     float3 local_position;
@@ -262,6 +264,7 @@ VSOut VSMain(uint vertex_id : SV_VertexID) {
     o.normal = n;
     o.uv = vertex.uv.xy;
     o.material = item.meta.x;
+    o.mirrored = item.flags.y;
     return o;
 }
 
@@ -671,8 +674,9 @@ PSOut PSMain(VSOut i, bool front_face : SV_IsFrontFace) {
     uint mi = min(i.material, (uint)max(PCounts.z - 1, 0));
     GpuBaseMaterial base = PBaseMaterials[mi];
     GpuMaterial material = PMaterials[mi];
-    if (!front_face && material.misc.z < 0.5) discard;
-    Surface s = EvaluateSurface(i, base, material, front_face);
+    bool surface_front_face = i.mirrored != 0u ? !front_face : front_face;
+    if (!surface_front_face && material.misc.z < 0.5) discard;
+    Surface s = EvaluateSurface(i, base, material, surface_front_face);
     if (material.misc.w > 0.5 && material.misc.w < 1.5 && s.alpha < material.misc.x) discard;
 
     if (material.misc.y > 0.5) {
