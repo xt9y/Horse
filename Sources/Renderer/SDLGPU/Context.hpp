@@ -52,6 +52,14 @@ SDL_GPUTexture *createTexture(
     std::uint32_t height,
     const char *label = nullptr
 );
+SDL_GPUTexture *createTexture(
+    SDL_GPUTextureFormat format,
+    SDL_GPUTextureUsageFlags usage,
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t mip_levels,
+    const char *label = nullptr
+);
 bool uploadTextureRgba8(
     SDL_GPUTexture *texture,
     std::uint32_t width,
@@ -67,6 +75,8 @@ bool uploadTextureRgba8(
     const void *rgba,
     std::size_t size
 );
+bool generateMipmaps(SDL_GPUCommandBuffer *command, SDL_GPUTexture *texture);
+bool generateMipmaps(SDL_GPUTexture *texture);
 
 SDL_GPUSampler *createLinearSampler();
 SDL_GPUSampler *createNearestSampler();
