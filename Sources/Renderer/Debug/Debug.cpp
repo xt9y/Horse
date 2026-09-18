@@ -481,25 +481,12 @@ void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
 
     if (state.lines.empty()) return;
 
-    const float aspect = static_cast<float>(std::max(output.width, 1)) /
-        static_cast<float>(std::max(output.height, 1));
-    const float far_distance = Visibility::system().farDistance();
-    if (far_distance <= camera.near_plane) return;
+    (void)camera_position;
+    (void)camera_forward;
+    (void)camera_right;
+    (void)camera_up;
 
-    const Math::Mat4 projection = Math::perspective(
-        camera.fov_degrees,
-        aspect,
-        camera.near_plane,
-        far_distance
-    );
-    const Math::Mat4 view = Math::viewMatrix(
-        camera_position,
-        camera_forward,
-        camera_right,
-        camera_up
-    );
-
-    renderSDLGPU(state.lines, projection, view, output);
+    renderSDLGPU(state.lines, camera, output);
 }
 
 } // namespace RenderPass
