@@ -93,6 +93,10 @@ float4 VSMain(uint vertex_id : SV_VertexID) : SV_Position {
 void PSMain() {}
 )HLSL";
 
+inline constexpr const char *Depth = R"HLSL(
+void PSMain() {}
+)HLSL";
+
 inline constexpr const char *Raster = PBRShaders::Raster;
 
 inline constexpr const char *Sky = R"HLSL(
