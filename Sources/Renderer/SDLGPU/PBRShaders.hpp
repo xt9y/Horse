@@ -74,14 +74,13 @@ Texture2D<float4> Tex13 : register(t13, space2); SamplerState Samp13 : register(
 Texture2D<float4> Tex14 : register(t14, space2); SamplerState Samp14 : register(s14, space2);
 Texture2DArray<float> ShadowMaps : register(t15, space2);
 SamplerComparisonState ShadowSampler : register(s15, space2);
-Texture2D<float4> AmbientOcclusion : register(t16, space2);
-SamplerState AmbientOcclusionSampler : register(s16, space2);
-StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t17, space2);
-StructuredBuffer<GpuMaterial> PMaterials : register(t18, space2);
-StructuredBuffer<float4> PGI : register(t19, space2);
-StructuredBuffer<float4> PShadows : register(t20, space2);
-StructuredBuffer<uint> PForwardTileCounts : register(t21, space2);
-StructuredBuffer<uint> PForwardLightIndices : register(t22, space2);
+StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t16, space2);
+StructuredBuffer<GpuMaterial> PMaterials : register(t17, space2);
+StructuredBuffer<float4> PGI : register(t18, space2);
+StructuredBuffer<float4> PShadows : register(t19, space2);
+StructuredBuffer<uint> PForwardTileCounts : register(t20, space2);
+StructuredBuffer<uint> PForwardLightIndices : register(t21, space2);
+StructuredBuffer<float> PAmbientOcclusionBuffer : register(t22, space2);
 cbuffer PixelFrame : register(b0, space3) {
     float4 PCameraPositionNear;
     float4 PCameraForwardFar;
@@ -581,12 +580,13 @@ float3 EnvironmentSpecular(Surface s, float3 view) {
 
 float ScreenAmbientOcclusion(float2 pixel_position) {
     if (PAmbientOcclusion.x == 0u) return 1.0;
-    float2 size = max(
-        float2((float)PAmbientOcclusion.y, (float)PAmbientOcclusion.z),
-        1.0.xx
+    uint width = max(PAmbientOcclusion.y, 1u);
+    uint height = max(PAmbientOcclusion.z, 1u);
+    uint2 pixel = min(
+        (uint2)max(pixel_position, 0.0.xx),
+        uint2(width - 1u, height - 1u)
     );
-    float2 uv = saturate(pixel_position / size);
-    return saturate(AmbientOcclusion.SampleLevel(AmbientOcclusionSampler, uv, 0.0).r);
+    return saturate(PAmbientOcclusionBuffer[pixel.y * width + pixel.x]);
 }
 
 uint ShadowLightCount() { return (uint)max(PShadows[0].x, 0.0); }
