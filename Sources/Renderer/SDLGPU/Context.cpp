@@ -425,13 +425,14 @@ SDL_GPUTexture *createTexture(
 }
 
 bool uploadTextureRgba8(
+    SDL_GPUCommandBuffer *command,
     SDL_GPUTexture *texture,
     std::uint32_t width,
     std::uint32_t height,
     const void *rgba,
     std::size_t size)
 {
-    if (!state().device || !texture || !rgba || width == 0u || height == 0u ||
+    if (!state().device || !command || !texture || !rgba || width == 0u || height == 0u ||
         size < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u ||
         size > std::numeric_limits<Uint32>::max()) return false;
 
@@ -448,10 +449,8 @@ bool uploadTextureRgba8(
     std::memcpy(mapped, rgba, size);
     SDL_UnmapGPUTransferBuffer(state().device, transfer);
 
-    SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(state().device);
-    SDL_GPUCopyPass *copy = command ? SDL_BeginGPUCopyPass(command) : nullptr;
+    SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(command);
     if (!copy) {
-        if (command) SDL_CancelGPUCommandBuffer(command);
         SDL_ReleaseGPUTransferBuffer(state().device, transfer);
         return false;
     }
@@ -468,6 +467,23 @@ bool uploadTextureRgba8(
     SDL_UploadToGPUTexture(copy, &source, &destination, false);
     SDL_EndGPUCopyPass(copy);
     SDL_ReleaseGPUTransferBuffer(state().device, transfer);
+    return true;
+}
+
+bool uploadTextureRgba8(
+    SDL_GPUTexture *texture,
+    std::uint32_t width,
+    std::uint32_t height,
+    const void *rgba,
+    std::size_t size)
+{
+    if (!state().device) return false;
+    SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(state().device);
+    if (!command) return false;
+    if (!uploadTextureRgba8(command, texture, width, height, rgba, size)) {
+        SDL_CancelGPUCommandBuffer(command);
+        return false;
+    }
     return SDL_SubmitGPUCommandBuffer(command);
 }
 
