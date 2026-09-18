@@ -8,6 +8,7 @@
 namespace UI::Canvas {
 
 bool begin();
+Renderer::Vec2 size();
 
 void filledRect(Renderer::Vec2 minimum, Renderer::Vec2 maximum, Renderer::Vec4 color);
 void rect(Renderer::Vec2 minimum, Renderer::Vec2 maximum, Renderer::Vec4 color, float thickness = 1.0f);
