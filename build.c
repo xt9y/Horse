@@ -167,5 +167,9 @@ void build(C_Build *b)
     c_sources(shadow_cascade_tests, "Tests/ShadowCascades.cpp");
     configureTest(shadow_cascade_tests, library);
 
+    C_Target *shadow_cache_tests = c_test(b, "HorseShadowCacheTests");
+    c_sources(shadow_cache_tests, "Tests/ShadowCache.cpp");
+    configureTest(shadow_cache_tests, library);
+
     c_default_target(b, library);
 }
