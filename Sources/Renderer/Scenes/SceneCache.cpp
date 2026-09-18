@@ -838,12 +838,26 @@ CameraState cameraState(const Scene::CameraState& source)
     CameraState state;
     if (!source.valid) return state;
 
-    const Math::Mat4 model = Math::modelMatrix(source.transform);
     state.valid = true;
-    state.position = Math::transformPoint(model, {0.0f, 0.0f, 0.0f});
-    state.forward = normalize(Math::transformVector(model, {0.0f, 0.0f, -1.0f}));
-    state.right = normalize(Math::transformVector(model, {1.0f, 0.0f, 0.0f}));
-    state.up = normalize(Math::transformVector(model, {0.0f, 1.0f, 0.0f}));
+
+    if (!source.transform.matrix_override_enabled) {
+        state.position = source.transform.position;
+        state.forward = normalize(Camera::flightDirection(
+            source.transform.rotation.y,
+            source.transform.rotation.x
+        ));
+        state.right = normalize(Camera::strafeDirection(
+            source.transform.rotation.y
+        ));
+        state.up = normalize(Math::cross(state.right, state.forward));
+    } else {
+        const Math::Mat4 model = Math::modelMatrix(source.transform);
+        state.position = Math::transformPoint(model, {0.0f, 0.0f, 0.0f});
+        state.forward = normalize(Math::transformVector(model, {0.0f, 0.0f, -1.0f}));
+        state.right = normalize(Math::transformVector(model, {1.0f, 0.0f, 0.0f}));
+        state.up = normalize(Math::transformVector(model, {0.0f, 1.0f, 0.0f}));
+    }
+
     state.fov_degrees = std::clamp(source.fov_degrees, 1.0f, 179.0f);
     state.projection = source.projection;
     state.near_plane = source.near_plane;
