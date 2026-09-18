@@ -118,6 +118,7 @@ private:
     SDL_GPUTexture *white_ = nullptr;
     SDL_GPUSampler *sampler_ = nullptr;
     std::unordered_map<Models::TextureHandle, SDL_GPUTexture *> texture_cache_;
+    std::unordered_map<Models::TextureHandle, std::uint32_t> texture_mip_levels_;
     std::array<SDL_GPUTextureSamplerBinding, MaximumTextureSlots> texture_bindings_{};
     std::vector<RasterMaterialResources> raster_materials_;
     std::unordered_map<Models::MaterialHandle, std::size_t> raster_material_indices_;
