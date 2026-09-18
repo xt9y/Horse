@@ -310,16 +310,21 @@ float3 SampleGI(float3 position, float3 normal) {
     return max(result, 0.0.xxx) * intensity;
 }
 
-float3 EnvironmentColor(float3 direction) {
+float3 EnvironmentColorLod(float3 direction, float lod) {
     float3 sky = PGI[4].xyz;
     float intensity = max(PGI[3].w, 0.0);
     if (PGI[4].w > 0.5) {
         float rotation = PGI[7].w;
         float u = frac(atan2(direction.z, direction.x) / (2.0*PI) + 0.5 + rotation/(2.0*PI));
         float v = acos(clamp(direction.y, -1.0, 1.0)) / PI;
-        return SampleColorSlot(0, float2(u,v)).rgb * intensity;
+        float4 value = Tex0.SampleLevel(Samp0, float2(u,v), max(lod, 0.0));
+        return SrgbToLinear(value.rgb) * intensity;
     }
     return sky * max(intensity, 1.0);
+}
+
+float3 EnvironmentColor(float3 direction) {
+    return EnvironmentColorLod(direction, 0.0);
 }
 
 void BuildBasis(float3 n, float3 position, float2 uv, out float3 tangent, out float3 bitangent) {
@@ -437,7 +442,6 @@ Surface EvaluateSurface(VSOut i, GpuBaseMaterial base, GpuMaterial material, boo
     s.specular_factor = saturate(material.specular.x * specular.a);
     s.specular_color = max(material.specular.yzw *
         (material.tex3.z >= 0 ? SrgbToLinear(specular.rgb) : 1.0.xxx), 0.0.xxx);
-
     float4 iri = material.tex4.x >= 0 ? SampleSlot(material.tex4.x, i.uv) : 1.0.xxxx;
     s.iridescence = saturate(material.anisotropy_iridescence.z * iri.r);
     s.iridescence_ior = max(material.anisotropy_iridescence.w, 1.0);
@@ -569,13 +573,23 @@ float3 TransmissionEnvironment(Surface s, float3 view) {
     return environment * s.albedo * (1.0 - s.metallic) * s.transmission * VolumeAttenuation(s);
 }
 
+float2 EnvironmentBRDF(float no_v, float roughness) {
+    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+    float4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * no_v)) * r.x + r.y;
+    return float2(-1.04, 1.04) * a004 + r.zw;
+}
+
 float3 EnvironmentSpecular(Surface s, float3 view) {
-    float no_v = saturate(dot(s.normal, view));
-    float3 f = FresnelSchlick(SurfaceF0(s), no_v);
-    f = IridescentFresnel(f, no_v, s);
-    float3 reflected = EnvironmentColor(reflect(-view, s.normal));
-    float roughness_loss = 1.0 - 0.55 * s.roughness;
-    return reflected * f * roughness_loss;
+    if (PGI[8].x < 0.5 || PGI[8].y <= 0.0) return 0.0.xxx;
+    float no_v = max(saturate(dot(s.normal, view)), 1.0e-4);
+    float mip_levels = max(PGI[8].z, 1.0);
+    float lod = saturate(s.roughness) * max(mip_levels - 1.0, 0.0);
+    float3 reflected = EnvironmentColorLod(reflect(-view, s.normal), lod);
+    float2 brdf = EnvironmentBRDF(no_v, s.roughness);
+    float3 f0 = IridescentFresnel(SurfaceF0(s), no_v, s);
+    return max(reflected * (f0 * brdf.x + brdf.y) * PGI[8].y, 0.0.xxx);
 }
 
 float ScreenAmbientOcclusion(float2 pixel_position) {
