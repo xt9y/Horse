@@ -59,6 +59,14 @@ bool uploadTextureRgba8(
     const void *rgba,
     std::size_t size
 );
+bool uploadTextureRgba8(
+    SDL_GPUCommandBuffer *command,
+    SDL_GPUTexture *texture,
+    std::uint32_t width,
+    std::uint32_t height,
+    const void *rgba,
+    std::size_t size
+);
 
 SDL_GPUSampler *createLinearSampler();
 SDL_GPUSampler *createNearestSampler();
