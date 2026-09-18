@@ -18,6 +18,10 @@ const Settings& currentSettings();
 void setQuality(Quality value);
 Quality quality();
 
+std::uint32_t limitEnvironmentMipLevels(
+    std::uint32_t available_levels,
+    Quality quality
+);
 std::uint32_t environmentMipLevels(
     std::uint32_t width,
     std::uint32_t height,
