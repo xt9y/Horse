@@ -1,5 +1,8 @@
 #include "Renderer/Trace/MaterialSet.hpp"
 
+#include "Models/Internal/TextureStorage.hpp"
+#include "Models/Internal/TextureStreaming.hpp"
+
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -76,21 +79,38 @@ Models::TextureHandle packTexture(
     const std::array<ChannelSource, 4>& channels,
     std::string *error)
 {
+    std::string key = "@horse-pbr-pack:";
+    key += name ? name : "texture";
+    for (const ChannelSource& source : channels) {
+        key += ":" + std::to_string(source.texture) + "." +
+            std::to_string(source.channel) + "." + std::to_string(source.fallback);
+    }
+
+    if (const Models::TextureHandle existing = Models::Internal::findTexture(key);
+        existing != Models::INVALID_TEXTURE &&
+        Models::Internal::textureStorageReady(existing))
+        return existing;
+
     int width = 0;
     int height = 0;
     bool any = false;
     std::array<const Models::TextureAsset *, 4> assets{};
-    std::string key = "@horse-pbr-pack:";
-    key += name ? name : "texture";
 
     for (std::size_t channel = 0u; channel < channels.size(); ++channel) {
         const ChannelSource& source = channels[channel];
-        key += ":" + std::to_string(source.texture) + "." +
-            std::to_string(source.channel) + "." + std::to_string(source.fallback);
         if (source.texture == Models::INVALID_TEXTURE) continue;
+
+        if (Models::Internal::textureState(source.texture) != Models::Internal::TextureState::Ready ||
+            !Models::Internal::textureStorageReady(source.texture))
+            return Models::INVALID_TEXTURE;
+
         assets[channel] = Models::texture(source.texture);
-        if (!assets[channel] || assets[channel]->image.width <= 0 || assets[channel]->image.height <= 0)
-            continue;
+        if (!assets[channel] || assets[channel]->image.width <= 0 ||
+            assets[channel]->image.height <= 0 || assets[channel]->image.rgba.empty()) {
+            if (error) *error = "ready PBR texture has no decoded image";
+            return Models::INVALID_TEXTURE;
+        }
+
         any = true;
         width = std::max(width, assets[channel]->image.width);
         height = std::max(height, assets[channel]->image.height);
@@ -121,6 +141,7 @@ Models::TextureHandle packTexture(
             }
         }
     }
+
     image.meaningful_alpha = channels[3].texture != Models::INVALID_TEXTURE;
     return Models::registerTextureImage(key, std::move(image), error);
 }
@@ -139,10 +160,7 @@ bool packedTextures(
         {},
         {},
     }}, error);
-    if ((material.roughness_texture != Models::INVALID_TEXTURE ||
-         material.metallic_texture != Models::INVALID_TEXTURE) &&
-        packed->metallic_roughness == Models::INVALID_TEXTURE)
-        return false;
+    if (error && !error->empty()) return false;
 
     packed->clearcoat = packTexture("clearcoat", {{
         {material.clearcoat_info.texture, 0, 255u},
@@ -150,10 +168,7 @@ bool packedTextures(
         {},
         {},
     }}, error);
-    if ((material.clearcoat_info.texture != Models::INVALID_TEXTURE ||
-         material.clearcoat_roughness_info.texture != Models::INVALID_TEXTURE) &&
-        packed->clearcoat == Models::INVALID_TEXTURE)
-        return false;
+    if (error && !error->empty()) return false;
 
     packed->sheen = packTexture("sheen", {{
         {material.sheen_color_info.texture, 0, 255u},
@@ -161,10 +176,7 @@ bool packedTextures(
         {material.sheen_color_info.texture, 2, 255u},
         {material.sheen_roughness_info.texture, 3, 255u},
     }}, error);
-    if ((material.sheen_color_info.texture != Models::INVALID_TEXTURE ||
-         material.sheen_roughness_info.texture != Models::INVALID_TEXTURE) &&
-        packed->sheen == Models::INVALID_TEXTURE)
-        return false;
+    if (error && !error->empty()) return false;
 
     packed->transmission_thickness = packTexture("transmission-thickness", {{
         {material.transmission_info.texture, 0, 255u},
@@ -172,10 +184,7 @@ bool packedTextures(
         {},
         {},
     }}, error);
-    if ((material.transmission_info.texture != Models::INVALID_TEXTURE ||
-         material.thickness_info.texture != Models::INVALID_TEXTURE) &&
-        packed->transmission_thickness == Models::INVALID_TEXTURE)
-        return false;
+    if (error && !error->empty()) return false;
 
     packed->specular = packTexture("specular", {{
         {material.specular_color_info.texture, 0, 255u},
@@ -183,10 +192,7 @@ bool packedTextures(
         {material.specular_color_info.texture, 2, 255u},
         {material.specular_info.texture, 3, 255u},
     }}, error);
-    if ((material.specular_info.texture != Models::INVALID_TEXTURE ||
-         material.specular_color_info.texture != Models::INVALID_TEXTURE) &&
-        packed->specular == Models::INVALID_TEXTURE)
-        return false;
+    if (error && !error->empty()) return false;
 
     packed->iridescence = packTexture("iridescence", {{
         {material.iridescence_info.texture, 0, 255u},
@@ -194,10 +200,7 @@ bool packedTextures(
         {},
         {},
     }}, error);
-    if ((material.iridescence_info.texture != Models::INVALID_TEXTURE ||
-         material.iridescence_thickness_info.texture != Models::INVALID_TEXTURE) &&
-        packed->iridescence == Models::INVALID_TEXTURE)
-        return false;
+    if (error && !error->empty()) return false;
 
     packed->diffuse_transmission = packTexture("diffuse-transmission", {{
         {material.diffuse_transmission_color_info.texture, 0, 255u},
@@ -205,10 +208,7 @@ bool packedTextures(
         {material.diffuse_transmission_color_info.texture, 2, 255u},
         {material.diffuse_transmission_info.texture, 3, 255u},
     }}, error);
-    if ((material.diffuse_transmission_info.texture != Models::INVALID_TEXTURE ||
-         material.diffuse_transmission_color_info.texture != Models::INVALID_TEXTURE) &&
-        packed->diffuse_transmission == Models::INVALID_TEXTURE)
-        return false;
+    if (error && !error->empty()) return false;
 
     return true;
 }
