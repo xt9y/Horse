@@ -6,7 +6,6 @@
 #include "Renderer/Math.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Renderer/Scenes/Scene.hpp"
-#include "Renderer/Visibility/Visibility.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -70,8 +69,7 @@ void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
         static_cast<float>(std::max(output.width, 1)) /
         static_cast<float>(std::max(output.height, 1));
 
-    const float far_distance = Visibility::system().farDistance();
-    if (far_distance <= camera.near_plane) return;
+    const float far_distance = std::max(camera.far_plane, camera.near_plane + 1.0f);
 
     const Math::Mat4 projection = Math::perspective(
         camera.fov_degrees,
