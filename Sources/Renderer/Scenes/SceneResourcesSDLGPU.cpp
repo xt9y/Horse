@@ -213,7 +213,7 @@ bool SceneResources::syncTextures(std::string *error)
         return false;
     }
 
-    clearTextures();
+    for (auto& binding : texture_bindings_) binding = {white_, sampler_};
     for (std::size_t slot = 0u; slot < materials_.textureHandles().size(); ++slot) {
         SDL_GPUTexture *texture = textureFor(materials_.textureHandles()[slot], error);
         if (!texture) return false;
