@@ -164,7 +164,7 @@ void main(uint3 id : SV_DispatchThreadID)
     uv_max = saturate(uv_max);
     float2 pixel_extent = max((uv_max - uv_min) * float2(Info.zw), float2(1.0, 1.0));
     float maximum_extent = max(pixel_extent.x, pixel_extent.y);
-    uint level = (uint)floor(log2(max(maximum_extent, 1.0)));
+    uint level = (uint)ceil(log2(max(maximum_extent, 1.0)));
     level = min(level, Info.y - 1u);
 
     float farthest_occluder = SampleHiZ(level, uv_min);
@@ -246,14 +246,6 @@ bool worldBounds(const Scenes::Scene::RenderItem& item, Vec3 *minimum, Vec3 *max
 }
 
 } // namespace
-
-struct alignas(16) OcclusionCulling::GpuBounds {
-    std::array<float, 4> minimum{};
-    std::array<float, 4> maximum{};
-    std::array<std::uint32_t, 4> meta{};
-};
-
-static_assert(sizeof(OcclusionCulling::GpuBounds) == 48u);
 
 OcclusionCulling::~OcclusionCulling()
 {
