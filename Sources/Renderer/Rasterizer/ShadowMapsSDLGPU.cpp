@@ -1,5 +1,6 @@
 #include "Renderer/Internal/ShadowMapsSDLGPU.hpp"
 
+#include "Renderer/Internal/ShadowCache.hpp"
 #include "Renderer/Internal/ShadowCascades.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
@@ -7,7 +8,6 @@
 
 #include <algorithm>
 #include <array>
-#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -113,17 +113,6 @@ ShadowView orthographicView(
     };
 }
 
-void hashValue(std::uint64_t& hash, std::uint64_t value)
-{
-    hash ^= value;
-    hash *= 1099511628211ull;
-}
-
-void hashFloat(std::uint64_t& hash, float value)
-{
-    hashValue(hash, std::bit_cast<std::uint32_t>(value));
-}
-
 SDL_GPUTextureFormat shadowDepthFormat()
 {
     SDL_GPUDevice *device = SDLGPU::device();
@@ -210,7 +199,7 @@ struct ShadowMaps::Impl {
     std::vector<ShadowView> views;
     std::vector<ShadowLight> lights;
     std::vector<Float4> data;
-    std::uint64_t signature = std::numeric_limits<std::uint64_t>::max();
+    std::vector<std::uint64_t> view_signatures;
     int resolution = 0;
     std::size_t layers = 0u;
 
@@ -235,7 +224,7 @@ struct ShadowMaps::Impl {
         if (!texture) return false;
         resolution = next_resolution;
         layers = next_layers;
-        signature = std::numeric_limits<std::uint64_t>::max();
+        view_signatures.clear();
         return true;
     }
 
@@ -440,7 +429,7 @@ struct ShadowMaps::Impl {
         }
     }
 
-    std::uint64_t currentSignature(
+    std::vector<std::uint64_t> currentViewSignatures(
         const RasterGeometry& geometry,
         const Scenes::CameraState& camera,
         const Lighting::State& lighting,
@@ -448,17 +437,34 @@ struct ShadowMaps::Impl {
         int viewport_height,
         const ShadowMapSettings& settings) const
     {
-        std::uint64_t hash = 1469598103934665603ull;
-        hashValue(hash, geometry.shadowRevision());
-        hashValue(hash, lighting.revision);
-        hashValue(hash, Scenes::cameraSignature(camera));
-        hashValue(hash, static_cast<std::uint64_t>(std::max(viewport_width, 1)));
-        hashValue(hash, static_cast<std::uint64_t>(std::max(viewport_height, 1)));
-        hashValue(hash, static_cast<std::uint64_t>(std::max(settings.resolution, 1)));
-        hashValue(hash, static_cast<std::uint64_t>(std::max(settings.cascades, 1)));
-        hashFloat(hash, settings.distance);
-        hashFloat(hash, settings.near_plane);
-        return hash;
+        std::vector<std::uint64_t> result(views.size(), 0u);
+        const std::uint64_t camera_signature = Scenes::cameraSignature(camera);
+        const std::size_t light_count = std::min(lighting.lights.size(), lights.size());
+        for (std::size_t light_index = 0u; light_index < light_count; ++light_index) {
+            const Scenes::LightState& light = lighting.lights[light_index];
+            const std::size_t first = static_cast<std::size_t>(
+                std::max(lights[light_index].data[0], 0.0f));
+            const std::size_t count = static_cast<std::size_t>(
+                std::max(lights[light_index].data[1], 0.0f));
+            const bool camera_dependent =
+                light.type != LightType::Point && light.type != LightType::Spot;
+            for (std::size_t view = 0u; view < count && first + view < result.size(); ++view) {
+                result[first + view] = ShadowCache::signature({
+                    geometry.shadowRevision(),
+                    Scenes::lightSignature(light),
+                    camera_signature,
+                    static_cast<std::uint32_t>(view),
+                    static_cast<std::uint32_t>(std::max(viewport_width, 1)),
+                    static_cast<std::uint32_t>(std::max(viewport_height, 1)),
+                    static_cast<std::uint32_t>(std::max(settings.resolution, 1)),
+                    static_cast<std::uint32_t>(std::max(settings.cascades, 1)),
+                    settings.distance,
+                    settings.near_plane,
+                    camera_dependent,
+                });
+            }
+        }
+        return result;
     }
 };
 
@@ -510,6 +516,9 @@ bool ShadowMaps::update(
     impl_->build(camera, lighting, viewport_width, viewport_height, safe_settings);
     const std::size_t requested_layers = std::max<std::size_t>(impl_->views.size(), 1u);
     const int requested_resolution = impl_->views.empty() ? 1 : safe_settings.resolution;
+    const bool texture_recreated = !impl_->texture ||
+        impl_->resolution != requested_resolution ||
+        impl_->layers != requested_layers;
     if (!impl_->ensureTexture(requested_resolution, requested_layers)) {
         if (error) *error = "failed to create raster shadow-map array";
         return false;
@@ -527,19 +536,25 @@ bool ShadowMaps::update(
         return false;
     }
 
-    const std::uint64_t next_signature = impl_->currentSignature(
+    if (impl_->views.empty()) {
+        impl_->view_signatures.clear();
+        return true;
+    }
+
+    const std::vector<std::uint64_t> next_signatures = impl_->currentViewSignatures(
         geometry,
         camera,
         lighting,
         viewport_width,
         viewport_height,
         safe_settings);
-    if (impl_->signature == next_signature || impl_->views.empty()) {
-        impl_->signature = next_signature;
-        return true;
-    }
 
     for (std::size_t index = 0u; index < impl_->views.size(); ++index) {
+        const bool dirty = texture_recreated ||
+            index >= impl_->view_signatures.size() ||
+            impl_->view_signatures[index] != next_signatures[index];
+        if (!dirty) continue;
+
         SDL_GPUDepthStencilTargetInfo depth{};
         depth.texture = impl_->texture;
         depth.clear_depth = 1.0f;
@@ -572,7 +587,7 @@ bool ShadowMaps::update(
         }
         SDL_EndGPURenderPass(pass);
     }
-    impl_->signature = next_signature;
+    impl_->view_signatures = next_signatures;
     return true;
 }
 
@@ -608,7 +623,7 @@ void ShadowMaps::clear()
     impl_->views.clear();
     impl_->lights.clear();
     impl_->data.clear();
-    impl_->signature = std::numeric_limits<std::uint64_t>::max();
+    impl_->view_signatures.clear();
     impl_->resolution = 0;
     impl_->layers = 0u;
 }
