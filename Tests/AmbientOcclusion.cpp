@@ -1,10 +1,18 @@
 #include <Renderer/AmbientOcclusion/AmbientOcclusion.hpp>
+#include <Renderer/Features.hpp>
 
 #include <cassert>
 
 int main()
 {
     using namespace Renderer;
+
+    Features::Settings& features = Features::settings();
+    features = Features::Settings{};
+    assert(features.ambient_occlusion);
+    features.ambient_occlusion = false;
+    assert(!Features::currentSettings().ambient_occlusion);
+    features = Features::Settings{};
 
     AmbientOcclusion::Settings& settings = AmbientOcclusion::settings();
     settings = AmbientOcclusion::Settings{};
