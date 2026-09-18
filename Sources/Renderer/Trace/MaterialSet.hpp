@@ -28,7 +28,7 @@ struct alignas(16) GpuAdvancedMaterial {
     std::array<std::int32_t, 4> tex2 {-1, -1, -1, -1}; // coat roughness, coat normal, sheen color, sheen roughness
     std::array<std::int32_t, 4> tex3 {-1, -1, -1, -1}; // transmission, thickness, specular, specular color
     std::array<std::int32_t, 4> tex4 {-1, -1, -1, -1}; // iridescence, iri thickness, anisotropy, diffuse transmission
-    std::array<std::int32_t, 4> tex5 {-1, 0x3f800000, -1, -1}; // diffuse transmission color, clearcoat normal scale bits
+    std::array<std::int32_t, 4> tex5 {-1, 0x3f800000, 0, -1}; // diffuse transmission color, clearcoat normal scale bits, glTF MR layout
 };
 
 class MaterialSet {
