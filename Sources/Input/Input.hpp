@@ -8,6 +8,13 @@ using Button = int;
 inline constexpr Key InvalidKey = -1;
 inline constexpr Button InvalidButton = -1;
 
+enum class Modifier {
+    Shift,
+    Control,
+    Alt,
+    Gui,
+};
+
 struct Pointer {
     int x = 0;
     int y = 0;
@@ -26,6 +33,7 @@ Button button(const char *name);
 bool keyDown(Key value);
 bool keyPressed(Key value);
 bool keyReleased(Key value);
+bool modifierDown(Modifier modifier);
 bool buttonDown(Button value);
 bool buttonPressed(Button value);
 bool buttonReleased(Button value);
