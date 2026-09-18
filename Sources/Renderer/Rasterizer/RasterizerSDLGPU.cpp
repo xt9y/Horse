@@ -1,6 +1,9 @@
 #include "Renderer/Rasterizer/Rasterizer.hpp"
 
 #include "Models/Models.hpp"
+#include "Renderer/AmbientOcclusion/AmbientOcclusion.hpp"
+#include "Renderer/Features.hpp"
+#include "Renderer/Internal/AmbientOcclusionSDLGPU.hpp"
 #include "Renderer/Internal/FontPass.hpp"
 #include "Renderer/Internal/ForwardPlusSDLGPU.hpp"
 #include "Renderer/Internal/FrameSDLGPU.hpp"
@@ -85,6 +88,9 @@ SDL_GPUGraphicsPipeline *createDepthPipeline(
     SDL_GPUShader *vertex,
     SDL_GPUShader *fragment)
 {
+    SDL_GPUColorTargetDescription normal{};
+    normal.format = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+
     SDL_GPUGraphicsPipelineCreateInfo info{};
     info.vertex_shader = vertex;
     info.fragment_shader = fragment;
@@ -97,6 +103,8 @@ SDL_GPUGraphicsPipeline *createDepthPipeline(
     info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
     info.depth_stencil_state.enable_depth_test = true;
     info.depth_stencil_state.enable_depth_write = true;
+    info.target_info.color_target_descriptions = &normal;
+    info.target_info.num_color_targets = 1u;
     info.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
     info.target_info.has_depth_stencil_target = true;
     return SDL_CreateGPUGraphicsPipeline(SDLGPU::device(), &info);
@@ -110,6 +118,7 @@ struct Rasterizer::Impl {
     Scenes::SDLGPU::SceneResources scene;
     RasterizerSDLGPU::RasterGeometry geometry;
     RasterizerSDLGPU::ShadowMaps shadows;
+    AmbientOcclusion::SDLGPU::Pass ambient_occlusion;
     Visibility::SDLGPU::HiZPyramid hi_z;
     Visibility::SDLGPU::OcclusionCulling occlusion;
     Lighting::SDLGPU::ForwardPlus forward_plus;
@@ -123,6 +132,7 @@ struct Rasterizer::Impl {
     int height = 1;
     bool initialized = false;
     bool gpu_retained = false;
+    bool ambient_occlusion_available = false;
 
     bool syncVisibility(const Ecs::World& world)
     {
@@ -220,8 +230,9 @@ struct Rasterizer::Impl {
             settings.depth_prepass = false;
             settings.hi_z = false;
             settings.occlusion_culling = false;
+            ambient_occlusion_available = false;
             std::fprintf(stderr,
-                "[Rasterizer/SDL_GPU]: depth prepass unavailable; continuing without Hi-Z/occlusion: %s\n",
+                "[Rasterizer/SDL_GPU]: depth prepass unavailable; continuing without Hi-Z/occlusion/AO: %s\n",
                 SDL_GetError());
         }
         return true;
@@ -262,6 +273,9 @@ bool Rasterizer::init()
     if (!impl_->frame.resize(impl_->width, impl_->height) ||
         !impl_->scene.init(&error) ||
         !impl_->shadows.init(&error) ||
+        !impl_->ambient_occlusion.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)) ||
         !impl_->forward_plus.resize(
             static_cast<std::uint32_t>(impl_->width),
             static_cast<std::uint32_t>(impl_->height)) ||
@@ -270,6 +284,14 @@ bool Rasterizer::init()
         if (!error.empty()) std::fprintf(stderr, "[Rasterizer/SDL_GPU]: %s\n", error.c_str());
         shutdown();
         return false;
+    }
+
+    impl_->ambient_occlusion_available =
+        impl_->depth_pipeline && impl_->ambient_occlusion.ready();
+    if (!impl_->ambient_occlusion_available) {
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: ambient occlusion compute unavailable; continuing without AO: %s\n",
+            SDL_GetError());
     }
 
     if (!impl_->ensureVisibilitySystems()) {
@@ -299,6 +321,19 @@ void Rasterizer::resize(int width, int height)
 
     if (!impl_->frame.resize(impl_->width, impl_->height))
         std::fprintf(stderr, "[Rasterizer/SDL_GPU]: resize failed: %s\n", SDL_GetError());
+
+    if (!impl_->ambient_occlusion.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)))
+    {
+        impl_->ambient_occlusion_available = false;
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: ambient occlusion resize failed; disabling AO runtime: %s\n",
+            SDL_GetError());
+    } else {
+        impl_->ambient_occlusion_available =
+            impl_->depth_pipeline && impl_->ambient_occlusion.ready();
+    }
 
     if (!impl_->forward_plus.resize(
             static_cast<std::uint32_t>(impl_->width),
@@ -379,8 +414,15 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         return false;
     }
 
+    const AmbientOcclusion::Settings& ao_settings =
+        AmbientOcclusion::currentSettings();
+    const bool ao_requested =
+        Features::currentSettings().ambient_occlusion &&
+        impl_->ambient_occlusion_available &&
+        ao_settings.strength > 0.0f &&
+        ao_settings.radius > 0.0f;
     const bool needs_depth_prepass =
-        impl_->settings.depth_prepass || impl_->settings.occlusion_culling;
+        impl_->settings.depth_prepass || impl_->settings.occlusion_culling || ao_requested;
     const bool needs_hi_z = impl_->settings.hi_z || impl_->settings.occlusion_culling;
 
     bool depth_prepass_done = false;
@@ -388,6 +430,12 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     if (camera.valid && impl_->settings.enabled && needs_depth_prepass &&
         impl_->depth_pipeline && impl_->geometry.worldVertexCount() > 0u)
     {
+        SDL_GPUColorTargetInfo normal_target{};
+        normal_target.texture = impl_->frame.normal();
+        normal_target.clear_color = {0.0f, 0.0f, 0.0f, 0.0f};
+        normal_target.load_op = SDL_GPU_LOADOP_CLEAR;
+        normal_target.store_op = SDL_GPU_STOREOP_STORE;
+
         SDL_GPUDepthStencilTargetInfo depth_prepass{};
         depth_prepass.texture = impl_->frame.depth();
         depth_prepass.clear_depth = 1.0f;
@@ -398,8 +446,8 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 
         SDL_GPURenderPass *depth_pass = SDL_BeginGPURenderPass(
             command,
-            nullptr,
-            0u,
+            &normal_target,
+            1u,
             &depth_prepass
         );
         if (!depth_pass) {
@@ -463,6 +511,26 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         std::fprintf(stderr,
             "[Rasterizer/SDL_GPU]: occlusion dispatch failed; disabling occlusion: %s\n",
             SDL_GetError());
+    }
+
+    bool ao_active = false;
+    if (ao_requested && depth_prepass_done) {
+        ao_active = impl_->ambient_occlusion.build(
+            command,
+            impl_->frame.depth(),
+            impl_->frame.normal(),
+            uniforms,
+            ao_settings,
+            &error
+        );
+        if (!ao_active) {
+            impl_->ambient_occlusion_available = false;
+            std::fprintf(stderr,
+                "[Rasterizer/SDL_GPU]: ambient occlusion build failed; disabling AO runtime: %s%s%s\n",
+                error.empty() ? "" : error.c_str(),
+                error.empty() ? "" : " | ",
+                SDL_GetError());
+        }
     }
 
     if (camera.valid && impl_->settings.enabled && impl_->settings.forward_plus &&
@@ -556,6 +624,12 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
                 std::fprintf(stderr, "[Rasterizer/SDL_GPU]: Forward+ binding failed\n");
                 return false;
             }
+            if (!impl_->ambient_occlusion.bind(pass, command, ao_active, 16u)) {
+                SDL_EndGPURenderPass(pass);
+                Frame::SDLGPU::cancel(output);
+                std::fprintf(stderr, "[Rasterizer/SDL_GPU]: ambient occlusion binding failed\n");
+                return false;
+            }
             SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
             if (!draw_ranges(pass, false)) {
                 SDL_EndGPURenderPass(pass);
@@ -604,6 +678,12 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             std::fprintf(stderr, "[Rasterizer/SDL_GPU]: Forward+ binding failed\n");
             return false;
         }
+        if (!impl_->ambient_occlusion.bind(camera_pass, command, false, 16u)) {
+            SDL_EndGPURenderPass(camera_pass);
+            Frame::SDLGPU::cancel(output);
+            std::fprintf(stderr, "[Rasterizer/SDL_GPU]: ambient occlusion binding failed\n");
+            return false;
+        }
         SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
         if (!draw_ranges(camera_pass, true)) {
             SDL_EndGPURenderPass(camera_pass);
@@ -635,6 +715,7 @@ void Rasterizer::shutdown()
     if (!impl_) return;
     Internal::shutdownFonts(Internal::GraphicsApi::SDLGPU);
     Internal::shutdownGlobalIlluminationSDLGPU();
+    impl_->ambient_occlusion.clear();
     impl_->forward_plus.clear();
     impl_->occlusion.clear();
     impl_->hi_z.clear();
@@ -650,6 +731,7 @@ void Rasterizer::shutdown()
     impl_->destroyPipelines();
     if (impl_->gpu_retained) SDLGPU::release();
     impl_->gpu_retained = false;
+    impl_->ambient_occlusion_available = false;
     impl_->initialized = false;
 }
 
