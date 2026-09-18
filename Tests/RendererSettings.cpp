@@ -1,11 +1,54 @@
+#include <Camera/Camera.hpp>
+#include <Renderer/Features.hpp>
 #include <Renderer/GaussianSplat/GaussianSplat.hpp>
 #include <Renderer/GlobalIllumination/GlobalIllumination.hpp>
+#include <Renderer/Quality.hpp>
+#include <Renderer/Rasterizer/Rasterizer.hpp>
+#include <Renderer/Volumetrics/Volumetrics.hpp>
 
 #include <cassert>
 #include <cstdint>
 
 int main()
 {
+    Renderer::Features::Settings& features = Renderer::Features::settings();
+    features = Renderer::Features::Settings{};
+    assert(features.lighting);
+    assert(features.shadows);
+    assert(features.environment);
+    assert(features.global_illumination);
+    assert(features.volumetrics);
+    assert(features.gaussian_splat);
+    assert(&features == &Renderer::Features::currentSettings());
+
+    features.lighting = false;
+    features.shadows = false;
+    assert(!Renderer::Features::currentSettings().lighting);
+    assert(!Renderer::Features::currentSettings().shadows);
+    features = Renderer::Features::Settings{};
+
+    Ecs::World camera_world;
+    const Ecs::Entity camera = camera_world.createEntity();
+    camera_world.add<Renderer::Transform>(camera, Renderer::Transform{});
+    camera_world.add<Camera::CameraComponent>(camera, Camera::CameraComponent{});
+    Camera::setEnabled(true);
+    assert(Camera::enabled());
+    assert(Camera::activeCamera(camera_world) == camera);
+    Camera::setEnabled(false);
+    assert(!Camera::enabled());
+    assert(Camera::activeCamera(camera_world) == Ecs::INVALID_ENTITY);
+    Camera::setEnabled(true);
+
+    Renderer::Rasterizer rasterizer;
+    rasterizer.setShadowQuality(Renderer::Quality::Low);
+    assert(rasterizer.shadowQuality() == Renderer::Quality::Low);
+    assert(rasterizer.shadowResolution() == 256);
+    assert(rasterizer.shadowCascades() == 2);
+    rasterizer.setShadowQuality(Renderer::Quality::Ultra);
+    assert(rasterizer.shadowQuality() == Renderer::Quality::Ultra);
+    assert(rasterizer.shadowResolution() == 2048);
+    assert(rasterizer.shadowCascades() == 4);
+
     Renderer::GaussianSplat::Settings& splat = Renderer::GaussianSplat::settings();
     assert(splat.enabled);
     assert(splat.radius == 3.0f);
@@ -26,6 +69,23 @@ int main()
     assert(gi.maximum_probe_dimension >= gi.minimum_probe_dimension);
     assert(gi.maximum_bounces > 0u);
     assert(&gi == &Renderer::GlobalIllumination::currentSettings());
+
+    Renderer::GlobalIllumination::setQuality(Renderer::Quality::High);
+    assert(Renderer::GlobalIllumination::quality() == Renderer::Quality::High);
+    assert(Renderer::GlobalIllumination::currentSettings().rays_per_probe == 64u);
+    Renderer::GlobalIllumination::setQuality(Renderer::Quality::Low);
+    assert(Renderer::GlobalIllumination::quality() == Renderer::Quality::Low);
+    assert(Renderer::GlobalIllumination::currentSettings().rays_per_probe == 16u);
+    Renderer::GlobalIllumination::setQuality(Renderer::Quality::High);
+
+    Renderer::Volumetrics::setQuality(Renderer::Quality::High);
+    assert(Renderer::Volumetrics::quality() == Renderer::Quality::High);
+    assert(Renderer::Volumetrics::currentSettings().resolution_divisor == 2);
+    assert(Renderer::Volumetrics::currentSettings().sample_count == 32u);
+    Renderer::Volumetrics::setQuality(Renderer::Quality::Ultra);
+    assert(Renderer::Volumetrics::quality() == Renderer::Quality::Ultra);
+    assert(Renderer::Volumetrics::currentSettings().resolution_divisor == 1);
+    Renderer::Volumetrics::setQuality(Renderer::Quality::High);
 
     Renderer::GlobalIllumination::setRaysPerProbe(96u);
     Renderer::GlobalIllumination::setProbeBudgetPerFrame(7u);
@@ -61,5 +121,6 @@ int main()
     assert(Renderer::GlobalIllumination::enabled(world));
 
     Renderer::GlobalIllumination::setPaused(false);
+    Renderer::GlobalIllumination::setQuality(Renderer::Quality::High);
     return 0;
 }
