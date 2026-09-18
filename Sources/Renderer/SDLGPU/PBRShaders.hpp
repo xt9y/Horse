@@ -615,6 +615,8 @@ float ShadowVisibility(uint light_index, float3 position, float type, float bias
     uint count = (uint)max(record.y, 0.0);
     if (count == 0u || record.w < 0.5) return 1.0;
     uint selected = first;
+    bool directional = type > 1.5 && type < 2.5;
+    float camera_depth = 0.0;
     if (type < 1.5 && count > 1u) {
         float best = -2.0;
         for (uint index = 0u; index < count; ++index) {
@@ -624,15 +626,29 @@ float ShadowVisibility(uint light_index, float3 position, float type, float bias
             float score = dot(direction, ShadowView(candidate, 1u).xyz);
             if (score > best) { best = score; selected = candidate; }
         }
-    } else if (type > 1.5 && type < 2.5 && count > 1u) {
-        float camera_depth = dot(position - PCameraPositionNear.xyz, PCameraForwardFar.xyz);
+    } else if (directional && count > 1u) {
+        camera_depth = dot(position - PCameraPositionNear.xyz, PCameraForwardFar.xyz);
         selected = first + count - 1u;
         for (uint index = 0u; index < count; ++index) {
             uint candidate = first + index;
             if (camera_depth <= ShadowView(candidate, 4u).z) { selected = candidate; break; }
         }
     }
-    return SampleShadow(selected, position, max(record.z, bias));
+
+    float effective_bias = max(record.z, bias);
+    float visibility = SampleShadow(selected, position, effective_bias);
+    uint last = first + count - 1u;
+    if (directional && selected < last) {
+        float4 meta = ShadowView(selected, 4u);
+        float blend_start = meta.w;
+        float split = meta.z;
+        if (camera_depth > blend_start && split > blend_start) {
+            float next_visibility = SampleShadow(selected + 1u, position, effective_bias);
+            float blend = saturate((camera_depth - blend_start) / (split - blend_start));
+            visibility = lerp(visibility, next_visibility, blend);
+        }
+    }
+    return visibility;
 }
 
 float3 ShadeLight(uint light_index, uint light_base, float3 position, Surface s, float3 view) {
