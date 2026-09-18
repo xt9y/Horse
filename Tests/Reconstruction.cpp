@@ -34,9 +34,9 @@ int main()
 
     settings.quality = 0.0f;
     BudgetController controller;
-    assert(controller.grid() == 2u);
+    assert(controller.grid() == 1u);
     for (int i = 0; i < 12; ++i) controller.observe(35.0f, settings);
-    assert(controller.grid() > 2u);
+    assert(controller.grid() > 1u);
     const std::uint32_t degraded = controller.grid();
 
     for (int i = 0; i < 64; ++i) controller.observe(10.0f, settings);
@@ -44,6 +44,7 @@ int main()
 
     settings.quality = 1.0f;
     controller.reset();
+    assert(controller.grid() == 1u);
     for (int i = 0; i < 64; ++i) controller.observe(50.0f, settings);
     assert(controller.grid() == 1u);
 
