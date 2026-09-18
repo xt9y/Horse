@@ -1,7 +1,7 @@
 #ifndef HORSE_RENDERER_INTERNAL_DEBUG_RENDER_PASS_HPP
 #define HORSE_RENDERER_INTERNAL_DEBUG_RENDER_PASS_HPP
 
-#include "Renderer/Math.hpp"
+#include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Renderer.hpp"
 
 #include <array>
@@ -18,8 +18,7 @@ void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output);
 
 void renderSDLGPU(
     const std::vector<Vertex>& lines,
-    const Math::Mat4& projection,
-    const Math::Mat4& view,
+    const Scenes::Scene::CameraState& camera,
     Renderer::Internal::FrameOutput& output
 );
 void shutdownSDLGPU();
