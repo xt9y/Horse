@@ -15,6 +15,9 @@ constexpr SDL_GPUTextureUsageFlags ColorUsage =
 constexpr SDL_GPUTextureUsageFlags VelocityUsage =
     SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
     SDL_GPU_TEXTUREUSAGE_SAMPLER;
+constexpr SDL_GPUTextureUsageFlags NormalUsage =
+    SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
+    SDL_GPU_TEXTUREUSAGE_SAMPLER;
 constexpr SDL_GPUTextureUsageFlags DepthUsage =
     SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET |
     SDL_GPU_TEXTUREUSAGE_SAMPLER;
@@ -42,6 +45,7 @@ bool Target::create()
 
     if (!supported(Renderer::SDLGPU::colorFormat(), ColorUsage) ||
         !supported(SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT, VelocityUsage) ||
+        !supported(SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, NormalUsage) ||
         !supported(SDL_GPU_TEXTUREFORMAT_D32_FLOAT, DepthUsage) ||
         !supported(SDL_GPU_TEXTUREFORMAT_R32_FLOAT, LinearDepthUsage))
     {
@@ -61,6 +65,10 @@ bool Target::create()
         SDL_GPU_TEXTUREFORMAT_R16G16_FLOAT, VelocityUsage,
         static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
         "Horse Velocity");
+    normal_ = Renderer::SDLGPU::createTexture(
+        SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, NormalUsage,
+        static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
+        "Horse Raster Normal");
     depth_ = Renderer::SDLGPU::createTexture(
         SDL_GPU_TEXTUREFORMAT_D32_FLOAT, DepthUsage,
         static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
@@ -70,7 +78,7 @@ bool Target::create()
         static_cast<std::uint32_t>(width_), static_cast<std::uint32_t>(height_),
         "Horse Linear Depth");
 
-    if (!color_ || !display_ || !velocity_ || !depth_ || !linear_depth_) {
+    if (!color_ || !display_ || !velocity_ || !normal_ || !depth_ || !linear_depth_) {
         std::fprintf(stderr, "[Frame/SDL_GPU]: target creation failed: %s\n", SDL_GetError());
         destroy();
         return false;
@@ -85,6 +93,7 @@ void Target::destroy()
         if (linear_depth_) SDL_ReleaseGPUTexture(device, linear_depth_);
         if (camera_depth_) SDL_ReleaseGPUTexture(device, camera_depth_);
         if (depth_) SDL_ReleaseGPUTexture(device, depth_);
+        if (normal_) SDL_ReleaseGPUTexture(device, normal_);
         if (velocity_) SDL_ReleaseGPUTexture(device, velocity_);
         if (display_) SDL_ReleaseGPUTexture(device, display_);
         if (color_) SDL_ReleaseGPUTexture(device, color_);
@@ -92,6 +101,7 @@ void Target::destroy()
     color_ = nullptr;
     display_ = nullptr;
     velocity_ = nullptr;
+    normal_ = nullptr;
     depth_ = nullptr;
     camera_depth_ = nullptr;
     linear_depth_ = nullptr;
