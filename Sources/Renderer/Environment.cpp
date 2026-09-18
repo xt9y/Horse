@@ -1,6 +1,7 @@
 #include "Renderer/Environment.hpp"
 
 #include "Models/Models.hpp"
+#include "Renderer/Features.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -94,6 +95,8 @@ void hashVec3(std::uint64_t& value, Vec3 data)
 EnvironmentState environmentState(const Ecs::World& world)
 {
     EnvironmentState result;
+    if (!Features::currentSettings().environment) return result;
+
     for (const Ecs::Entity entity : world.entities()) {
         const EnvironmentComponent *component = world.get<EnvironmentComponent>(entity);
         if (!component || !component->enabled) continue;
