@@ -74,7 +74,6 @@ void build(C_Build *b)
     c_sources(library, "Sources/Core/*/*.cpp");
     c_sources(library, "Sources/Models/*/*.cpp");
     c_sources(library, "Sources/Renderer/*/*.cpp");
-    c_sources(library, "Sources/Renderer/Reconstruction/*.cpp");
     c_sources(library, "Sources/Renderer/GlobalIllumination/PhotonMapping/*.cpp");
     c_flag(library, "-std=c++20");
     configureLibrary(library);
