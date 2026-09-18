@@ -1,11 +1,16 @@
+#include <Renderer/Internal/ReconstructionSDLGPU.hpp>
 #include <Renderer/Reconstruction/Reconstruction.hpp>
 
 #include <cassert>
 #include <cstdint>
+#include <type_traits>
 
 int main()
 {
     using namespace Renderer::Reconstruction;
+
+    static_assert(std::is_default_constructible_v<Renderer::Internal::ReconstructionSDLGPU>);
+    static_assert(!std::is_copy_constructible_v<Renderer::Internal::ReconstructionSDLGPU>);
 
     assert(phaseIndex(0u, 2u) == 0u);
     assert(phaseIndex(3u, 2u) == 3u);
