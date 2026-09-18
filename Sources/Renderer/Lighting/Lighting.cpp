@@ -1,5 +1,6 @@
 #include "Renderer/Lighting/Lighting.hpp"
 
+#include "Renderer/Features.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 
 #include <algorithm>
@@ -24,6 +25,12 @@ void hashFloat(std::uint64_t& hash, float value)
 State state(const Ecs::World& world)
 {
     State result;
+    const Features::Settings& features = Features::currentSettings();
+    if (!features.lighting) {
+        result.revision = signature(result);
+        return result;
+    }
+
     std::vector<Scenes::Scene::LightState> source;
     Scenes::Scene::collectLights(world, source);
     result.lights.reserve(source.size());
@@ -32,7 +39,7 @@ State state(const Ecs::World& world)
         Scenes::LightState light = Scenes::lightState(value);
         if (!light.valid) continue;
         light.entity = value.entity;
-        light.shadows = value.has_shadow && value.shadow.enabled;
+        light.shadows = features.shadows && value.has_shadow && value.shadow.enabled;
         light.shadow_bias = std::max(value.shadow.bias, 0.0f);
         light.volumetric = value.has_volumetric && value.volumetric.enabled;
         light.volumetric_intensity = light.volumetric
