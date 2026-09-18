@@ -269,7 +269,7 @@ void testGltfDependenciesRecordExternalBuffers()
     std::filesystem::remove_all(directory, ignored);
 }
 
-void testGltfModelReturnsWithReadyTexture()
+void testGltfModelReturnsBeforeTextureDecodeCompletes()
 {
     Models::clearCache();
     const std::filesystem::path directory = temporaryDirectory("horse-model-loading-gltf-sync");
@@ -287,9 +287,14 @@ void testGltfModelReturnsWithReadyTexture()
     assert(material != nullptr);
     const Models::TextureHandle texture = material->base_color_info.texture;
     assert(texture != Models::INVALID_TEXTURE);
+    assert(!Models::Internal::textureStorageReady(texture));
+    assert(Models::Internal::textureState(texture) != Models::Internal::TextureState::Ready);
+
+    Core::Jobs::wait();
+    Models::Internal::pumpTextureResources();
+
     assert(Models::Internal::textureStorageReady(texture));
     assert(Models::Internal::textureState(texture) == Models::Internal::TextureState::Ready);
-
     const Models::TextureAsset *asset = Models::texture(texture);
     assert(asset != nullptr);
     assert(asset->image.width == 1 && asset->image.height == 1);
@@ -434,7 +439,7 @@ void testCompiledCacheInvalidatesDependenciesAndCorruption()
     std::filesystem::remove_all(directory, ignored);
 }
 
-void testSynchronousModelLoadBypassesCompiledCache()
+void testSynchronousModelLoadUsesCompiledCache()
 {
     Models::clearCache();
     const std::filesystem::path directory = temporaryDirectory("horse-model-sync-load");
@@ -446,15 +451,16 @@ void testSynchronousModelLoadBypassesCompiledCache()
     const Models::ModelHandle first = Models::load(gltf.string(), &error);
     assert(first != Models::INVALID_MODEL);
     assert(error.empty());
-    assert(Models::Formats::sourceLoaderInvocationCount() == before + 1u);
+    assert(Models::Formats::sourceLoaderInvocationCount() >= before + 1u);
     Core::Jobs::wait();
+    Core::Jobs::pump();
 
     Models::clearCache();
     const std::uint64_t before_second = Models::Formats::sourceLoaderInvocationCount();
     const Models::ModelHandle second = Models::load(gltf.string(), &error);
     assert(second != Models::INVALID_MODEL);
     assert(error.empty());
-    assert(Models::Formats::sourceLoaderInvocationCount() == before_second + 1u);
+    assert(Models::Formats::sourceLoaderInvocationCount() == before_second);
 
     Models::clearCache();
     std::error_code ignored;
@@ -497,10 +503,10 @@ int main()
     testModelImportScopeDoesNotDecodeTextureMemorySynchronously();
     testSceneResourceSyncPumpsCompletedTextures();
     testGltfDependenciesRecordExternalBuffers();
-    testGltfModelReturnsWithReadyTexture();
+    testGltfModelReturnsBeforeTextureDecodeCompletes();
     testCompiledCacheRoundTripAndTextureGraph();
     testCompiledCacheInvalidatesDependenciesAndCorruption();
-    testSynchronousModelLoadBypassesCompiledCache();
+    testSynchronousModelLoadUsesCompiledCache();
     testStaleTextureCompletionCannotReachNewGeneration();
     Models::clearCache();
     Core::Jobs::shutdown();
