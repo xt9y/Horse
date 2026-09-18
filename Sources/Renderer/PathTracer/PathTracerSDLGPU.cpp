@@ -4,7 +4,9 @@
 #include "Renderer/Internal/FrameSDLGPU.hpp"
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
 #include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
+#include "Renderer/Internal/ReconstructionSDLGPU.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
+#include "Renderer/SDLGPU/ReconstructionTraceShaders.hpp"
 #include "Renderer/SDLGPU/Shaders.hpp"
 #include "Renderer/SDLGPU/Uniforms.hpp"
 #include "Renderer/Scenes/Scene.hpp"
@@ -16,6 +18,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -30,8 +33,12 @@ constexpr SDL_GPUTextureUsageFlags PathDepthUsage =
     SDL_GPU_TEXTUREUSAGE_SAMPLER |
     SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
 constexpr SDL_GPUTextureUsageFlags PathAccumulationUsage =
+    SDL_GPU_TEXTUREUSAGE_COLOR_TARGET |
     SDL_GPU_TEXTUREUSAGE_SAMPLER |
     SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE;
+constexpr SDL_GPUTextureUsageFlags PathSurfaceUsage =
+    SDL_GPU_TEXTUREUSAGE_SAMPLER |
+    SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
 
 class ProgressiveState {
 public:
@@ -39,7 +46,6 @@ public:
     {
         sample_count_ = 0u;
         frame_index_ = 0u;
-        phase_count_ = 0u;
         reset_pending_ = true;
         camera_moving_ = false;
         was_camera_moving_ = false;
@@ -90,20 +96,17 @@ public:
     {
         sample_count_ += samples;
         ++frame_index_;
-        phase_count_ = std::min<std::uint32_t>(phase_count_ + 1u, 4u);
         reset_pending_ = false;
     }
 
     std::uint32_t sampleCount() const { return sample_count_; }
     std::uint32_t frameIndex() const { return frame_index_; }
-    std::uint32_t phaseCount() const { return phase_count_; }
     bool resetPending() const { return reset_pending_; }
     bool cameraMoving() const { return camera_moving_; }
 
 private:
     std::uint32_t sample_count_ = 0u;
     std::uint32_t frame_index_ = 0u;
-    std::uint32_t phase_count_ = 0u;
     bool reset_pending_ = true;
     bool camera_moving_ = false;
     bool was_camera_moving_ = false;
@@ -147,78 +150,80 @@ bool clearPathColor(SDL_GPUCommandBuffer *command, SDL_GPUTexture *color)
     return true;
 }
 
-void blitPathTrace(
-    SDL_GPUCommandBuffer *command,
-    SDL_GPUTexture *source,
-    std::uint32_t source_width,
-    std::uint32_t source_height,
-    SDL_GPUTexture *destination,
-    std::uint32_t destination_width,
-    std::uint32_t destination_height)
+bool clearAccumulation(SDL_GPUCommandBuffer *command, SDL_GPUTexture *accumulation)
 {
-    SDL_GPUBlitInfo info{};
-    info.source.texture = source;
-    info.source.w = source_width;
-    info.source.h = source_height;
-    info.destination.texture = destination;
-    info.destination.w = destination_width;
-    info.destination.h = destination_height;
-    info.load_op = SDL_GPU_LOADOP_DONT_CARE;
-    info.filter = SDL_GPU_FILTER_LINEAR;
-    SDL_BlitGPUTexture(command, &info);
+    if (!command || !accumulation) return false;
+    SDL_GPUColorTargetInfo target{};
+    target.texture = accumulation;
+    target.clear_color = {0.0f, 0.0f, 0.0f, 0.0f};
+    target.load_op = SDL_GPU_LOADOP_CLEAR;
+    target.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(command, &target, 1u, nullptr);
+    if (!pass) return false;
+    SDL_EndGPURenderPass(pass);
+    return true;
 }
 
 } // namespace
 
 struct PathTracer::Impl {
+    using Clock = std::chrono::steady_clock;
+
     PathTracerSettings settings{};
     Frame::SDLGPU::Target frame;
     Scenes::SDLGPU::SceneResources scene;
+    Internal::ReconstructionSDLGPU reconstruction;
+    Reconstruction::BudgetController budget;
     ProgressiveState progressive;
     SDL_GPUComputePipeline *trace_pipeline = nullptr;
-    SDL_GPUComputePipeline *resolve_pipeline = nullptr;
-    SDL_GPUSampler *resolve_sampler = nullptr;
     SDL_GPUTexture *trace_color = nullptr;
     SDL_GPUTexture *trace_depth = nullptr;
     SDL_GPUTexture *accumulation = nullptr;
+    SDL_GPUTexture *trace_surface = nullptr;
+    Clock::time_point previous_frame_time{};
     int width = 1;
     int height = 1;
     int trace_width = 1;
     int trace_height = 1;
     bool initialized = false;
     bool gpu_retained = false;
+    bool have_frame_time = false;
 
     bool configured() const
     {
-        return settings.resolution_divisor > 0 &&
-            settings.samples_per_frame > 0 &&
-            settings.stationary_phase_grid > 0 &&
-            settings.reset_phase_grid > 0 &&
-            settings.moving_phase_grid > 0 &&
-            settings.moving_depth_block > 0;
+        return settings.samples_per_frame > 0;
     }
 
     bool active() const { return initialized && settings.enabled; }
 
     void updateResolution()
     {
-        if (settings.resolution_divisor <= 0) {
-            trace_width = 0;
-            trace_height = 0;
-            return;
+        trace_width = std::max(width, 1);
+        trace_height = std::max(height, 1);
+    }
+
+    void observeFrameTime()
+    {
+        const Clock::time_point now = Clock::now();
+        if (have_frame_time) {
+            const float elapsed = std::chrono::duration<float, std::milli>(
+                now - previous_frame_time).count();
+            budget.observe(elapsed, settings.reconstruction);
         }
-        trace_width = std::max(width / settings.resolution_divisor, 1);
-        trace_height = std::max(height / settings.resolution_divisor, 1);
+        previous_frame_time = now;
+        have_frame_time = true;
     }
 
     void destroyTargets()
     {
         SDL_GPUDevice *device = SDLGPU::device();
         if (device) {
+            if (trace_surface) SDL_ReleaseGPUTexture(device, trace_surface);
             if (accumulation) SDL_ReleaseGPUTexture(device, accumulation);
             if (trace_depth) SDL_ReleaseGPUTexture(device, trace_depth);
             if (trace_color) SDL_ReleaseGPUTexture(device, trace_color);
         }
+        trace_surface = nullptr;
         accumulation = nullptr;
         trace_depth = nullptr;
         trace_color = nullptr;
@@ -227,20 +232,28 @@ struct PathTracer::Impl {
 
     bool createTargets()
     {
-        if (trace_width <= 0 || trace_height <= 0) return false;
+        updateResolution();
         const auto w = static_cast<std::uint32_t>(trace_width);
         const auto h = static_cast<std::uint32_t>(trace_height);
         trace_color = SDLGPU::createTexture(
-            SDLGPU::colorFormat(), PathColorUsage, w, h, "Horse Path Color");
+            SDLGPU::colorFormat(), PathColorUsage, w, h, "Horse Path Fresh Color");
         trace_depth = SDLGPU::createTexture(
-            SDL_GPU_TEXTUREFORMAT_R32_FLOAT, PathDepthUsage, w, h, "Horse Path Depth");
+            SDL_GPU_TEXTUREFORMAT_R32_FLOAT, PathDepthUsage, w, h, "Horse Path Fresh Depth");
         accumulation = SDLGPU::createTexture(
-            SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
+            SDLGPU::colorFormat(),
             PathAccumulationUsage,
-            w, h,
+            w,
+            h,
             "Horse Path Accumulation");
-        if (trace_color && trace_depth && accumulation) {
+        trace_surface = SDLGPU::createTexture(
+            SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+            PathSurfaceUsage,
+            w,
+            h,
+            "Horse Path Fresh Surface");
+        if (trace_color && trace_depth && accumulation && trace_surface) {
             progressive.reset();
+            reconstruction.reset();
             return true;
         }
         std::fprintf(stderr, "[PathTracer/SDL_GPU]: target creation failed: %s\n", SDL_GetError());
@@ -261,35 +274,47 @@ struct PathTracer::Impl {
     bool dispatchAndResolve(
         const Scenes::CameraState& camera,
         const GlobalIllumination::Field *global_illumination,
-        Internal::FrameOutput& output)
+        Internal::FrameOutput& output,
+        bool reset_history)
     {
         auto *command = static_cast<SDL_GPUCommandBuffer *>(output.command);
-        if (!command || !trace_pipeline || !resolve_pipeline || !resolve_sampler ||
-            !trace_color || !trace_depth || !accumulation)
+        if (!command || !trace_pipeline || !trace_color || !trace_depth ||
+            !accumulation || !trace_surface)
             return false;
 
+        if (progressive.resetPending() && !clearAccumulation(command, accumulation))
+            return false;
+
+        const std::uint32_t grid = budget.grid();
+        const std::uint32_t frame_index = progressive.frameIndex();
         const SDLGPU::FrameUniforms uniforms = SDLGPU::makeFrameUniforms(
             camera,
-            trace_width, trace_height,
-            width, height,
-            scene.nodeCount(), scene.triangleCount(), scene.materialCount(), scene.textureCount(),
+            trace_width,
+            trace_height,
+            width,
+            height,
+            scene.nodeCount(),
+            scene.triangleCount(),
+            scene.materialCount(),
+            scene.textureCount(),
             Scenes::SceneCache::opacityCutoff(),
-            progressive.frameIndex(),
+            frame_index,
             progressive.sampleCount(),
             static_cast<std::uint32_t>(settings.samples_per_frame),
-            progressive.resetPending(),
+            false,
             progressive.cameraMoving(),
-            static_cast<std::uint32_t>(settings.stationary_phase_grid),
-            static_cast<std::uint32_t>(settings.reset_phase_grid),
-            static_cast<std::uint32_t>(settings.moving_phase_grid),
-            static_cast<std::uint32_t>(settings.moving_depth_block));
+            grid,
+            grid,
+            grid,
+            1u);
         SDL_PushGPUComputeUniformData(command, 0u, &uniforms, sizeof uniforms);
 
-        SDL_GPUStorageTextureReadWriteBinding writable[3]{};
+        SDL_GPUStorageTextureReadWriteBinding writable[4]{};
         writable[0].texture = trace_color;
         writable[1].texture = trace_depth;
         writable[2].texture = accumulation;
-        SDL_GPUComputePass *trace_pass = SDL_BeginGPUComputePass(command, writable, 3u, nullptr, 0u);
+        writable[3].texture = trace_surface;
+        SDL_GPUComputePass *trace_pass = SDL_BeginGPUComputePass(command, writable, 4u, nullptr, 0u);
         if (!trace_pass) return false;
         SDL_BindGPUComputePipeline(trace_pass, trace_pipeline);
         scene.bindCompute(trace_pass);
@@ -305,43 +330,22 @@ struct PathTracer::Impl {
         SDL_EndGPUComputePass(trace_pass);
         if (!gi_ok) return false;
 
-        const std::uint32_t moving_grid = static_cast<std::uint32_t>(
-            std::max(settings.moving_phase_grid, 1));
-        const std::uint32_t moving_phase = progressive.frameIndex() %
-            std::max(moving_grid * moving_grid, 1u);
-        const std::uint32_t resolve_params[4] = {
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
-            (moving_phase << 1u) | (progressive.cameraMoving() ? 1u : 0u),
-            moving_grid,
-        };
-        SDL_PushGPUComputeUniformData(command, 0u, resolve_params, sizeof resolve_params);
-
-        SDL_GPUStorageTextureReadWriteBinding resolved{};
-        resolved.texture = trace_color;
-        SDL_GPUComputePass *resolve_pass = SDL_BeginGPUComputePass(
-            command, &resolved, 1u, nullptr, 0u);
-        if (!resolve_pass) return false;
-        SDL_BindGPUComputePipeline(resolve_pass, resolve_pipeline);
-        const SDL_GPUTextureSamplerBinding accumulation_binding{
-            accumulation, resolve_sampler};
-        SDL_BindGPUComputeSamplers(resolve_pass, 0u, &accumulation_binding, 1u);
-        SDL_DispatchGPUCompute(
-            resolve_pass,
-            (static_cast<Uint32>(trace_width) + 7u) / 8u,
-            (static_cast<Uint32>(trace_height) + 7u) / 8u,
-            1u);
-        SDL_EndGPUComputePass(resolve_pass);
+        if (!reconstruction.resolve(
+                command,
+                trace_color,
+                trace_depth,
+                trace_surface,
+                frame.color(),
+                frame.linearDepth(),
+                camera,
+                settings.reconstruction,
+                frame_index,
+                grid,
+                progressive.cameraMoving(),
+                reset_history))
+            return false;
 
         progressive.advance(static_cast<std::uint32_t>(settings.samples_per_frame));
-        blitPathTrace(
-            command,
-            trace_color,
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
-            frame.color(),
-            static_cast<std::uint32_t>(width),
-            static_cast<std::uint32_t>(height));
         return true;
     }
 };
@@ -369,14 +373,15 @@ bool PathTracer::init()
     impl_->width = std::max(Window::width(), 1);
     impl_->height = std::max(Window::height(), 1);
     impl_->updateResolution();
+
+    const std::string trace_source =
+        std::string(SDLGPU::Shaders::Trace) + SDLGPU::ReconstructionTraceShaders::Entries;
     std::string error;
     impl_->trace_pipeline = SDLGPU::compileComputePipeline(
-        SDLGPU::Shaders::Trace, "Horse Path Tracer", "PathMain");
-    impl_->resolve_pipeline = SDLGPU::compileComputePipeline(
-        SDLGPU::Shaders::PathResolve, "Horse Path Resolve", "Main");
-    impl_->resolve_sampler = SDLGPU::createNearestSampler();
-    if (!impl_->trace_pipeline || !impl_->resolve_pipeline || !impl_->resolve_sampler ||
+        trace_source.c_str(), "Horse Path Tracer", "SparsePathMain");
+    if (!impl_->trace_pipeline ||
         !impl_->frame.resize(impl_->width, impl_->height) ||
+        !impl_->reconstruction.resize(impl_->width, impl_->height) ||
         !impl_->scene.init(&error) ||
         !impl_->createTargets())
     {
@@ -385,17 +390,25 @@ bool PathTracer::init()
         return false;
     }
 
+    impl_->budget.reset();
+    impl_->progressive.reset();
+    impl_->have_frame_time = false;
     impl_->initialized = true;
     std::fprintf(
         stderr,
-        "[PathTracer/SDL_GPU]: %s progressive compute/BVH, output %dx%d, trace %dx%d\n",
+        "[PathTracer/SDL_GPU]: %s sparse native progressive compute/BVH, output %dx%d, trace %dx%d\n",
         SDLGPU::driver(), impl_->width, impl_->height, impl_->trace_width, impl_->trace_height);
     return true;
 }
 
 bool PathTracer::activate()
 {
-    return impl_ && impl_->initialized;
+    if (!impl_ || !impl_->initialized) return false;
+    impl_->budget.reset();
+    impl_->progressive.reset();
+    impl_->reconstruction.reset();
+    impl_->have_frame_time = false;
+    return true;
 }
 
 void PathTracer::deactivate() {}
@@ -409,12 +422,15 @@ void PathTracer::resize(int width, int height)
     const int old_height = impl_->trace_height;
     impl_->updateResolution();
     if (!impl_->initialized) return;
-    if (!impl_->frame.resize(impl_->width, impl_->height)) {
+    if (!impl_->frame.resize(impl_->width, impl_->height) ||
+        !impl_->reconstruction.resize(impl_->width, impl_->height))
+    {
         std::fprintf(stderr, "[PathTracer/SDL_GPU]: frame resize failed: %s\n", SDL_GetError());
         return;
     }
     if (old_width == impl_->trace_width && old_height == impl_->trace_height) {
         impl_->progressive.resetAccumulation();
+        impl_->reconstruction.reset();
         return;
     }
     impl_->destroyTargets();
@@ -427,6 +443,8 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     if (!impl_ || !impl_->initialized) return false;
     if (!impl_->recreateTargetsIfNeeded()) return false;
 
+    impl_->observeFrameTime();
+
     std::string error;
     const auto sync = impl_->scene.sync(world, &error);
     if (!sync.ok) {
@@ -436,10 +454,12 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     if (sync.scene_changed) impl_->progressive.sceneChanged();
 
     const Scenes::CameraState camera = Scenes::cameraState(Scenes::Scene::cameraState(world));
-    impl_->progressive.updateCamera(Scenes::cameraSignature(camera));
-    impl_->progressive.updateLight(Internal::shadingState().lighting.revision);
-    impl_->progressive.updateGlobalIllumination(
+    const bool camera_moving = impl_->progressive.updateCamera(Scenes::cameraSignature(camera));
+    const bool light_changed = impl_->progressive.updateLight(Internal::shadingState().lighting.revision);
+    const bool gi_changed = impl_->progressive.updateGlobalIllumination(
         globalIlluminationSignature(output.global_illumination));
+    const bool reset_history = sync.scene_changed || light_changed || gi_changed;
+    if (reset_history) impl_->reconstruction.reset();
 
     if (!impl_->frame.begin(output)) return false;
     output.scene_resources = &impl_->scene;
@@ -450,7 +470,8 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             static_cast<SDL_GPUCommandBuffer *>(output.command), impl_->frame.color());
     }
 
-    if (!impl_->dispatchAndResolve(camera, output.global_illumination, output)) {
+    (void)camera_moving;
+    if (!impl_->dispatchAndResolve(camera, output.global_illumination, output, reset_history)) {
         Frame::SDLGPU::cancel(output);
         return false;
     }
@@ -459,7 +480,7 @@ bool PathTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     output.width = impl_->width;
     output.height = impl_->height;
     output.color_texture = impl_->frame.color();
-    output.depth_texture = impl_->trace_depth;
+    output.depth_texture = impl_->frame.linearDepth();
     output.velocity_texture = impl_->frame.velocity();
     return true;
 }
@@ -479,14 +500,10 @@ void PathTracer::shutdown()
     if (!impl_) return;
     Internal::shutdownFonts(Internal::GraphicsApi::SDLGPU);
     Internal::shutdownGlobalIlluminationSDLGPU();
+    impl_->reconstruction.shutdown();
     SDL_GPUDevice *device = SDLGPU::device();
-    if (device) {
-        if (impl_->resolve_sampler) SDL_ReleaseGPUSampler(device, impl_->resolve_sampler);
-        if (impl_->resolve_pipeline) SDL_ReleaseGPUComputePipeline(device, impl_->resolve_pipeline);
-        if (impl_->trace_pipeline) SDL_ReleaseGPUComputePipeline(device, impl_->trace_pipeline);
-    }
-    impl_->resolve_sampler = nullptr;
-    impl_->resolve_pipeline = nullptr;
+    if (device && impl_->trace_pipeline)
+        SDL_ReleaseGPUComputePipeline(device, impl_->trace_pipeline);
     impl_->trace_pipeline = nullptr;
     impl_->destroyTargets();
     impl_->scene.clear();
@@ -494,7 +511,9 @@ void PathTracer::shutdown()
     if (impl_->gpu_retained) SDLGPU::release();
     impl_->gpu_retained = false;
     impl_->initialized = false;
+    impl_->budget.reset();
     impl_->progressive.reset();
+    impl_->have_frame_time = false;
 }
 
 bool PathTracer::initialized() const { return impl_ && impl_->initialized; }
@@ -504,6 +523,7 @@ void PathTracer::setEnabled(bool enabled)
     if (!impl_) return;
     impl_->settings.enabled = enabled;
     impl_->progressive.resetAccumulation();
+    impl_->reconstruction.reset();
 }
 PathTracerSettings& PathTracer::settings() { return impl_->settings; }
 const PathTracerSettings& PathTracer::settings() const { return impl_->settings; }
