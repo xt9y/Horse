@@ -5,6 +5,7 @@
 #include "Renderer/Internal/FrameSDLGPU.hpp"
 #include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
 #include "Renderer/Internal/HiZSDLGPU.hpp"
+#include "Renderer/Internal/OcclusionCullingSDLGPU.hpp"
 #include "Renderer/Internal/RasterGeometrySDLGPU.hpp"
 #include "Renderer/Internal/ShadowMapsSDLGPU.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
@@ -109,6 +110,7 @@ struct Rasterizer::Impl {
     RasterizerSDLGPU::RasterGeometry geometry;
     RasterizerSDLGPU::ShadowMaps shadows;
     Visibility::SDLGPU::HiZPyramid hi_z;
+    Visibility::SDLGPU::OcclusionCulling occlusion;
     SDL_GPUGraphicsPipeline *pipeline = nullptr;
     SDL_GPUGraphicsPipeline *sky_pipeline = nullptr;
     SDL_GPUGraphicsPipeline *depth_pipeline = nullptr;
@@ -134,7 +136,8 @@ struct Rasterizer::Impl {
         const std::size_t bytes = visibility.size() * sizeof(std::uint32_t);
         if (!visibility_buffer || visibility_capacity < bytes) {
             SDL_GPUBuffer *replacement = SDLGPU::createBuffer(
-                SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+                SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ |
+                    SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE,
                 bytes,
                 visibility.data(),
                 "Horse Raster Visibility");
@@ -155,6 +158,25 @@ struct Rasterizer::Impl {
             !SDL_SubmitGPUCommandBuffer(command))
         {
             if (command) SDL_CancelGPUCommandBuffer(command);
+            return false;
+        }
+        return true;
+    }
+
+    bool ensureVisibilitySystems()
+    {
+        if (!settings.hi_z && !settings.occlusion_culling) return true;
+        if (!hi_z.resize(
+                static_cast<std::uint32_t>(width),
+                static_cast<std::uint32_t>(height)))
+        {
+            settings.hi_z = false;
+            settings.occlusion_culling = false;
+            return false;
+        }
+        if (settings.occlusion_culling && !occlusion.init()) {
+            settings.occlusion_culling = false;
+            if (!settings.hi_z) hi_z.clear();
             return false;
         }
         return true;
@@ -195,8 +217,9 @@ struct Rasterizer::Impl {
         if (!depth_pipeline) {
             settings.depth_prepass = false;
             settings.hi_z = false;
+            settings.occlusion_culling = false;
             std::fprintf(stderr,
-                "[Rasterizer/SDL_GPU]: depth prepass unavailable; continuing without Hi-Z: %s\n",
+                "[Rasterizer/SDL_GPU]: depth prepass unavailable; continuing without Hi-Z/occlusion: %s\n",
                 SDL_GetError());
         }
         return true;
@@ -244,13 +267,9 @@ bool Rasterizer::init()
         return false;
     }
 
-    if (impl_->settings.hi_z && !impl_->hi_z.resize(
-            static_cast<std::uint32_t>(impl_->width),
-            static_cast<std::uint32_t>(impl_->height)))
-    {
-        impl_->settings.hi_z = false;
+    if (!impl_->ensureVisibilitySystems()) {
         std::fprintf(stderr,
-            "[Rasterizer/SDL_GPU]: Hi-Z unavailable; continuing without it: %s\n",
+            "[Rasterizer/SDL_GPU]: Hi-Z/occlusion unavailable; continuing without GPU occlusion: %s\n",
             SDL_GetError());
     }
 
@@ -269,13 +288,9 @@ void Rasterizer::resize(int width, int height)
     if (!impl_->frame.resize(impl_->width, impl_->height))
         std::fprintf(stderr, "[Rasterizer/SDL_GPU]: resize failed: %s\n", SDL_GetError());
 
-    if (impl_->settings.hi_z && !impl_->hi_z.resize(
-            static_cast<std::uint32_t>(impl_->width),
-            static_cast<std::uint32_t>(impl_->height)))
-    {
-        impl_->settings.hi_z = false;
+    if (!impl_->ensureVisibilitySystems()) {
         std::fprintf(stderr,
-            "[Rasterizer/SDL_GPU]: Hi-Z resize failed; disabling Hi-Z: %s\n",
+            "[Rasterizer/SDL_GPU]: Hi-Z resize failed; disabling GPU occlusion: %s\n",
             SDL_GetError());
     }
 }
@@ -297,6 +312,20 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         std::fprintf(stderr, "[Rasterizer/SDL_GPU]: visibility upload failed: %s\n", SDL_GetError());
         return false;
     }
+
+    if (impl_->settings.occlusion_culling) {
+        if (!impl_->ensureVisibilitySystems() ||
+            !impl_->occlusion.sync(world, impl_->scene.scene(), &error))
+        {
+            impl_->settings.occlusion_culling = false;
+            std::fprintf(stderr,
+                "[Rasterizer/SDL_GPU]: occlusion setup failed; disabling occlusion: %s%s%s\n",
+                error.empty() ? "" : error.c_str(),
+                error.empty() ? "" : " | ",
+                SDL_GetError());
+        }
+    }
+
     if (!impl_->frame.begin(output)) return false;
     output.scene_resources = nullptr;
 
@@ -328,8 +357,13 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         return false;
     }
 
+    const bool needs_depth_prepass =
+        impl_->settings.depth_prepass || impl_->settings.occlusion_culling;
+    const bool needs_hi_z = impl_->settings.hi_z || impl_->settings.occlusion_culling;
+
     bool depth_prepass_done = false;
-    if (camera.valid && impl_->settings.enabled && impl_->settings.depth_prepass &&
+    bool hi_z_ready = false;
+    if (camera.valid && impl_->settings.enabled && needs_depth_prepass &&
         impl_->depth_pipeline && impl_->geometry.worldVertexCount() > 0u)
     {
         SDL_GPUDepthStencilTargetInfo depth_prepass{};
@@ -382,12 +416,31 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         SDL_EndGPURenderPass(depth_pass);
         depth_prepass_done = true;
 
-        if (impl_->settings.hi_z && !impl_->hi_z.build(command, impl_->frame.depth())) {
-            impl_->settings.hi_z = false;
-            std::fprintf(stderr,
-                "[Rasterizer/SDL_GPU]: Hi-Z build failed; disabling Hi-Z: %s\n",
-                SDL_GetError());
+        if (needs_hi_z) {
+            hi_z_ready = impl_->hi_z.build(command, impl_->frame.depth());
+            if (!hi_z_ready) {
+                impl_->settings.hi_z = false;
+                impl_->settings.occlusion_culling = false;
+                std::fprintf(stderr,
+                    "[Rasterizer/SDL_GPU]: Hi-Z build failed; disabling GPU occlusion: %s\n",
+                    SDL_GetError());
+            }
         }
+    }
+
+    if (hi_z_ready && impl_->settings.occlusion_culling &&
+        !impl_->occlusion.cull(
+            command,
+            impl_->hi_z,
+            impl_->visibility_buffer,
+            uniforms,
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)))
+    {
+        impl_->settings.occlusion_culling = false;
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: occlusion dispatch failed; disabling occlusion: %s\n",
+            SDL_GetError());
     }
 
     SDL_GPUColorTargetInfo colors[2]{};
@@ -527,6 +580,7 @@ void Rasterizer::shutdown()
     if (!impl_) return;
     Internal::shutdownFonts(Internal::GraphicsApi::SDLGPU);
     Internal::shutdownGlobalIlluminationSDLGPU();
+    impl_->occlusion.clear();
     impl_->hi_z.clear();
     impl_->shadows.clear();
     impl_->geometry.clear();
@@ -549,6 +603,7 @@ void Rasterizer::setEnabled(bool enabled) { if (impl_) impl_->settings.enabled =
 void Rasterizer::setViewportCulling(bool value) { if (impl_) impl_->settings.viewport_culling = value; }
 void Rasterizer::setDepthPrepass(bool value) { if (impl_) impl_->settings.depth_prepass = value; }
 void Rasterizer::setHiZ(bool value) { if (impl_) impl_->settings.hi_z = value; }
+void Rasterizer::setOcclusionCulling(bool value) { if (impl_) impl_->settings.occlusion_culling = value; }
 void Rasterizer::setShadowResolution(int value) { if (impl_) impl_->settings.shadow_resolution = std::max(value, 1); }
 void Rasterizer::setShadowCascades(int value) { if (impl_) impl_->settings.shadow_cascades = std::max(value, 1); }
 void Rasterizer::setShadowDistance(float value) { if (impl_) impl_->settings.shadow_distance = std::max(value, 1.0f); }
@@ -557,6 +612,7 @@ void Rasterizer::setClearColor(Vec4 value) { if (impl_) impl_->settings.clear_co
 bool Rasterizer::viewportCulling() const { return impl_ && impl_->settings.viewport_culling; }
 bool Rasterizer::depthPrepass() const { return impl_ && impl_->settings.depth_prepass; }
 bool Rasterizer::hiZ() const { return impl_ && impl_->settings.hi_z; }
+bool Rasterizer::occlusionCulling() const { return impl_ && impl_->settings.occlusion_culling; }
 int Rasterizer::shadowResolution() const { return impl_ ? impl_->settings.shadow_resolution : 0; }
 int Rasterizer::shadowCascades() const { return impl_ ? impl_->settings.shadow_cascades : 0; }
 float Rasterizer::shadowDistance() const { return impl_ ? impl_->settings.shadow_distance : 0.0f; }
