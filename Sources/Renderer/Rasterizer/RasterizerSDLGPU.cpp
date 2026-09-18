@@ -2,6 +2,7 @@
 
 #include "Models/Models.hpp"
 #include "Renderer/Internal/FontPass.hpp"
+#include "Renderer/Internal/ForwardPlusSDLGPU.hpp"
 #include "Renderer/Internal/FrameSDLGPU.hpp"
 #include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
 #include "Renderer/Internal/HiZSDLGPU.hpp"
@@ -111,6 +112,7 @@ struct Rasterizer::Impl {
     RasterizerSDLGPU::ShadowMaps shadows;
     Visibility::SDLGPU::HiZPyramid hi_z;
     Visibility::SDLGPU::OcclusionCulling occlusion;
+    Lighting::SDLGPU::ForwardPlus forward_plus;
     SDL_GPUGraphicsPipeline *pipeline = nullptr;
     SDL_GPUGraphicsPipeline *sky_pipeline = nullptr;
     SDL_GPUGraphicsPipeline *depth_pipeline = nullptr;
@@ -260,6 +262,9 @@ bool Rasterizer::init()
     if (!impl_->frame.resize(impl_->width, impl_->height) ||
         !impl_->scene.init(&error) ||
         !impl_->shadows.init(&error) ||
+        !impl_->forward_plus.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)) ||
         !impl_->createPipelines())
     {
         if (!error.empty()) std::fprintf(stderr, "[Rasterizer/SDL_GPU]: %s\n", error.c_str());
@@ -270,6 +275,13 @@ bool Rasterizer::init()
     if (!impl_->ensureVisibilitySystems()) {
         std::fprintf(stderr,
             "[Rasterizer/SDL_GPU]: Hi-Z/occlusion unavailable; continuing without GPU occlusion: %s\n",
+            SDL_GetError());
+    }
+
+    if (impl_->settings.forward_plus && !impl_->forward_plus.init()) {
+        impl_->settings.forward_plus = false;
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: Forward+ unavailable; continuing with full light loop: %s\n",
             SDL_GetError());
     }
 
@@ -287,6 +299,16 @@ void Rasterizer::resize(int width, int height)
 
     if (!impl_->frame.resize(impl_->width, impl_->height))
         std::fprintf(stderr, "[Rasterizer/SDL_GPU]: resize failed: %s\n", SDL_GetError());
+
+    if (!impl_->forward_plus.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)))
+    {
+        impl_->settings.forward_plus = false;
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: Forward+ resize failed; disabling Forward+: %s\n",
+            SDL_GetError());
+    }
 
     if (!impl_->ensureVisibilitySystems()) {
         std::fprintf(stderr,
@@ -443,6 +465,17 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             SDL_GetError());
     }
 
+    if (camera.valid && impl_->settings.enabled && impl_->settings.forward_plus &&
+        !impl_->forward_plus.build(command, output.global_illumination, uniforms, &error))
+    {
+        impl_->settings.forward_plus = false;
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: Forward+ build failed; using full light loop: %s%s%s\n",
+            error.empty() ? "" : error.c_str(),
+            error.empty() ? "" : " | ",
+            SDL_GetError());
+    }
+
     SDL_GPUColorTargetInfo colors[2]{};
     colors[0].texture = impl_->frame.color();
     colors[0].clear_color = {
@@ -512,6 +545,17 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             impl_->scene.bindRasterFragment(pass);
             Internal::bindGlobalIlluminationSDLGPU(pass, output.global_illumination, 2u);
             impl_->shadows.bind(pass);
+            if (!impl_->forward_plus.bind(
+                    pass,
+                    command,
+                    impl_->settings.forward_plus,
+                    4u))
+            {
+                SDL_EndGPURenderPass(pass);
+                Frame::SDLGPU::cancel(output);
+                std::fprintf(stderr, "[Rasterizer/SDL_GPU]: Forward+ binding failed\n");
+                return false;
+            }
             SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
             if (!draw_ranges(pass, false)) {
                 SDL_EndGPURenderPass(pass);
@@ -549,6 +593,17 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         impl_->scene.bindRasterFragment(camera_pass);
         Internal::bindGlobalIlluminationSDLGPU(camera_pass, output.global_illumination, 2u);
         impl_->shadows.bind(camera_pass);
+        if (!impl_->forward_plus.bind(
+                camera_pass,
+                command,
+                impl_->settings.forward_plus,
+                4u))
+        {
+            SDL_EndGPURenderPass(camera_pass);
+            Frame::SDLGPU::cancel(output);
+            std::fprintf(stderr, "[Rasterizer/SDL_GPU]: Forward+ binding failed\n");
+            return false;
+        }
         SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
         if (!draw_ranges(camera_pass, true)) {
             SDL_EndGPURenderPass(camera_pass);
@@ -580,6 +635,7 @@ void Rasterizer::shutdown()
     if (!impl_) return;
     Internal::shutdownFonts(Internal::GraphicsApi::SDLGPU);
     Internal::shutdownGlobalIlluminationSDLGPU();
+    impl_->forward_plus.clear();
     impl_->occlusion.clear();
     impl_->hi_z.clear();
     impl_->shadows.clear();
@@ -604,6 +660,7 @@ void Rasterizer::setViewportCulling(bool value) { if (impl_) impl_->settings.vie
 void Rasterizer::setDepthPrepass(bool value) { if (impl_) impl_->settings.depth_prepass = value; }
 void Rasterizer::setHiZ(bool value) { if (impl_) impl_->settings.hi_z = value; }
 void Rasterizer::setOcclusionCulling(bool value) { if (impl_) impl_->settings.occlusion_culling = value; }
+void Rasterizer::setForwardPlus(bool value) { if (impl_) impl_->settings.forward_plus = value; }
 void Rasterizer::setShadowResolution(int value) { if (impl_) impl_->settings.shadow_resolution = std::max(value, 1); }
 void Rasterizer::setShadowCascades(int value) { if (impl_) impl_->settings.shadow_cascades = std::max(value, 1); }
 void Rasterizer::setShadowDistance(float value) { if (impl_) impl_->settings.shadow_distance = std::max(value, 1.0f); }
@@ -613,6 +670,7 @@ bool Rasterizer::viewportCulling() const { return impl_ && impl_->settings.viewp
 bool Rasterizer::depthPrepass() const { return impl_ && impl_->settings.depth_prepass; }
 bool Rasterizer::hiZ() const { return impl_ && impl_->settings.hi_z; }
 bool Rasterizer::occlusionCulling() const { return impl_ && impl_->settings.occlusion_culling; }
+bool Rasterizer::forwardPlus() const { return impl_ && impl_->settings.forward_plus; }
 int Rasterizer::shadowResolution() const { return impl_ ? impl_->settings.shadow_resolution : 0; }
 int Rasterizer::shadowCascades() const { return impl_ ? impl_->settings.shadow_cascades : 0; }
 float Rasterizer::shadowDistance() const { return impl_ ? impl_->settings.shadow_distance : 0.0f; }
