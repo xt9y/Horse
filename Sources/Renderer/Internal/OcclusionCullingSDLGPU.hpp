@@ -8,6 +8,7 @@
 
 #include <SDL3/SDL_gpu.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -42,7 +43,11 @@ public:
     std::size_t candidateCount() const;
 
 private:
-    struct GpuBounds;
+    struct alignas(16) GpuBounds {
+        std::array<float, 4> minimum{};
+        std::array<float, 4> maximum{};
+        std::array<std::uint32_t, 4> meta{};
+    };
 
     SDL_GPUComputePipeline *pipeline_ = nullptr;
     SDL_GPUSampler *sampler_ = nullptr;
