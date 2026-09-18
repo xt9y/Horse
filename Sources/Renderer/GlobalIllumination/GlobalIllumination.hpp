@@ -11,6 +11,19 @@
 
 namespace Renderer::GlobalIllumination {
 
+struct Settings {
+    std::size_t rays_per_probe = 64u;
+    std::size_t probe_budget_per_frame = 4u;
+    std::uint32_t minimum_probe_dimension = 4u;
+    std::uint32_t maximum_probe_dimension = 12u;
+    float bounds_margin_scale = 0.05f;
+    float minimum_bounds_margin = 0.25f;
+    float ray_epsilon = 0.001f;
+    std::uint8_t maximum_bounces = 2u;
+    std::uint32_t maximum_photon_count = 100000u;
+    bool paused = false;
+};
+
 struct Probe {
     std::array<Vec3, 4> sh{};
 };
@@ -38,6 +51,9 @@ struct Field {
             probes.size() == probeCount();
     }
 };
+
+Settings& settings();
+const Settings& currentSettings();
 
 void setRaysPerProbe(std::size_t value);
 void setProbeBudgetPerFrame(std::size_t value);
