@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_RAYTRACER_RAYTRACER_HPP
 #define HORSE_RENDERER_RAYTRACER_RAYTRACER_HPP
 
+#include "Renderer/Reconstruction/Reconstruction.hpp"
 #include "Renderer/Renderer.hpp"
 
 namespace Renderer {
@@ -8,6 +9,7 @@ namespace Renderer {
 struct RayTracerSettings {
     bool enabled = false;
     int resolution_divisor = 0;
+    Reconstruction::Settings reconstruction{};
 };
 
 class RayTracer final : public IRenderer {
@@ -30,6 +32,9 @@ public:
 
     void setResolutionDivisor(int divisor) { settings().resolution_divisor = divisor; }
     int resolutionDivisor() const { return settings().resolution_divisor; }
+
+    Reconstruction::Settings& reconstructionSettings() { return settings().reconstruction; }
+    const Reconstruction::Settings& reconstructionSettings() const { return settings().reconstruction; }
 
     RayTracerSettings& settings();
     const RayTracerSettings& settings() const;
