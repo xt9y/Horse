@@ -1,7 +1,9 @@
 #include <Camera/Camera.hpp>
+#include <Renderer/Environment.hpp>
 #include <Renderer/Features.hpp>
 #include <Renderer/GaussianSplat/GaussianSplat.hpp>
 #include <Renderer/GlobalIllumination/GlobalIllumination.hpp>
+#include <Renderer/Lighting/Lighting.hpp>
 #include <Renderer/Quality.hpp>
 #include <Renderer/Rasterizer/Rasterizer.hpp>
 #include <Renderer/Volumetrics/Volumetrics.hpp>
@@ -21,10 +23,36 @@ int main()
     assert(features.gaussian_splat);
     assert(&features == &Renderer::Features::currentSettings());
 
-    features.lighting = false;
+    Ecs::World feature_world;
+    const Ecs::Entity light = feature_world.createEntity();
+    feature_world.add<Renderer::Transform>(light, Renderer::Transform{});
+    feature_world.add<Renderer::LightComponent>(light, Renderer::LightComponent{});
+    feature_world.add<Renderer::ShadowComponent>(light, Renderer::ShadowComponent{});
+    const Ecs::Entity environment = feature_world.createEntity();
+    feature_world.add<Renderer::EnvironmentComponent>(
+        environment,
+        Renderer::EnvironmentComponent{}
+    );
+
+    Renderer::Lighting::State lighting = Renderer::Lighting::state(feature_world);
+    assert(lighting.lights.size() == 1u);
+    assert(lighting.lights[0].shadows);
+    assert(Renderer::environmentState(feature_world).valid);
+
     features.shadows = false;
-    assert(!Renderer::Features::currentSettings().lighting);
-    assert(!Renderer::Features::currentSettings().shadows);
+    lighting = Renderer::Lighting::state(feature_world);
+    assert(lighting.lights.size() == 1u);
+    assert(!lighting.lights[0].shadows);
+    assert(feature_world.get<Renderer::ShadowComponent>(light)->enabled);
+
+    features.lighting = false;
+    lighting = Renderer::Lighting::state(feature_world);
+    assert(lighting.lights.empty());
+    assert(feature_world.get<Renderer::LightComponent>(light));
+
+    features.environment = false;
+    assert(!Renderer::environmentState(feature_world).valid);
+    assert(feature_world.get<Renderer::EnvironmentComponent>(environment)->enabled);
     features = Renderer::Features::Settings{};
 
     Ecs::World camera_world;
@@ -37,6 +65,7 @@ int main()
     Camera::setEnabled(false);
     assert(!Camera::enabled());
     assert(Camera::activeCamera(camera_world) == Ecs::INVALID_ENTITY);
+    assert(camera_world.get<Camera::CameraComponent>(camera)->active);
     Camera::setEnabled(true);
 
     Renderer::Rasterizer rasterizer;
@@ -122,5 +151,6 @@ int main()
 
     Renderer::GlobalIllumination::setPaused(false);
     Renderer::GlobalIllumination::setQuality(Renderer::Quality::High);
+    features = Renderer::Features::Settings{};
     return 0;
 }
