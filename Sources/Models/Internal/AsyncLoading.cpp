@@ -5,11 +5,13 @@
 #include "Models/Internal/Registry.hpp"
 #include "Models/Internal/StagedModel.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <memory>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -17,7 +19,14 @@
 namespace Models::Internal {
 namespace {
 
-constexpr std::size_t MaximumInFlightModelJobs = 2u;
+std::size_t maximumInFlightModelJobs()
+{
+    const unsigned int hardware = std::thread::hardware_concurrency();
+    const std::size_t available = hardware > 1u
+        ? static_cast<std::size_t>(hardware - 1u)
+        : 1u;
+    return std::clamp<std::size_t>(available, 2u, 8u);
+}
 
 struct WorkResult
 {
@@ -136,7 +145,7 @@ void complete(
 bool schedule(LoadHandle handle)
 {
     Runtime& state = runtime();
-    if (state.in_flight >= MaximumInFlightModelJobs) return false;
+    if (state.in_flight >= maximumInFlightModelJobs()) return false;
 
     Request *request = requestFor(state, handle);
     if (!request || request->state != LoadState::Pending || request->submitted)
@@ -174,10 +183,10 @@ bool schedule(LoadHandle handle)
 void schedulePending()
 {
     Runtime& state = runtime();
-    if (state.in_flight >= MaximumInFlightModelJobs) return;
+    if (state.in_flight >= maximumInFlightModelJobs()) return;
 
     for (const Request& request : state.requests) {
-        if (state.in_flight >= MaximumInFlightModelJobs) break;
+        if (state.in_flight >= maximumInFlightModelJobs()) break;
         schedule(request.handle);
     }
 }
