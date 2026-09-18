@@ -219,6 +219,12 @@ void SceneResources::clearRasterMaterials()
 
 bool SceneResources::syncTextures(std::string *error)
 {
+    const std::uint64_t storage_generation = Models::Internal::textureStorageGeneration();
+    if (texture_storage_generation_ != storage_generation) {
+        clearTextures();
+        texture_storage_generation_ = storage_generation;
+        resource_revision_ = UINT64_MAX;
+    }
     if (resource_revision_ == scene_.resourceRevision()) return true;
     if (materials_.textureHandles().size() > MaximumTextureSlots) {
         if (error) *error = "SDL_GPU scene texture slot capacity exceeded";
@@ -496,6 +502,7 @@ void SceneResources::clear()
     scene_.clear();
     materials_.clear();
     render_items_.clear();
+    texture_storage_generation_ = 0u;
     geometry_revision_ = UINT64_MAX;
     resource_revision_ = UINT64_MAX;
     material_revision_ = UINT64_MAX;
