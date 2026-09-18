@@ -44,7 +44,7 @@ BudgetController::BudgetController()
 
 void BudgetController::reset()
 {
-    grid_ = 2u;
+    grid_ = 1u;
     average_frame_ms_ = 0.0f;
     over_budget_frames_ = 0u;
     under_budget_frames_ = 0u;
