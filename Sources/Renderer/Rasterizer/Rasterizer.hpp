@@ -13,6 +13,7 @@ struct RasterizerSettings {
     bool depth_prepass = true;
     bool hi_z = true;
     bool occlusion_culling = true;
+    bool forward_plus = true;
     Quality shadow_quality = Quality::High;
     int shadow_resolution = 1024;
     int shadow_cascades = 4;
@@ -43,6 +44,7 @@ public:
     void setDepthPrepass(bool value);
     void setHiZ(bool value);
     void setOcclusionCulling(bool value);
+    void setForwardPlus(bool value);
     void setShadowQuality(Quality value)
     {
         settings().shadow_quality = value;
@@ -75,6 +77,7 @@ public:
     bool depthPrepass() const;
     bool hiZ() const;
     bool occlusionCulling() const;
+    bool forwardPlus() const;
     Quality shadowQuality() const { return settings().shadow_quality; }
     int shadowResolution() const;
     int shadowCascades() const;
