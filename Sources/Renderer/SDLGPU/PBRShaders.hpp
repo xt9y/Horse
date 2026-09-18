@@ -380,8 +380,9 @@ Surface EvaluateSurface(VSOut i, GpuBaseMaterial base, GpuMaterial material, boo
     s.albedo = max(base.base_color.rgb * base_sample.rgb, 0.0.xxx);
 
     float4 mr = material.tex0.z >= 0 ? SampleSlot(material.tex0.z, i.uv) : 1.0.xxxx;
-    s.roughness = max(saturate(material.pbr.x * mr.r), 0.04);
-    s.metallic = saturate(material.pbr.y * mr.g);
+    bool gltf_mr = material.tex5.z > 0;
+    s.roughness = max(saturate(material.pbr.x * (gltf_mr ? mr.g : mr.r)), 0.04);
+    s.metallic = saturate(material.pbr.y * (gltf_mr ? mr.b : mr.g));
     s.ao = saturate(material.pbr.z * (material.tex1.x >= 0 ? SampleSlot(material.tex1.x, i.uv).r : 1.0));
 
     float3 geometric = normalize(i.normal) * (front_face ? 1.0 : -1.0);
