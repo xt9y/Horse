@@ -41,6 +41,13 @@ bool begin()
     return true;
 }
 
+Renderer::Vec2 size()
+{
+    if (!UI::initialized()) return {};
+    const ImVec2 value = ImGui::GetIO().DisplaySize;
+    return {value.x, value.y};
+}
+
 void filledRect(Renderer::Vec2 minimum, Renderer::Vec2 maximum, Renderer::Vec4 value)
 {
     if (ImDrawList *draw = drawList())
