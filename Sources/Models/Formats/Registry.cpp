@@ -58,16 +58,13 @@ void queueCacheBuild(const std::string& path)
         if (!queued.insert(path).second) return;
     }
 
-    if (!Core::Jobs::trySubmit(
-            [path] {
-                Internal::StagedModel staged;
-                std::string error;
-                (void)stage(path, &staged, &error);
-            },
-            [path] {
-                std::lock_guard lock(mutex);
-                queued.erase(path);
-            }))
+    if (!Core::Jobs::trySubmit([path] {
+            Internal::StagedModel staged;
+            std::string error;
+            (void)stage(path, &staged, &error);
+            std::lock_guard lock(mutex);
+            queued.erase(path);
+        }))
     {
         std::lock_guard lock(mutex);
         queued.erase(path);
