@@ -94,7 +94,11 @@ private:
         std::size_t bytes,
         const char *label
     );
-    SDL_GPUTexture *textureFor(Models::TextureHandle handle, std::string *error);
+    SDL_GPUTexture *textureFor(
+        Models::TextureHandle handle,
+        SDL_GPUCommandBuffer *upload_command,
+        std::string *error
+    );
     void clearTextures();
     void clearRasterMaterials();
 
