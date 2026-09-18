@@ -17,7 +17,8 @@ void IRenderer::render(const Ecs::World& world)
 {
     Internal::updateShadingState(world);
     Internal::FrameOutput output;
-    output.global_illumination = GlobalIllumination::update(world);
+    if (GlobalIllumination::enabled(world))
+        output.global_illumination = GlobalIllumination::update(world);
     if (!renderScene(world, output)) return;
     if (!GaussianSplat::render(world, output)) return;
     if (!Volumetrics::render(world, output)) return;
