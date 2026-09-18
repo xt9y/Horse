@@ -175,5 +175,9 @@ void build(C_Build *b)
     c_sources(ambient_occlusion_tests, "Tests/AmbientOcclusion.cpp");
     configureTest(ambient_occlusion_tests, library);
 
+    C_Target *reflection_tests = c_test(b, "HorseReflectionTests");
+    c_sources(reflection_tests, "Tests/Reflections.cpp");
+    configureTest(reflection_tests, library);
+
     c_default_target(b, library);
 }
