@@ -78,6 +78,8 @@ StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t16, space2);
 StructuredBuffer<GpuMaterial> PMaterials : register(t17, space2);
 StructuredBuffer<float4> PGI : register(t18, space2);
 StructuredBuffer<float4> PShadows : register(t19, space2);
+StructuredBuffer<uint> PForwardTileCounts : register(t20, space2);
+StructuredBuffer<uint> PForwardLightIndices : register(t21, space2);
 cbuffer PixelFrame : register(b0, space3) {
     float4 PCameraPositionNear;
     float4 PCameraForwardFar;
@@ -89,6 +91,7 @@ cbuffer PixelFrame : register(b0, space3) {
     uint4 PFrame;
     uint4 PPathPolicy;
 };
+cbuffer PixelForward : register(b1, space3) { uint4 PForward; };
 
 static const float PI = 3.14159265359;
 
@@ -632,39 +635,75 @@ float ShadowVisibility(uint light_index, float3 position, float type, float bias
     return SampleShadow(selected, position, max(record.z, bias));
 }
 
-float3 DirectLighting(float3 position, Surface s, float3 view) {
+float3 ShadeLight(uint light_index, uint light_base, float3 position, Surface s, float3 view) {
+    uint offset = light_base + light_index * 5u;
+    float4 position_intensity = PGI[offset + 0u];
+    float4 direction_type = PGI[offset + 1u];
+    float4 color_range = PGI[offset + 2u];
+    float4 cone_shadow = PGI[offset + 3u];
+    if (position_intensity.w <= 0.0) return 0.0.xxx;
+
+    float3 light_direction = normalize(direction_type.xyz);
+    float3 l = -light_direction;
+    float attenuation = 1.0;
+    if (direction_type.w < 1.5 || direction_type.w > 2.5) {
+        float3 to_light = position_intensity.xyz - position;
+        float dist = length(to_light);
+        if (dist <= 1.0e-5) return 0.0.xxx;
+        l = to_light / dist;
+        attenuation = 1.0 / max(dist * dist, 1.0);
+        if (color_range.w > 0.0) attenuation *= saturate(1.0 - dist / color_range.w);
+        if (direction_type.w > 2.5)
+            attenuation *= smoothstep(cone_shadow.y, cone_shadow.x, dot(-l, light_direction));
+    }
+    if (attenuation <= 0.0) return 0.0.xxx;
+
+    float visibility = 1.0;
+    if (cone_shadow.z > 0.5) {
+        float bias = max(cone_shadow.w, 1.0e-4);
+        visibility = ShadowVisibility(light_index, position + s.normal * bias, direction_type.w, bias);
+    }
+    if (visibility <= 0.0) return 0.0.xxx;
+
+    float3 brdf = DirectBRDF(s, view, l);
+    return brdf * color_range.rgb * position_intensity.w * attenuation * visibility;
+}
+
+float3 DirectLighting(float3 position, Surface s, float3 view, float2 pixel_position) {
     float3 result = 0.0.xxx;
     uint light_count = (uint)max(PGI[11].z, 0.0);
     uint light_base = (uint)max(PGI[11].w, 12.0);
-    for (uint light_index = 0u; light_index < light_count; ++light_index) {
-        uint offset = light_base + light_index * 5u;
-        float4 position_intensity = PGI[offset + 0u];
-        float4 direction_type = PGI[offset + 1u];
-        float4 color_range = PGI[offset + 2u];
-        float4 cone_shadow = PGI[offset + 3u];
-        if (position_intensity.w <= 0.0) continue;
-        float3 light_direction = normalize(direction_type.xyz);
-        float3 l = -light_direction;
-        float attenuation = 1.0;
-        if (direction_type.w < 1.5 || direction_type.w > 2.5) {
-            float3 to_light = position_intensity.xyz - position;
-            float dist = length(to_light);
-            if (dist <= 1.0e-5) continue;
-            l = to_light / dist;
-            attenuation = 1.0 / max(dist * dist, 1.0);
-            if (color_range.w > 0.0) attenuation *= saturate(1.0 - dist / color_range.w);
-            if (direction_type.w > 2.5)
-                attenuation *= smoothstep(cone_shadow.y, cone_shadow.x, dot(-l, light_direction));
-        }
-        if (attenuation <= 0.0) continue;
-        float visibility = 1.0;
-        if (cone_shadow.z > 0.5) {
-            float bias = max(cone_shadow.w, 1.0e-4);
-            visibility = ShadowVisibility(light_index, position + s.normal * bias, direction_type.w, bias);
-        }
-        if (visibility <= 0.0) continue;
-        float3 brdf = DirectBRDF(s, view, l);
-        result += brdf * color_range.rgb * position_intensity.w * attenuation * visibility;
+
+    if (PForward.x == 0u || PForward.y == 0u || PForward.z == 0u || PForward.w == 0u) {
+        for (uint light_index = 0u; light_index < light_count; ++light_index)
+            result += ShadeLight(light_index, light_base, position, s, view);
+        return result;
+    }
+
+    uint tile_size = PForward.y;
+    uint tiles_x = PForward.z;
+    uint tiles_y = max(
+        ((uint)max(PResolution.y, 1.0) + tile_size - 1u) / tile_size,
+        1u
+    );
+    uint2 pixel = (uint2)max(pixel_position, 0.0.xx);
+    uint tile_x = min(pixel.x / tile_size, tiles_x - 1u);
+    uint tile_y = min(pixel.y / tile_size, tiles_y - 1u);
+    uint tile = tile_y * tiles_x + tile_x;
+    uint count = PForwardTileCounts[tile];
+
+    if (count == 0xffffffffu) {
+        for (uint light_index = 0u; light_index < light_count; ++light_index)
+            result += ShadeLight(light_index, light_base, position, s, view);
+        return result;
+    }
+
+    count = min(count, PForward.w);
+    uint index_base = tile * PForward.w;
+    for (uint index = 0u; index < count; ++index) {
+        uint light_index = PForwardLightIndices[index_base + index];
+        if (light_index < light_count)
+            result += ShadeLight(light_index, light_base, position, s, view);
     }
     return result;
 }
@@ -687,7 +726,7 @@ PSOut PSMain(VSOut i, bool front_face : SV_IsFrontFace) {
     }
 
     float3 view = normalize(PCameraPositionNear.xyz - i.world);
-    float3 direct = DirectLighting(i.world, s, view);
+    float3 direct = DirectLighting(i.world, s, view, i.position.xy);
     float3 diffuse_indirect = SampleGI(i.world, s.normal) * s.albedo *
         (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao;
     float3 ambient = PGI[6].xyz * PGI[6].w * s.albedo *
