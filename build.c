@@ -151,5 +151,9 @@ void build(C_Build *b)
     c_sources(automatic_resource_pump_tests, "Tests/AutomaticResourcePump.cpp");
     configureTest(automatic_resource_pump_tests, library);
 
+    C_Target *renderer_settings_tests = c_test(b, "HorseRendererSettingsTests");
+    c_sources(renderer_settings_tests, "Tests/RendererSettings.cpp");
+    configureTest(renderer_settings_tests, library);
+
     c_default_target(b, library);
 }
