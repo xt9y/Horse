@@ -19,6 +19,8 @@ int main()
     assert(features.shadows);
     assert(features.environment);
     assert(features.global_illumination);
+    assert(features.ambient_occlusion);
+    assert(features.reflections);
     assert(features.volumetrics);
     assert(features.gaussian_splat);
     assert(&features == &Renderer::Features::currentSettings());
