@@ -163,5 +163,9 @@ void build(C_Build *b)
     c_sources(forward_plus_tests, "Tests/ForwardPlus.cpp");
     configureTest(forward_plus_tests, library);
 
+    C_Target *shadow_cascade_tests = c_test(b, "HorseShadowCascadeTests");
+    c_sources(shadow_cascade_tests, "Tests/ShadowCascades.cpp");
+    configureTest(shadow_cascade_tests, library);
+
     c_default_target(b, library);
 }
