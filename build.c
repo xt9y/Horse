@@ -155,5 +155,9 @@ void build(C_Build *b)
     c_sources(renderer_settings_tests, "Tests/RendererSettings.cpp");
     configureTest(renderer_settings_tests, library);
 
+    C_Target *hiz_tests = c_test(b, "HorseHiZTests");
+    c_sources(hiz_tests, "Tests/HiZ.cpp");
+    configureTest(hiz_tests, library);
+
     c_default_target(b, library);
 }
