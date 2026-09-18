@@ -24,6 +24,7 @@ struct ChannelSource {
 
 struct PackedTextures {
     Models::TextureHandle metallic_roughness = Models::INVALID_TEXTURE;
+    bool metallic_roughness_gltf = false;
     Models::TextureHandle clearcoat = Models::INVALID_TEXTURE;
     Models::TextureHandle sheen = Models::INVALID_TEXTURE;
     Models::TextureHandle transmission_thickness = Models::INVALID_TEXTURE;
@@ -154,13 +155,18 @@ bool packedTextures(
     if (!packed) return false;
     *packed = {};
 
-    packed->metallic_roughness = packTexture("metallic-roughness", {{
-        {material.roughness_texture, 0, 255u},
-        {material.metallic_texture, 0, 255u},
-        {},
-        {},
-    }}, error);
-    if (error && !error->empty()) return false;
+    if (material.metallic_roughness_info.texture != Models::INVALID_TEXTURE) {
+        packed->metallic_roughness = material.metallic_roughness_info.texture;
+        packed->metallic_roughness_gltf = true;
+    } else {
+        packed->metallic_roughness = packTexture("metallic-roughness", {{
+            {material.roughness_texture, 0, 255u},
+            {material.metallic_texture, 0, 255u},
+            {},
+            {},
+        }}, error);
+        if (error && !error->empty()) return false;
+    }
 
     packed->clearcoat = packTexture("clearcoat", {{
         {material.clearcoat_info.texture, 0, 255u},
@@ -370,7 +376,7 @@ GpuAdvancedMaterial encode(
     gpu.tex5 = {
         diffuse_transmission,
         std::bit_cast<std::int32_t>(std::max(material.clearcoat_normal_info.scale, 0.0f)),
-        -1,
+        packed.metallic_roughness_gltf ? 1 : 0,
         -1,
     };
     return gpu;
