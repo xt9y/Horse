@@ -37,7 +37,28 @@ public:
     void setEnabled(bool enabled) override;
 
     void setViewportCulling(bool value);
-    void setShadowQuality(Quality value);
+    void setShadowQuality(Quality value)
+    {
+        settings().shadow_quality = value;
+        switch (value) {
+        case Quality::Low:
+            setShadowResolution(256);
+            setShadowCascades(2);
+            break;
+        case Quality::Medium:
+            setShadowResolution(512);
+            setShadowCascades(3);
+            break;
+        case Quality::High:
+            setShadowResolution(1024);
+            setShadowCascades(4);
+            break;
+        case Quality::Ultra:
+            setShadowResolution(2048);
+            setShadowCascades(4);
+            break;
+        }
+    }
     void setShadowResolution(int value);
     void setShadowCascades(int value);
     void setShadowDistance(float value);
@@ -45,7 +66,7 @@ public:
     void setClearColor(Vec4 value);
 
     bool viewportCulling() const;
-    Quality shadowQuality() const;
+    Quality shadowQuality() const { return settings().shadow_quality; }
     int shadowResolution() const;
     int shadowCascades() const;
     float shadowDistance() const;
