@@ -1,5 +1,6 @@
 #include "Renderer/SDLGPU/Context.hpp"
 
+#include "Renderer/SDLGPU/HLSL.hpp"
 #include "Window/Internal/Backend.hpp"
 
 #include <SDL3/SDL.h>
@@ -235,8 +236,9 @@ SDL_GPUShader *compileGraphicsShader(
     if (!state().device || !source || !entrypoint) return nullptr;
     if (stage == SDL_SHADERCROSS_SHADERSTAGE_COMPUTE) return nullptr;
 
+    const std::string compatible_source = HLSL::shaderCrossCompatible(source);
     SDL_ShaderCross_HLSL_Info hlsl{};
-    hlsl.source = source;
+    hlsl.source = compatible_source.c_str();
     hlsl.entrypoint = entrypoint;
     hlsl.shader_stage = stageFor(stage);
 
@@ -285,8 +287,9 @@ SDL_GPUComputePipeline *compileComputePipeline(
 {
     if (!state().device || !source || !entrypoint) return nullptr;
 
+    const std::string compatible_source = HLSL::shaderCrossCompatible(source);
     SDL_ShaderCross_HLSL_Info hlsl{};
-    hlsl.source = source;
+    hlsl.source = compatible_source.c_str();
     hlsl.entrypoint = entrypoint;
     hlsl.shader_stage = SDL_SHADERCROSS_SHADERSTAGE_COMPUTE;
 
