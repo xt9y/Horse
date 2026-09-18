@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_SDLGPU_SHADERS_HPP
 #define HORSE_RENDERER_SDLGPU_SHADERS_HPP
 
+#include "Renderer/SDLGPU/HLSL.hpp"
 #include "Renderer/SDLGPU/PBRShaders.hpp"
 #include "Renderer/SDLGPU/PBRTraceShaders.hpp"
 
@@ -141,7 +142,8 @@ PSOut SkyPS(VSOut i) {
 }
 )HLSL";
 
-inline constexpr const char *Trace = PBRTraceShaders::Trace;
+inline const std::string TraceSource = HLSL::shaderCrossCompatible(PBRTraceShaders::Trace);
+inline const char *Trace = TraceSource.c_str();
 
 inline constexpr const char *PathResolve = R"HLSL(
 Texture2D<float4> Accumulation : register(t0, space0);
