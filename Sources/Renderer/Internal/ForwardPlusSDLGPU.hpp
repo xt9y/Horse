@@ -37,13 +37,13 @@ public:
     void clear();
 
     bool ready() const { return ready_; }
-    ForwardPlus::Grid grid() const { return grid_; }
+    Renderer::Lighting::ForwardPlus::Grid grid() const { return grid_; }
 
 private:
     SDL_GPUComputePipeline *pipeline_ = nullptr;
     SDL_GPUBuffer *counts_ = nullptr;
     SDL_GPUBuffer *indices_ = nullptr;
-    ForwardPlus::Grid grid_{};
+    Renderer::Lighting::ForwardPlus::Grid grid_{};
     std::uint32_t width_ = 0u;
     std::uint32_t height_ = 0u;
     bool ready_ = false;
