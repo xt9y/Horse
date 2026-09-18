@@ -159,5 +159,9 @@ void build(C_Build *b)
     c_sources(hiz_tests, "Tests/HiZ.cpp");
     configureTest(hiz_tests, library);
 
+    C_Target *forward_plus_tests = c_test(b, "HorseForwardPlusTests");
+    c_sources(forward_plus_tests, "Tests/ForwardPlus.cpp");
+    configureTest(forward_plus_tests, library);
+
     c_default_target(b, library);
 }
