@@ -8,6 +8,7 @@ struct Settings {
     bool shadows = true;
     bool environment = true;
     bool global_illumination = true;
+    bool ambient_occlusion = true;
     bool volumetrics = true;
     bool gaussian_splat = true;
 };
