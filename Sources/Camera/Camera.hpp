@@ -32,6 +32,8 @@ struct CameraComponent {
     ToneMapping tone_mapping = ToneMapping::ACES;
 };
 
+void setEnabled(bool value);
+bool enabled();
 Ecs::Entity activeCamera(const Ecs::World& world);
 Renderer::Vec3 flightDirection(float yaw_degrees, float pitch_degrees);
 Renderer::Vec3 strafeDirection(float yaw_degrees);
