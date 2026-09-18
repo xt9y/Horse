@@ -3,6 +3,7 @@
 
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Components.hpp"
+#include "Renderer/Quality.hpp"
 
 #include <array>
 #include <cstddef>
@@ -12,6 +13,7 @@
 namespace Renderer::GlobalIllumination {
 
 struct Settings {
+    Quality quality = Quality::High;
     std::size_t rays_per_probe = 64u;
     std::size_t probe_budget_per_frame = 4u;
     std::uint32_t minimum_probe_dimension = 4u;
@@ -74,10 +76,51 @@ void setMaximumBounces(std::uint8_t value);
 void setMaximumPhotonCount(std::uint32_t value);
 void setPaused(bool value);
 bool paused();
+void reset();
+
+inline void setQuality(Quality value)
+{
+    settings().quality = value;
+    switch (value) {
+    case Quality::Low:
+        setRaysPerProbe(16u);
+        setProbeBudgetPerFrame(2u);
+        setProbeDimensionRange(4u, 6u);
+        setMaximumBounces(1u);
+        setMaximumPhotonCount(20000u);
+        break;
+    case Quality::Medium:
+        setRaysPerProbe(32u);
+        setProbeBudgetPerFrame(4u);
+        setProbeDimensionRange(4u, 8u);
+        setMaximumBounces(2u);
+        setMaximumPhotonCount(50000u);
+        break;
+    case Quality::High:
+        setRaysPerProbe(64u);
+        setProbeBudgetPerFrame(4u);
+        setProbeDimensionRange(4u, 12u);
+        setMaximumBounces(2u);
+        setMaximumPhotonCount(100000u);
+        break;
+    case Quality::Ultra:
+        setRaysPerProbe(128u);
+        setProbeBudgetPerFrame(8u);
+        setProbeDimensionRange(4u, 16u);
+        setMaximumBounces(3u);
+        setMaximumPhotonCount(200000u);
+        break;
+    }
+    reset();
+}
+
+inline Quality quality()
+{
+    return currentSettings().quality;
+}
 
 const Field *update(const Ecs::World& world);
 Vec3 sample(const Field *field, Vec3 position, Vec3 normal);
-void reset();
 
 } // namespace Renderer::GlobalIllumination
 
