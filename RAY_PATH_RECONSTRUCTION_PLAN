@@ -1,0 +1,345 @@
+# Native Ray / Path Reconstruction Design
+
+## Goal
+
+Ray Tracer and Path Tracer must always present a sharp native-resolution frame without visible low-resolution blockiness. Internal ray density may be sparse and adaptive. Image quality has priority over a hard 60 FPS guarantee: the system targets 60 FPS, but if the configured quality floor cannot sustain 16.67 ms, frame rate may fall instead of degrading below that floor.
+
+This is a renderer-internal system. It is not PostProcess and must not depend on the post-processing pipeline.
+
+## Current Problem
+
+RayTracer currently renders an internal image at `width / resolution_divisor` by `height / resolution_divisor` and linearly blits it to the full frame. GAME currently defaults Ray Tracer to divisor 4 and Path Tracer to divisor 2. This directly creates visible pixel blocks and throws away native spatial detail.
+
+PathTracer already has progressive scheduling, accumulation, camera/light/GI invalidation, and a sparse phase mechanism, but it still operates on the reduced trace target and then upsamples the reduced image.
+
+RayTracer traces every pixel in its reduced target every frame. PathTracer traces phase-selected pixels in its reduced target and resolves the reduced accumulation target before upscaling.
+
+The expensive part is not presentation. It is ray traversal and PBR shading per traced sample. Rendering every native pixel every frame would increase current Ray Tracer work approximately with pixel count and cannot generally guarantee 60 FPS on arbitrary hardware/scenes.
+
+## Chosen Architecture
+
+Use a shared full-resolution temporal reconstruction layer for RayTracer and PathTracer.
+
+The visible/output frame, reconstruction history, depth history, normal history, material/entity history, validity history, and accumulated color all exist at native output resolution.
+
+The ray/path shader receives native pixel coordinates but only executes expensive tracing for pixels selected by a sparse native-resolution schedule. Pixels not traced this frame are reconstructed from valid history and edge-aware spatial neighbors.
+
+There is never a low-resolution color image that is stretched to the window.
+
+Pipeline:
+
+```
+full native-resolution frame extent
+        |
+        v
+sparse native-pixel scheduler
+        |
+        +--> selected pixels --> ray/path trace --> fresh sample data
+        |
+        +--> unselected pixels --------------------+
+                                                   |
+previous full-resolution history -----------------+
+        |                                          |
+        +--> camera reprojection                   |
+        +--> depth rejection                       |
+        +--> normal/material/entity rejection      |
+                                                   v
+                                     reconstruction resolve
+                                                   |
+                                                   +--> history update
+                                                   |
+                                                   v
+                                      native-resolution output
+```
+
+## Shared Module
+
+Add one shared internal module used by both RayTracer and PathTracer:
+
+```
+Renderer/Internal/ReconstructionSDLGPU.hpp
+Renderer/Reconstruction/Reconstruction.hpp
+Renderer/Reconstruction/ReconstructionSDLGPU.cpp
+```
+
+The public surface should stay minimal. RayTracer and PathTracer own their reconstruction state and pass it frame data; no global singleton state.
+
+Suggested conceptual API:
+
+```cpp
+namespace Renderer::Reconstruction {
+
+struct Settings {
+    float quality = 1.0f;
+    std::uint32_t maximum_history = 32u;
+    bool temporal_reuse = true;
+    float depth_rejection = 0.01f;
+    float normal_rejection = 0.85f;
+};
+
+class State {
+public:
+    bool init(int width, int height);
+    bool resize(int width, int height);
+    void reset();
+    void shutdown();
+};
+
+}
+```
+
+Exact internal signatures may differ, but ownership must remain per renderer instance and the public renderer API should not expose SDL handles.
+
+## Native-Resolution Resources
+
+Each renderer reconstruction state owns native-resolution textures for at least:
+
+- current resolved color
+- previous resolved color
+- current depth
+- previous depth
+- current normal
+- previous normal
+- current material/entity identity
+- previous material/entity identity
+- validity/history age
+- optional path accumulation/sample count
+
+Use compact formats where possible:
+
+- color/history: existing Horse HDR color format unless Path accumulation requires higher precision
+- depth: R32 float
+- normal: packed two-channel or R16G16B16A16 as a first implementation if simpler
+- material/entity: integer texture/buffer sufficient to reject cross-surface history
+- history age/sample count: compact integer format
+
+Do not allocate a second redundant full scene framebuffer if the existing `Frame::SDLGPU::Target` texture can be the resolved output.
+
+## Sparse Native-Pixel Scheduling
+
+Remove `resolution_divisor` as the mechanism that determines visible image resolution.
+
+Instead define a per-frame sparse coverage schedule over native pixels. A selected pixel is still a real native pixel and therefore produces native-frequency geometry/detail.
+
+Initial implementation should use a deterministic interleaved phase pattern because it is cheap and predictable:
+
+- quality 1.0: trace every native pixel
+- lower quality: trace one phase of an N-phase native pixel pattern per frame
+- phases rotate every frame so all native pixels eventually receive fresh samples
+
+Prefer a blue-noise/interleaved mapping over large contiguous blocks. Never trace a small rectangular image and scale it up.
+
+The scheduler must support forced tracing masks for invalid history/disocclusions so newly revealed regions do not wait multiple phase cycles for real samples.
+
+## Frame-Time Targeting
+
+The system targets 60 FPS using measured renderer GPU/CPU frame history where practical. This target controls sparse coverage, not output resolution.
+
+Policy:
+
+1. Start from the configured quality floor/default.
+2. If rendering is comfortably below 16.67 ms, increase fresh sample coverage up to full native tracing.
+3. If rendering exceeds 16.67 ms, reduce fresh sample coverage only down to the configured quality floor.
+4. Once the floor is reached, do not reduce quality further. Allow FPS to fall.
+
+The adaptive controller must be damped to avoid oscillating coverage every frame. Use a short moving average and require sustained budget error before changing phase density.
+
+No per-device hardcoded presets. Backend/device performance determines the runtime ray budget.
+
+## Ray Tracer Behavior
+
+RayTracer produces one physically shaded primary sample for selected native pixels.
+
+For each selected pixel the trace shader outputs:
+
+- HDR color
+- linear depth
+- world/view normal
+- stable material/entity identity
+- fresh-sample validity
+
+For unselected pixels the expensive BVH/PBR path is skipped.
+
+The reconstruction resolve then:
+
+1. reprojects previous native history using previous/current camera state and current/previous depth
+2. rejects history on depth discontinuity
+3. rejects history on normal mismatch
+4. rejects history on material/entity mismatch
+5. uses valid history where safe
+6. fills remaining holes from edge-aware spatial neighbors
+7. prioritizes those invalid pixels for fresh tracing on the next dispatch
+
+Static frames should converge toward full fresh native coverage over successive phases. Camera motion should preserve valid reprojected samples while immediately retracing disocclusions and unstable edges.
+
+## Path Tracer Behavior
+
+PathTracer uses the same native reconstruction/history infrastructure, but accumulation remains progressive.
+
+Each fresh selected pixel contributes one or more path samples to that native pixel's accumulation. Unselected pixels retain/reproject valid accumulated history.
+
+On camera/light/GI/scene invalidation:
+
+- reject only history that is no longer geometrically valid when possible
+- reset invalid pixels' path accumulation/sample count
+- preserve valid reprojected history
+
+This replaces the current behavior where camera movement effectively depends on reduced-resolution sparse phases.
+
+When the camera is stationary, the scheduler should progressively visit every native pixel and continue increasing samples per pixel according to quality/settings. There is no low-resolution path image.
+
+## Reprojection
+
+Horse already tracks current camera state and camera signatures. Extend the frame data with the previous camera basis/projection needed to map a current world/depth sample into previous-frame screen space.
+
+Do not rely on the current velocity texture for Ray/Path reconstruction because Ray/Path do not presently populate reliable per-surface motion vectors.
+
+First implementation:
+
+- camera-motion reprojection from camera transforms + depth
+- geometry/material/depth validation
+- scene revision invalidation for changed geometry
+
+Dynamic object motion can initially invalidate affected history conservatively. A later extension may add stable per-object previous transforms/motion vectors, but that is not required to remove the current blockiness or establish the architecture.
+
+## Edge-Aware Reconstruction
+
+Spatial filling must not become a generic blur.
+
+For invalid pixels, choose/weight nearby samples using:
+
+- depth similarity
+- normal similarity
+- matching material/entity identity when available
+- spatial distance
+- history confidence/age
+
+Do not blend across silhouette/depth discontinuities when a valid same-surface sample exists.
+
+The reconstruction pass must run at native resolution. Its cost is expected to be much lower than full PBR BVH tracing because it consists primarily of texture reads and simple comparisons.
+
+## Quality Semantics
+
+The final frame is always native resolution.
+
+`quality` controls fresh ray/path coverage and temporal reuse aggressiveness, never the visible framebuffer dimensions.
+
+Recommended semantic range:
+
+- 1.00: full native fresh tracing when hardware can sustain it
+- high default: adaptive sparse native tracing with conservative history reuse
+- minimum quality floor: still native reconstructed output, but fewer fresh samples per frame
+
+Do not expose a default `Resolution Divisor` control in GAME for Ray/Path after migration.
+
+## Debug Controls
+
+GAME `Renderer -> Ray Tracer` should become approximately:
+
+```
+Quality
+Temporal Reuse
+Maximum History
+Debug Reconstruction
+```
+
+GAME `Renderer -> Path Tracer` should become approximately:
+
+```
+Quality
+Samples / Frame
+Temporal Reuse
+Maximum History
+Debug Reconstruction
+```
+
+`Debug Reconstruction` may expose diagnostic visualization choices such as fresh samples/history-invalid/history-age, but should be off by default.
+
+The old scheduling controls may remain internally during migration but should not remain user-facing if the new scheduler supersedes them.
+
+## Performance Constraints
+
+The design optimizes the expensive operation: full material-aware BVH path execution.
+
+Do not spend ray budget on:
+
+- pixels with highly confident valid history
+- unchanged static surfaces every frame
+- large contiguous low-resolution representations
+
+Spend ray budget preferentially on:
+
+- disocclusions
+- newly visible geometry
+- silhouette/depth edges
+- normal discontinuities
+- invalidated material/entity history
+- lighting/GI changes
+- low-confidence/old history
+
+Scene synchronization must continue using existing `SceneResourcesSDLGPU`; do not build a second acceleration structure for reconstruction.
+
+## Quality-First Failure Policy
+
+60 FPS is a target, not a correctness requirement.
+
+If the adaptive scheduler reaches the configured quality floor and the scene still exceeds 16.67 ms:
+
+- keep the quality floor
+- do not lower output resolution
+- do not introduce block scaling
+- allow FPS to fall
+
+This is explicitly preferred over silently degrading visual quality.
+
+## Compatibility
+
+The architecture must work through SDL_GPU backends generally. Do not add Metal-only or Vulkan-only behavior to the Ray/Path API.
+
+Backend-specific shader or resource implementation remains inside SDLGPU internals.
+
+Rasterizer, Gaussian Splat, Volumetrics, GI, and PostProcess architecture remain independent. This work must not modify PostProcess behavior.
+
+## Migration
+
+1. Add shared reconstruction state/resources and tests.
+2. Add native sparse scheduler and reconstruction shader.
+3. Convert RayTracer from reduced target + blit to native sparse trace + reconstruction.
+4. Validate sharp native output and history rejection.
+5. Convert PathTracer to the same shared reconstruction state while preserving progressive accumulation.
+6. Add adaptive frame-budget control with quality floor.
+7. Replace GAME Ray/Path resolution-divisor debug controls with quality/history controls.
+8. Remove obsolete reduced-resolution resolve paths only after both backends pass regression tests.
+
+Keep each stage buildable. RayTracer migration should be independently testable before PathTracer migration.
+
+## Testing
+
+Add focused tests for:
+
+- phase/sparse scheduler covers every native pixel over its cycle
+- quality floor is never crossed by the adaptive controller
+- controller increases/decreases coverage only after sustained budget deviation
+- camera reprojection accepts stable surfaces
+- depth discontinuity rejects history
+- normal/material/entity mismatch rejects history
+- resize resets/recreates history at exact native dimensions
+- scene/camera/light/GI invalidation behavior
+- Path accumulation sample counts survive valid temporal reuse and reset only invalid pixels
+- final output dimensions always equal requested renderer/window dimensions for every quality level
+- RayTracer and PathTracer no longer derive visible output dimensions from a resolution divisor
+
+A source-level regression should ensure the old reduced-resolution linear blit is not reintroduced as the primary Ray/Path presentation path.
+
+## Success Criteria
+
+- RayTracer final frame is always native output resolution.
+- PathTracer final frame is always native output resolution.
+- No visible large-pixel/block scaling caused by an internal resolution divisor.
+- Both renderers may use sparse native samples and temporal/spatial reconstruction internally.
+- Static scenes converge as history accumulates.
+- Camera motion preserves valid history and retraces disocclusions/invalid regions.
+- Runtime sampling adapts toward a 60 FPS target on arbitrary supported hardware without device-specific presets.
+- Runtime sampling never reduces below the configured quality floor; FPS may fall instead.
+- Existing renderer Manager architecture remains intact.
+- PostProcess remains untouched.
