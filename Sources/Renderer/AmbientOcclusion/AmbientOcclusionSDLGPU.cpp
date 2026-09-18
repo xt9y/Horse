@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace Renderer::AmbientOcclusion::SDLGPU {
@@ -14,7 +15,7 @@ Texture2D<float> Depth : register(t0, space0);
 SamplerState DepthSampler : register(s0, space0);
 Texture2D<float4> Normal : register(t1, space0);
 SamplerState NormalSampler : register(s1, space0);
-RWTexture2D<float4> Output : register(u0, space1);
+RWStructuredBuffer<float> Output : register(u0, space1);
 
 cbuffer FrameData : register(b0, space2) {
     float4 CameraPositionNear;
@@ -75,13 +76,14 @@ void main(uint3 id : SV_DispatchThreadID)
     uint2 size = max(Info.xy, uint2(1u, 1u));
     if (any(id.xy >= size)) return;
 
+    uint output_index = id.y * size.x + id.x;
     float2 size_f = float2((float)size.x, (float)size.y);
     float2 uv = (float2(id.xy) + 0.5.xx) / size_f;
     float depth = Depth.SampleLevel(DepthSampler, uv, 0.0).r;
     float3 normal = Normal.SampleLevel(NormalSampler, uv, 0.0).xyz;
     float normal_length = length(normal);
     if (depth >= 0.999999 || normal_length < 0.25) {
-        Output[id.xy] = 1.0.xxxx;
+        Output[output_index] = 1.0;
         return;
     }
     normal /= normal_length;
@@ -126,19 +128,17 @@ void main(uint3 id : SV_DispatchThreadID)
     }
 
     float normalized = weight_sum > 1.0e-5 ? occlusion / weight_sum : 0.0;
-    float visibility = saturate(1.0 - normalized * strength);
-    Output[id.xy] = visibility.xxxx;
+    Output[output_index] = saturate(1.0 - normalized * strength);
 }
 )HLSL";
 
 inline constexpr const char *FilterShader = R"HLSL(
-Texture2D<float4> Occlusion : register(t0, space0);
-SamplerState OcclusionSampler : register(s0, space0);
-Texture2D<float> Depth : register(t1, space0);
-SamplerState DepthSampler : register(s1, space0);
-Texture2D<float4> Normal : register(t2, space0);
-SamplerState NormalSampler : register(s2, space0);
-RWTexture2D<float4> Output : register(u0, space1);
+Texture2D<float> Depth : register(t0, space0);
+SamplerState DepthSampler : register(s0, space0);
+Texture2D<float4> Normal : register(t1, space0);
+SamplerState NormalSampler : register(s1, space0);
+StructuredBuffer<float> Occlusion : register(t2, space0);
+RWStructuredBuffer<float> Output : register(u0, space1);
 
 cbuffer FrameData : register(b0, space2) {
     float4 CameraPositionNear;
@@ -175,14 +175,14 @@ void main(uint3 id : SV_DispatchThreadID)
     uint2 size = max(Info.xy, uint2(1u, 1u));
     if (any(id.xy >= size)) return;
 
+    uint output_index = id.y * size.x + id.x;
     float2 size_f = float2((float)size.x, (float)size.y);
-    float2 texel = 1.0.xx / size_f;
     float2 uv = (float2(id.xy) + 0.5.xx) / size_f;
     float center_depth_sample = Depth.SampleLevel(DepthSampler, uv, 0.0).r;
     float3 center_normal = Normal.SampleLevel(NormalSampler, uv, 0.0).xyz;
     float normal_length = length(center_normal);
     if (center_depth_sample >= 0.999999 || normal_length < 0.25) {
-        Output[id.xy] = 1.0.xxxx;
+        Output[output_index] = 1.0;
         return;
     }
     center_normal /= normal_length;
@@ -192,7 +192,12 @@ void main(uint3 id : SV_DispatchThreadID)
     float weight_sum = 0.0;
     for (int y = -1; y <= 1; ++y) {
         for (int x = -1; x <= 1; ++x) {
-            float2 sample_uv = saturate(uv + float2((float)x, (float)y) * texel);
+            int2 sample_pixel = clamp(
+                int2(id.xy) + int2(x, y),
+                int2(0, 0),
+                int2(size) - int2(1, 1)
+            );
+            float2 sample_uv = (float2(sample_pixel) + 0.5.xx) / size_f;
             float sample_depth_value = Depth.SampleLevel(DepthSampler, sample_uv, 0.0).r;
             float3 sample_normal = Normal.SampleLevel(NormalSampler, sample_uv, 0.0).xyz;
             float sample_length = length(sample_normal);
@@ -206,15 +211,15 @@ void main(uint3 id : SV_DispatchThreadID)
             float spatial_weight = (x == 0 && y == 0) ? 1.0 :
                 ((x == 0 || y == 0) ? 0.75 : 0.5);
             float weight = depth_weight * normal_weight * spatial_weight;
-            total += Occlusion.SampleLevel(OcclusionSampler, sample_uv, 0.0).r * weight;
+            uint sample_index = (uint)sample_pixel.y * size.x + (uint)sample_pixel.x;
+            total += Occlusion[sample_index] * weight;
             weight_sum += weight;
         }
     }
 
-    float visibility = weight_sum > 1.0e-5
-        ? total / weight_sum
-        : Occlusion.SampleLevel(OcclusionSampler, uv, 0.0).r;
-    Output[id.xy] = saturate(visibility).xxxx;
+    Output[output_index] = saturate(
+        weight_sum > 1.0e-5 ? total / weight_sum : Occlusion[output_index]
+    );
 }
 )HLSL";
 
@@ -238,10 +243,6 @@ struct alignas(16) FragmentUniforms {
 
 static_assert(sizeof(OcclusionUniforms) == 32u);
 static_assert(sizeof(FragmentUniforms) == 16u);
-
-constexpr SDL_GPUTextureUsageFlags OcclusionUsage =
-    SDL_GPU_TEXTUREUSAGE_SAMPLER |
-    SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
 
 bool fail(std::string *error, const char *message)
 {
@@ -277,12 +278,12 @@ bool Pass::init()
     return true;
 }
 
-void Pass::clearTextures()
+void Pass::clearBuffers()
 {
     SDL_GPUDevice *device = Renderer::SDLGPU::device();
     if (device) {
-        if (filtered_) SDL_ReleaseGPUTexture(device, filtered_);
-        if (raw_) SDL_ReleaseGPUTexture(device, raw_);
+        if (filtered_) SDL_ReleaseGPUBuffer(device, filtered_);
+        if (raw_) SDL_ReleaseGPUBuffer(device, raw_);
     }
     filtered_ = nullptr;
     raw_ = nullptr;
@@ -301,23 +302,25 @@ bool Pass::resize(std::uint32_t width, std::uint32_t height)
         return true;
     }
 
-    clearTextures();
-    raw_ = Renderer::SDLGPU::createTexture(
-        SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-        OcclusionUsage,
-        width,
-        height,
+    clearBuffers();
+    const std::size_t bytes = static_cast<std::size_t>(width) *
+        static_cast<std::size_t>(height) * sizeof(float);
+    raw_ = Renderer::SDLGPU::createBuffer(
+        SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ |
+            SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE,
+        bytes,
+        nullptr,
         "Horse Ambient Occlusion Raw"
     );
-    filtered_ = Renderer::SDLGPU::createTexture(
-        SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-        OcclusionUsage,
-        width,
-        height,
+    filtered_ = Renderer::SDLGPU::createBuffer(
+        SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ |
+            SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE,
+        bytes,
+        nullptr,
         "Horse Ambient Occlusion Filtered"
     );
     if (!raw_ || !filtered_) {
-        clearTextures();
+        clearBuffers();
         return false;
     }
 
@@ -337,7 +340,7 @@ bool Pass::build(
 {
     if (error) error->clear();
     if (!command || !depth || !normal || !ready_ || !pipeline_ ||
-        !filter_pipeline_ || !sampler_)
+        !filter_pipeline_ || !sampler_ || !raw_ || !filtered_)
         return fail(error, "ambient occlusion resources are not ready");
 
     const OcclusionUniforms uniforms{
@@ -354,14 +357,15 @@ bool Pass::build(
     SDL_PushGPUComputeUniformData(command, 0u, &frame, sizeof(frame));
     SDL_PushGPUComputeUniformData(command, 1u, &uniforms, sizeof(uniforms));
 
-    SDL_GPUStorageTextureReadWriteBinding raw_binding{};
-    raw_binding.texture = raw_;
+    SDL_GPUStorageBufferReadWriteBinding raw_binding{};
+    raw_binding.buffer = raw_;
+    raw_binding.cycle = false;
     SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(
         command,
-        &raw_binding,
-        1u,
         nullptr,
-        0u
+        0u,
+        &raw_binding,
+        1u
     );
     if (!pass) return fail(error, "failed to begin ambient occlusion compute pass");
 
@@ -382,20 +386,20 @@ bool Pass::build(
     SDL_PushGPUComputeUniformData(command, 0u, &frame, sizeof(frame));
     SDL_PushGPUComputeUniformData(command, 1u, &uniforms, sizeof(uniforms));
 
-    SDL_GPUStorageTextureReadWriteBinding filtered_binding{};
-    filtered_binding.texture = filtered_;
+    SDL_GPUStorageBufferReadWriteBinding filtered_binding{};
+    filtered_binding.buffer = filtered_;
+    filtered_binding.cycle = false;
     pass = SDL_BeginGPUComputePass(
         command,
-        &filtered_binding,
-        1u,
         nullptr,
-        0u
+        0u,
+        &filtered_binding,
+        1u
     );
     if (!pass) return fail(error, "failed to begin ambient occlusion filter pass");
 
     SDL_BindGPUComputePipeline(pass, filter_pipeline_);
-    const std::array<SDL_GPUTextureSamplerBinding, 3> filter_inputs {{
-        {raw_, sampler_},
+    const std::array<SDL_GPUTextureSamplerBinding, 2> filter_inputs {{
         {depth, sampler_},
         {normal, sampler_},
     }};
@@ -405,6 +409,8 @@ bool Pass::build(
         filter_inputs.data(),
         static_cast<Uint32>(filter_inputs.size())
     );
+    SDL_GPUBuffer *read_buffers[] = {raw_};
+    SDL_BindGPUComputeStorageBuffers(pass, 0u, read_buffers, 1u);
     SDL_DispatchGPUCompute(pass, (width_ + 7u) / 8u, (height_ + 7u) / 8u, 1u);
     SDL_EndGPUComputePass(pass);
     return true;
@@ -414,11 +420,11 @@ bool Pass::bind(
     SDL_GPURenderPass *pass,
     SDL_GPUCommandBuffer *command,
     bool enabled,
-    std::uint32_t sampler_slot) const
+    std::uint32_t storage_slot) const
 {
-    if (!pass || !command || !filtered_ || !sampler_) return false;
-    const SDL_GPUTextureSamplerBinding binding{filtered_, sampler_};
-    SDL_BindGPUFragmentSamplers(pass, sampler_slot, &binding, 1u);
+    if (!pass || !command || !filtered_) return false;
+    SDL_GPUBuffer *buffers[] = {filtered_};
+    SDL_BindGPUFragmentStorageBuffers(pass, storage_slot, buffers, 1u);
     const FragmentUniforms uniforms{
         enabled && ready_ ? 1u : 0u,
         width_,
@@ -431,7 +437,7 @@ bool Pass::bind(
 
 void Pass::clear()
 {
-    clearTextures();
+    clearBuffers();
     SDL_GPUDevice *device = Renderer::SDLGPU::device();
     if (device) {
         if (sampler_) SDL_ReleaseGPUSampler(device, sampler_);
