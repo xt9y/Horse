@@ -226,6 +226,18 @@ bool SceneResources::syncTextures(std::string *error)
     }
 
     SDL_GPUCommandBuffer *upload_command = nullptr;
+    std::vector<Models::TextureHandle> uploaded_handles;
+    const auto discard_uploads = [&] {
+        SDL_GPUDevice *device = Renderer::SDLGPU::device();
+        for (const Models::TextureHandle handle : uploaded_handles) {
+            const auto found = texture_cache_.find(handle);
+            if (found == texture_cache_.end()) continue;
+            if (device && found->second) SDL_ReleaseGPUTexture(device, found->second);
+            texture_cache_.erase(found);
+        }
+        uploaded_handles.clear();
+    };
+
     for (auto& binding : texture_bindings_) binding = {white_, sampler_};
     for (std::size_t slot = 0u; slot < materials_.textureHandles().size(); ++slot) {
         const Models::TextureHandle handle = materials_.textureHandles()[slot];
@@ -242,12 +254,15 @@ bool SceneResources::syncTextures(std::string *error)
         SDL_GPUTexture *texture = textureFor(handle, upload_command, error);
         if (!texture) {
             if (upload_command) SDL_CancelGPUCommandBuffer(upload_command);
+            discard_uploads();
             return false;
         }
+        if (needs_upload) uploaded_handles.push_back(handle);
         texture_bindings_[slot] = {texture, sampler_};
     }
 
     if (upload_command && !SDL_SubmitGPUCommandBuffer(upload_command)) {
+        discard_uploads();
         if (error) *error = "failed to submit batched SDL_GPU texture uploads";
         return false;
     }
