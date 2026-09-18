@@ -12,6 +12,7 @@ std::string normalizeTexturePath(const std::string& path);
 TextureHandle findTexture(const std::string& key);
 TextureHandle reserveTexture(const std::string& key);
 std::size_t textureStorageCount();
+std::uint64_t textureStorageGeneration();
 bool textureStorageReady(TextureHandle handle);
 bool publishTexture(TextureHandle handle, Images::Image image);
 
