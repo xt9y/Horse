@@ -76,7 +76,10 @@ bool SceneResources::ensureBuffer(
     return true;
 }
 
-SDL_GPUTexture *SceneResources::textureFor(Models::TextureHandle handle, std::string *error)
+SDL_GPUTexture *SceneResources::textureFor(
+    Models::TextureHandle handle,
+    SDL_GPUCommandBuffer *upload_command,
+    std::string *error)
 {
     if (const auto found = texture_cache_.find(handle); found != texture_cache_.end())
         return found->second;
@@ -99,12 +102,21 @@ SDL_GPUTexture *SceneResources::textureFor(Models::TextureHandle handle, std::st
         static_cast<std::uint32_t>(asset->image.width),
         static_cast<std::uint32_t>(asset->image.height),
         "Horse Material Texture");
-    if (!texture || !Renderer::SDLGPU::uploadTextureRgba8(
+    const bool uploaded = upload_command
+        ? Renderer::SDLGPU::uploadTextureRgba8(
+            upload_command,
             texture,
             static_cast<std::uint32_t>(asset->image.width),
             static_cast<std::uint32_t>(asset->image.height),
             asset->image.rgba.data(),
-            asset->image.rgba.size()))
+            asset->image.rgba.size())
+        : Renderer::SDLGPU::uploadTextureRgba8(
+            texture,
+            static_cast<std::uint32_t>(asset->image.width),
+            static_cast<std::uint32_t>(asset->image.height),
+            asset->image.rgba.data(),
+            asset->image.rgba.size());
+    if (!texture || !uploaded)
     {
         if (texture) SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), texture);
         if (error) *error = "failed to upload SDL_GPU scene texture";
@@ -213,12 +225,33 @@ bool SceneResources::syncTextures(std::string *error)
         return false;
     }
 
+    SDL_GPUCommandBuffer *upload_command = nullptr;
     for (auto& binding : texture_bindings_) binding = {white_, sampler_};
     for (std::size_t slot = 0u; slot < materials_.textureHandles().size(); ++slot) {
-        SDL_GPUTexture *texture = textureFor(materials_.textureHandles()[slot], error);
-        if (!texture) return false;
+        const Models::TextureHandle handle = materials_.textureHandles()[slot];
+        const bool needs_upload =
+            !texture_cache_.contains(handle) && Models::Internal::textureStorageReady(handle);
+        if (needs_upload && !upload_command) {
+            upload_command = SDL_AcquireGPUCommandBuffer(Renderer::SDLGPU::device());
+            if (!upload_command) {
+                if (error) *error = "failed to acquire SDL_GPU texture upload command buffer";
+                return false;
+            }
+        }
+
+        SDL_GPUTexture *texture = textureFor(handle, upload_command, error);
+        if (!texture) {
+            if (upload_command) SDL_CancelGPUCommandBuffer(upload_command);
+            return false;
+        }
         texture_bindings_[slot] = {texture, sampler_};
     }
+
+    if (upload_command && !SDL_SubmitGPUCommandBuffer(upload_command)) {
+        if (error) *error = "failed to submit batched SDL_GPU texture uploads";
+        return false;
+    }
+
     resource_revision_ = scene_.resourceRevision();
     return true;
 }
@@ -291,7 +324,7 @@ bool SceneResources::syncRasterMaterials(
 
         const auto& texture_handles = material_set.textureHandles();
         for (std::size_t slot = 0u; slot < texture_handles.size(); ++slot) {
-            SDL_GPUTexture *texture = textureFor(texture_handles[slot], error);
+            SDL_GPUTexture *texture = textureFor(texture_handles[slot], nullptr, error);
             if (!texture) {
                 SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), resources.materials);
                 SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), resources.base_materials);
