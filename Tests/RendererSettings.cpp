@@ -1,5 +1,7 @@
 #include <Renderer/GaussianSplat/GaussianSplat.hpp>
 #include <Renderer/GlobalIllumination/GlobalIllumination.hpp>
+#include <Renderer/PathTracer/PathTracer.hpp>
+#include <Renderer/RayTracer/RayTracer.hpp>
 #include <Renderer/SDLGPU/Shaders.hpp>
 
 #include <cassert>
@@ -83,6 +85,16 @@ int main()
     assert(!Renderer::GlobalIllumination::enabled(world));
     world.get<Renderer::GlobalIlluminationComponent>(gi_entity)->enabled = true;
     assert(Renderer::GlobalIllumination::enabled(world));
+
+    Renderer::RayTracer ray;
+    assert(ray.reconstructionSettings().quality == 0.50f);
+    assert(ray.reconstructionSettings().maximum_history == 32u);
+    assert(ray.reconstructionSettings().temporal_reuse);
+
+    Renderer::PathTracer path;
+    assert(path.reconstructionSettings().quality == 0.50f);
+    assert(path.reconstructionSettings().maximum_history == 32u);
+    assert(path.reconstructionSettings().temporal_reuse);
 
     assert(!containsIdentifier(Renderer::SDLGPU::Shaders::Trace, "triangle"));
 
