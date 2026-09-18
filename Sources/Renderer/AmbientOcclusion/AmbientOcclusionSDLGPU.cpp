@@ -258,8 +258,9 @@ Pass::~Pass()
 
 bool Pass::init()
 {
-    if (pipeline_ && filter_pipeline_ && sampler_) return true;
     if (!Renderer::SDLGPU::device()) return false;
+    if (!sampler_) sampler_ = Renderer::SDLGPU::createNearestSampler();
+    if (!sampler_) return false;
 
     if (!pipeline_)
         pipeline_ = Renderer::SDLGPU::compileComputePipeline(
@@ -273,12 +274,6 @@ bool Pass::init()
             "Horse Ambient Occlusion Filter",
             "main"
         );
-    if (!sampler_) sampler_ = Renderer::SDLGPU::createNearestSampler();
-
-    if (!pipeline_ || !filter_pipeline_ || !sampler_) {
-        clear();
-        return false;
-    }
     return true;
 }
 
@@ -301,7 +296,10 @@ bool Pass::resize(std::uint32_t width, std::uint32_t height)
     width = std::max(width, 1u);
     height = std::max(height, 1u);
     if (!init()) return false;
-    if (raw_ && filtered_ && width_ == width && height_ == height) return true;
+    if (raw_ && filtered_ && width_ == width && height_ == height) {
+        ready_ = pipeline_ && filter_pipeline_;
+        return true;
+    }
 
     clearTextures();
     raw_ = Renderer::SDLGPU::createTexture(
@@ -325,7 +323,7 @@ bool Pass::resize(std::uint32_t width, std::uint32_t height)
 
     width_ = width;
     height_ = height;
-    ready_ = true;
+    ready_ = pipeline_ && filter_pipeline_;
     return true;
 }
 
@@ -422,7 +420,7 @@ bool Pass::bind(
     const SDL_GPUTextureSamplerBinding binding{filtered_, sampler_};
     SDL_BindGPUFragmentSamplers(pass, sampler_slot, &binding, 1u);
     const FragmentUniforms uniforms{
-        enabled ? 1u : 0u,
+        enabled && ready_ ? 1u : 0u,
         width_,
         height_,
         0u,
