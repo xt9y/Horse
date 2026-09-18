@@ -2,6 +2,7 @@
 
 #include "Models/Core/Texture.hpp"
 #include "Models/Internal/TextureStorage.hpp"
+#include "Renderer/Reflections/Reflections.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
@@ -81,8 +82,9 @@ SDL_GPUTexture *SceneResources::textureFor(
     SDL_GPUCommandBuffer *upload_command,
     std::string *error)
 {
-    if (const auto found = texture_cache_.find(handle); found != texture_cache_.end())
-        return found->second;
+    const EnvironmentState environment = Internal::shadingState().environment;
+    const bool environment_texture =
+        environment.valid && environment.texture == handle;
 
     const Models::TextureAsset *asset = Models::texture(handle);
     if (!asset) {
@@ -96,27 +98,53 @@ SDL_GPUTexture *SceneResources::textureFor(
         return nullptr;
     }
 
+    const std::uint32_t width = static_cast<std::uint32_t>(asset->image.width);
+    const std::uint32_t height = static_cast<std::uint32_t>(asset->image.height);
+    const std::uint32_t requested_mip_levels = environment_texture
+        ? Reflections::environmentMipLevels(width, height, Quality::Ultra)
+        : 1u;
+
+    if (const auto found = texture_cache_.find(handle); found != texture_cache_.end()) {
+        const auto mip_found = texture_mip_levels_.find(handle);
+        const std::uint32_t allocated_mip_levels =
+            mip_found == texture_mip_levels_.end() ? 1u : mip_found->second;
+        if (!environment_texture || allocated_mip_levels >= requested_mip_levels) {
+            if (environment_texture) environment_mip_levels_ = allocated_mip_levels;
+            return found->second;
+        }
+
+        if (found->second)
+            SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), found->second);
+        texture_cache_.erase(found);
+        texture_mip_levels_.erase(handle);
+    }
+
     SDL_GPUTexture *texture = Renderer::SDLGPU::createTexture(
         SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
         SDL_GPU_TEXTUREUSAGE_SAMPLER,
-        static_cast<std::uint32_t>(asset->image.width),
-        static_cast<std::uint32_t>(asset->image.height),
-        "Horse Material Texture");
+        width,
+        height,
+        requested_mip_levels,
+        environment_texture ? "Horse Environment Texture" : "Horse Material Texture");
     const bool uploaded = upload_command
         ? Renderer::SDLGPU::uploadTextureRgba8(
             upload_command,
             texture,
-            static_cast<std::uint32_t>(asset->image.width),
-            static_cast<std::uint32_t>(asset->image.height),
+            width,
+            height,
             asset->image.rgba.data(),
             asset->image.rgba.size())
         : Renderer::SDLGPU::uploadTextureRgba8(
             texture,
-            static_cast<std::uint32_t>(asset->image.width),
-            static_cast<std::uint32_t>(asset->image.height),
+            width,
+            height,
             asset->image.rgba.data(),
             asset->image.rgba.size());
-    if (!texture || !uploaded)
+    const bool mipmapped = requested_mip_levels <= 1u ||
+        (upload_command
+            ? Renderer::SDLGPU::generateMipmaps(upload_command, texture)
+            : Renderer::SDLGPU::generateMipmaps(texture));
+    if (!texture || !uploaded || !mipmapped)
     {
         if (texture) SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), texture);
         if (error) *error = "failed to upload SDL_GPU scene texture";
@@ -124,6 +152,8 @@ SDL_GPUTexture *SceneResources::textureFor(
     }
 
     texture_cache_.emplace(handle, texture);
+    texture_mip_levels_.emplace(handle, requested_mip_levels);
+    if (environment_texture) environment_mip_levels_ = requested_mip_levels;
     return texture;
 }
 
@@ -200,6 +230,8 @@ void SceneResources::clearTextures()
         }
     }
     texture_cache_.clear();
+    texture_mip_levels_.clear();
+    environment_mip_levels_ = 1u;
     for (auto& binding : texture_bindings_) binding = {white_, sampler_};
 }
 
@@ -240,7 +272,9 @@ bool SceneResources::syncTextures(std::string *error)
             if (found == texture_cache_.end()) continue;
             if (device && found->second) SDL_ReleaseGPUTexture(device, found->second);
             texture_cache_.erase(found);
+            texture_mip_levels_.erase(handle);
         }
+        environment_mip_levels_ = 1u;
         uploaded_handles.clear();
     };
 
