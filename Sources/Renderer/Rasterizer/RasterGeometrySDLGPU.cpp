@@ -119,6 +119,18 @@ bool cameraLayer(
     return item.layer == RenderLayer::Overlay || cameraAttached(world, item.entity, camera);
 }
 
+bool mirroredTransform(const Math::Mat4& matrix)
+{
+    const float a00 = matrix[0], a01 = matrix[4], a02 = matrix[8];
+    const float a10 = matrix[1], a11 = matrix[5], a12 = matrix[9];
+    const float a20 = matrix[2], a21 = matrix[6], a22 = matrix[10];
+    const float determinant =
+        a00 * (a11 * a22 - a12 * a21) -
+        a01 * (a10 * a22 - a12 * a20) +
+        a02 * (a10 * a21 - a11 * a20);
+    return determinant < 0.0f;
+}
+
 std::uint64_t shadowSignature(
     const Ecs::World& world,
     const std::vector<Scenes::Scene::RenderItem>& items)
@@ -598,7 +610,7 @@ struct RasterGeometry::Impl {
             const bool attached_to_camera = cameraLayer(world, source, camera);
             target.flags = {
                 attached_to_camera ? 0u : 1u,
-                0u,
+                mirroredTransform(model) ? 1u : 0u,
                 0u,
                 0u,
             };
