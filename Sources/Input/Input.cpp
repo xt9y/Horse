@@ -140,6 +140,24 @@ bool keyReleased(Key value)
     return !valueAt(input.keys, value) && valueAt(input.previous_keys, value);
 }
 
+bool modifierDown(Modifier modifier)
+{
+    const SDL_Keymod state = SDL_GetModState();
+
+    switch (modifier) {
+        case Modifier::Shift:
+            return (state & SDL_KMOD_SHIFT) != 0;
+        case Modifier::Control:
+            return (state & SDL_KMOD_CTRL) != 0;
+        case Modifier::Alt:
+            return (state & SDL_KMOD_ALT) != 0;
+        case Modifier::Gui:
+            return (state & SDL_KMOD_GUI) != 0;
+    }
+
+    return false;
+}
+
 bool buttonDown(Button value)
 {
     return valueAt(state().buttons, value);
