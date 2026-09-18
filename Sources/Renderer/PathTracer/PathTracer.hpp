@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_PATHTRACER_HPP
 #define HORSE_RENDERER_PATHTRACER_HPP
 
+#include "Renderer/Reconstruction/Reconstruction.hpp"
 #include "Renderer/Renderer.hpp"
 
 namespace Renderer {
@@ -13,6 +14,7 @@ struct PathTracerSettings {
     int reset_phase_grid = 0;
     int moving_phase_grid = 0;
     int moving_depth_block = 0;
+    Reconstruction::Settings reconstruction{};
 };
 
 class PathTracer final : public IRenderer {
@@ -47,6 +49,9 @@ public:
     int resetPhaseGrid() const { return settings().reset_phase_grid; }
     int movingPhaseGrid() const { return settings().moving_phase_grid; }
     int movingDepthBlock() const { return settings().moving_depth_block; }
+
+    Reconstruction::Settings& reconstructionSettings() { return settings().reconstruction; }
+    const Reconstruction::Settings& reconstructionSettings() const { return settings().reconstruction; }
 
     PathTracerSettings& settings();
     const PathTracerSettings& settings() const;
