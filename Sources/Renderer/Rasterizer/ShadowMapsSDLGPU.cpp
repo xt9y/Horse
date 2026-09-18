@@ -266,7 +266,7 @@ struct ShadowMaps::Impl {
         static constexpr std::array<Vec3, 6> directions {{
             { 1.0f,  0.0f,  0.0f}, {-1.0f,  0.0f,  0.0f},
             { 0.0f,  1.0f,  0.0f}, { 0.0f, -1.0f,  0.0f},
-            { 0.0f,  0.0f,  1.0f}, { 0.0f, -1.0f,  0.0f},
+            { 0.0f,  0.0f,  1.0f}, { 0.0f,  0.0f, -1.0f},
         }};
         const float near_plane = std::max(settings.near_plane, 1.0e-4f);
         const float far_plane = light.range > near_plane
