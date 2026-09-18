@@ -2,6 +2,7 @@
 
 #include "Models/GaussianSplat.hpp"
 #include "Models/Models.hpp"
+#include "Renderer/GaussianSplat/GaussianSplat.hpp"
 #include "Renderer/GaussianSplat/Projection.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
@@ -38,6 +39,7 @@ struct alignas(16) GpuRange {
 
 struct alignas(16) Uniforms {
     std::array<std::uint32_t, 4> params{};
+    std::array<float, 4> settings{};
 };
 
 struct CacheEntry {
@@ -83,6 +85,7 @@ RWTexture2D<float4> Output : register(u0, space1);
 
 cbuffer GaussianUniforms : register(b0, space2) {
     uint4 Params;
+    float4 Settings;
 };
 
 [numthreads(8, 8, 1)]
@@ -103,6 +106,8 @@ void Main(uint3 global_id : SV_DispatchThreadID)
     uint tiles_x = max(Params.z, 1u);
     uint tile = (pixel.y / 16u) * tiles_x + pixel.x / 16u;
     uint4 range = Ranges[tile].value;
+    float radius = max(Settings.x, 0.0f);
+    float radius_squared_limit = radius * radius;
     for (uint local = 0u; local < range.y; ++local) {
         GpuSplat splat = Splats[Indices[range.x + local]];
         float2 delta = ndc - splat.center_axis0.xy;
@@ -115,9 +120,9 @@ void Main(uint3 global_id : SV_DispatchThreadID)
             (a.x * delta.y - a.y * delta.x) / determinant
         );
         float radius_squared = dot(q, q);
-        if (radius_squared > 9.0f) continue;
+        if (radius_squared > radius_squared_limit) continue;
         if (Params.w != 0u) {
-            float epsilon = max(0.0025f, surface_depth * 0.0005f);
+            float epsilon = max(Settings.y, surface_depth * Settings.z);
             if (splat.axis1_depth.z > surface_depth + epsilon) continue;
         }
         float alpha = saturate(splat.color_opacity.a * exp(-0.5f * radius_squared));
@@ -218,6 +223,7 @@ void buildTiles(
     const std::vector<ProjectedSplat>& projected,
     std::uint32_t width,
     std::uint32_t height,
+    float radius,
     std::vector<GpuSplat> *gpu_splats,
     std::vector<std::uint32_t> *indices,
     std::vector<GpuRange> *ranges)
@@ -237,8 +243,8 @@ void buildTiles(
         (*gpu_splats)[index].color_opacity = {
             source.color.x, source.color.y, source.color.z, source.opacity};
 
-        const float radius_x = 3.0f * (std::abs(source.axis0_x) + std::abs(source.axis1_x));
-        const float radius_y = 3.0f * (std::abs(source.axis0_y) + std::abs(source.axis1_y));
+        const float radius_x = radius * (std::abs(source.axis0_x) + std::abs(source.axis1_x));
+        const float radius_y = radius * (std::abs(source.axis0_y) + std::abs(source.axis1_y));
         const float center_x = (source.center_x * 0.5f + 0.5f) * static_cast<float>(width);
         const float center_y = (0.5f - source.center_y * 0.5f) * static_cast<float>(height);
         const float pixel_radius_x = radius_x * 0.5f * static_cast<float>(width);
@@ -276,6 +282,11 @@ void buildTiles(
 bool render(const Ecs::World& world, Internal::FrameOutput& output)
 {
     if (!output.color_texture || !output.command) return true;
+
+    const Renderer::GaussianSplat::Settings& gaussian =
+        Renderer::GaussianSplat::currentSettings();
+    const float radius = std::max(gaussian.radius, 0.0f);
+    if (radius <= 0.0f) return true;
 
     std::vector<Scenes::Scene::RenderItem> items;
     Scenes::Scene::collectGaussianItems(world, items);
@@ -330,7 +341,7 @@ bool render(const Ecs::World& world, Internal::FrameOutput& output)
     std::vector<GpuSplat> gpu_splats;
     std::vector<std::uint32_t> indices;
     std::vector<GpuRange> ranges;
-    buildTiles(projected, width, height, &gpu_splats, &indices, &ranges);
+    buildTiles(projected, width, height, radius, &gpu_splats, &indices, &ranges);
     if (gpu_splats.empty() || ranges.empty()) return true;
 
     const std::size_t splat_bytes = gpu_splats.size() * sizeof(GpuSplat);
@@ -360,12 +371,19 @@ bool render(const Ecs::World& world, Internal::FrameOutput& output)
 
     const bool has_depth =
         output.depth == Internal::DepthSource::LinearTexture && output.depth_texture;
-    const Uniforms uniforms{{
+    Uniforms uniforms;
+    uniforms.params = {
         width,
         height,
         (width + TileSize - 1u) / TileSize,
         has_depth ? 1u : 0u,
-    }};
+    };
+    uniforms.settings = {
+        radius,
+        std::max(gaussian.minimum_depth_epsilon, 0.0f),
+        std::max(gaussian.relative_depth_epsilon, 0.0f),
+        0.0f,
+    };
     SDL_PushGPUComputeUniformData(command, 0u, &uniforms, sizeof uniforms);
 
     SDL_GPUStorageTextureReadWriteBinding writable{};
