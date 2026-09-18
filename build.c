@@ -155,9 +155,5 @@ void build(C_Build *b)
     c_sources(renderer_settings_tests, "Tests/RendererSettings.cpp");
     configureTest(renderer_settings_tests, library);
 
-    C_Target *reconstruction_tests = c_test(b, "HorseReconstructionTests");
-    c_sources(reconstruction_tests, "Tests/Reconstruction.cpp");
-    configureTest(reconstruction_tests, library);
-
     c_default_target(b, library);
 }

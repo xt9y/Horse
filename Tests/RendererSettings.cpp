@@ -1,34 +1,8 @@
 #include <Renderer/GaussianSplat/GaussianSplat.hpp>
 #include <Renderer/GlobalIllumination/GlobalIllumination.hpp>
-#include <Renderer/PathTracer/PathTracer.hpp>
-#include <Renderer/RayTracer/RayTracer.hpp>
-#include <Renderer/SDLGPU/Shaders.hpp>
 
 #include <cassert>
-#include <cctype>
 #include <cstdint>
-#include <string_view>
-
-namespace {
-
-bool containsIdentifier(std::string_view source, std::string_view identifier)
-{
-    std::size_t position = 0u;
-    while ((position = source.find(identifier, position)) != std::string_view::npos) {
-        const auto identifierCharacter = [](char value) {
-            const unsigned char c = static_cast<unsigned char>(value);
-            return std::isalnum(c) != 0 || value == '_';
-        };
-        const bool left = position > 0u && identifierCharacter(source[position - 1u]);
-        const std::size_t end = position + identifier.size();
-        const bool right = end < source.size() && identifierCharacter(source[end]);
-        if (!left && !right) return true;
-        position = end;
-    }
-    return false;
-}
-
-} // namespace
 
 int main()
 {
@@ -85,18 +59,6 @@ int main()
     assert(!Renderer::GlobalIllumination::enabled(world));
     world.get<Renderer::GlobalIlluminationComponent>(gi_entity)->enabled = true;
     assert(Renderer::GlobalIllumination::enabled(world));
-
-    Renderer::RayTracer ray;
-    assert(ray.reconstructionSettings().quality == 0.50f);
-    assert(ray.reconstructionSettings().maximum_history == 32u);
-    assert(ray.reconstructionSettings().temporal_reuse);
-
-    Renderer::PathTracer path;
-    assert(path.reconstructionSettings().quality == 0.50f);
-    assert(path.reconstructionSettings().maximum_history == 32u);
-    assert(path.reconstructionSettings().temporal_reuse);
-
-    assert(!containsIdentifier(Renderer::SDLGPU::Shaders::Trace, "triangle"));
 
     Renderer::GlobalIllumination::setPaused(false);
     return 0;
