@@ -624,7 +624,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
                 std::fprintf(stderr, "[Rasterizer/SDL_GPU]: Forward+ binding failed\n");
                 return false;
             }
-            if (!impl_->ambient_occlusion.bind(pass, command, ao_active, 16u)) {
+            if (!impl_->ambient_occlusion.bind(pass, command, ao_active, 6u)) {
                 SDL_EndGPURenderPass(pass);
                 Frame::SDLGPU::cancel(output);
                 std::fprintf(stderr, "[Rasterizer/SDL_GPU]: ambient occlusion binding failed\n");
@@ -678,7 +678,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             std::fprintf(stderr, "[Rasterizer/SDL_GPU]: Forward+ binding failed\n");
             return false;
         }
-        if (!impl_->ambient_occlusion.bind(camera_pass, command, false, 16u)) {
+        if (!impl_->ambient_occlusion.bind(camera_pass, command, false, 6u)) {
             SDL_EndGPURenderPass(camera_pass);
             Frame::SDLGPU::cancel(output);
             std::fprintf(stderr, "[Rasterizer/SDL_GPU]: ambient occlusion binding failed\n");
