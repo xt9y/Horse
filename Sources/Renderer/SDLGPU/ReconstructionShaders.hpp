@@ -85,8 +85,8 @@ void CameraRay(
 bool ProjectPrevious(float3 world, out float2 uv, out float expected_depth)
 {
     float3 delta = world - PreviousPositionNear.xyz;
-    expected_depth = dot(delta, normalize(PreviousForwardFar.xyz));
-    if (expected_depth <= PreviousPositionNear.w) return false;
+    float forward_depth = dot(delta, normalize(PreviousForwardFar.xyz));
+    if (forward_depth <= PreviousPositionNear.w) return false;
 
     float2 ndc;
     if (PreviousProjectionAlpha.z > 0.5) {
@@ -96,13 +96,28 @@ bool ProjectPrevious(float3 world, out float2 uv, out float expected_depth)
             max(PreviousProjectionAlpha.y, 1.0e-6);
     } else {
         ndc.x = dot(delta, PreviousRightAspect.xyz) /
-            max(expected_depth * PreviousUpTanHalfFov.w * PreviousRightAspect.w, 1.0e-6);
+            max(forward_depth * PreviousUpTanHalfFov.w * PreviousRightAspect.w, 1.0e-6);
         ndc.y = dot(delta, PreviousUpTanHalfFov.xyz) /
-            max(expected_depth * PreviousUpTanHalfFov.w, 1.0e-6);
+            max(forward_depth * PreviousUpTanHalfFov.w, 1.0e-6);
     }
 
     uv = float2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
-    return all(uv >= 0.0.xx) && all(uv <= 1.0.xx);
+    if (!all(uv >= 0.0.xx) || !all(uv <= 1.0.xx)) return false;
+
+    float2 previous_pixel =
+        uv * max(float2(ResolutionGridPhase.xy), 1.0.xx) - 0.5.xx;
+    float3 previous_origin, previous_direction;
+    CameraRay(
+        previous_pixel,
+        PreviousPositionNear,
+        PreviousForwardFar,
+        PreviousRightAspect,
+        PreviousUpTanHalfFov,
+        PreviousProjectionAlpha,
+        previous_origin,
+        previous_direction);
+    expected_depth = dot(world - previous_origin, previous_direction);
+    return expected_depth > 0.0;
 }
 
 bool TemporalSample(
@@ -178,17 +193,18 @@ void LatticeCell(
     int grid = int(max(ResolutionGridPhase.z, 1u));
     int phase = int(ResolutionGridPhase.w % max(ResolutionGridPhase.z * ResolutionGridPhase.z, 1u));
     int2 offset = int2(phase % grid, phase / grid);
-    int2 size = int2(ResolutionGridPhase.xy);
-    int2 maximum_cell = max((size - int2(1, 1) - offset) / grid, int2(0, 0));
+    int2 size = max(int2(ResolutionGridPhase.xy), int2(1, 1));
+    int2 maximum_pixel = size - int2(1, 1);
+    int2 maximum_cell = max((maximum_pixel - offset) / grid, int2(0, 0));
     float2 lattice = (float2(pixel) - float2(offset)) / float(grid);
     float2 clamped = clamp(lattice, 0.0.xx, float2(maximum_cell));
     int2 c0 = int2(floor(clamped));
     int2 c1 = min(c0 + int2(1, 1), maximum_cell);
     blend = clamped - float2(c0);
-    p00 = c0 * grid + offset;
-    p10 = int2(c1.x, c0.y) * grid + offset;
-    p01 = int2(c0.x, c1.y) * grid + offset;
-    p11 = c1 * grid + offset;
+    p00 = clamp(c0 * grid + offset, int2(0, 0), maximum_pixel);
+    p10 = clamp(int2(c1.x, c0.y) * grid + offset, int2(0, 0), maximum_pixel);
+    p01 = clamp(int2(c0.x, c1.y) * grid + offset, int2(0, 0), maximum_pixel);
+    p11 = clamp(c1 * grid + offset, int2(0, 0), maximum_pixel);
 }
 
 float CandidateWeight(
@@ -257,7 +273,8 @@ void SpatialSample(
     }
 
     if (total <= 1.0e-6) {
-        int2 fallback = p00;
+        int2 maximum_pixel = max(int2(ResolutionGridPhase.xy) - int2(1, 1), int2(0, 0));
+        int2 fallback = clamp(p00, int2(0, 0), maximum_pixel);
         float2 uv = (float2(fallback) + 0.5.xx) /
             max(float2(ResolutionGridPhase.xy), 1.0.xx);
         color = FreshColor.SampleLevel(FreshColorSampler, uv, 0.0);
