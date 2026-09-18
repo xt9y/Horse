@@ -221,6 +221,7 @@ float CandidateWeight(
     float2 uv = (float2(candidate) + 0.5.xx) /
         max(float2(ResolutionGridPhase.xy), 1.0.xx);
     float depth = FreshDepth.SampleLevel(FreshDepthSampler, uv, 0.0);
+    if (depth <= 0.0 && expected_depth > 0.0) return 0.0;
     if (depth <= 0.0) return bilinear;
 
     float weight = bilinear;
@@ -340,6 +341,11 @@ void Main(uint3 tid : SV_DispatchThreadID)
         }
     }
 
+    NextColor[pixel] = color;
+    NextDepth[pixel] = depth;
+    NextSurface[pixel] = surface;
+    NextAge[pixel] = age;
+
     if (Control.w != 0u) {
         if (source == 1u) color = float4(0.15, 1.0, 0.15, 1.0);
         else if (source == 2u) color = float4(0.15, 0.45, 1.0, 1.0);
@@ -348,10 +354,6 @@ void Main(uint3 tid : SV_DispatchThreadID)
 
     OutputColor[pixel] = color;
     OutputDepth[pixel] = depth;
-    NextColor[pixel] = color;
-    NextDepth[pixel] = depth;
-    NextSurface[pixel] = surface;
-    NextAge[pixel] = age;
 }
 )HLSL";
 
