@@ -1,9 +1,7 @@
 #ifndef HORSE_RENDERER_SDLGPU_SHADERS_HPP
 #define HORSE_RENDERER_SDLGPU_SHADERS_HPP
 
-#include "Renderer/SDLGPU/HLSL.hpp"
 #include "Renderer/SDLGPU/PBRShaders.hpp"
-#include "Renderer/SDLGPU/PBRTraceShaders.hpp"
 
 namespace Renderer::SDLGPU::Shaders {
 
@@ -139,43 +137,6 @@ PSOut SkyPS(VSOut i) {
         color=SrgbToLinear(SkyTexture.Sample(SkySampler,float2(u,v)).rgb)*max(GI[3].w,0.0);
     }
     PSOut o; o.color=float4(max(color,0.0.xxx),1); o.velocity=0.0.xx; return o;
-}
-)HLSL";
-
-inline const std::string TraceSource = HLSL::shaderCrossCompatible(PBRTraceShaders::Trace);
-inline const char *Trace = TraceSource.c_str();
-
-inline constexpr const char *PathResolve = R"HLSL(
-Texture2D<float4> Accumulation : register(t0, space0);
-SamplerState AccumulationSampler : register(s0, space0);
-RWTexture2D<float4> Resolved : register(u0, space1);
-cbuffer ResolveData : register(b0, space2) {
-    uint4 Params;
-};
-
-float4 LoadSample(int2 pixel,int2 size){
-    pixel=clamp(pixel,int2(0,0),size-int2(1,1));
-    float2 uv=(float2(pixel)+.5.xx)/float2(size);
-    return Accumulation.SampleLevel(AccumulationSampler,uv,0.0f);
-}
-
-float4 ReconstructSparse(int2 pixel,int2 size,int phase_grid,int phase){
-    pixel=clamp(pixel,int2(0,0),size-int2(1,1));int grid=max(phase_grid,1);int current=clamp(phase,0,max(grid*grid-1,0));
-    int2 offset=int2(current%grid,current/grid);int2 max_cell=max((size-int2(1,1)-offset)/grid,int2(0,0));
-    float2 lattice=(float2(pixel)-float2(offset))/float(grid);float2 g=clamp(lattice,0.0.xx,float2(max_cell));
-    int2 c0=int2(floor(g)),c1=min(c0+int2(1,1),max_cell);float2 t=g-float2(c0);
-    int2 p00=c0*grid+offset,p10=int2(c1.x,c0.y)*grid+offset,p01=int2(c0.x,c1.y)*grid+offset,p11=c1*grid+offset;
-    float4 s00=LoadSample(p00,size),s10=LoadSample(p10,size),s01=LoadSample(p01,size),s11=LoadSample(p11,size);
-    float w00=(1-t.x)*(1-t.y)*(s00.a>0?1:0),w10=t.x*(1-t.y)*(s10.a>0?1:0),w01=(1-t.x)*t.y*(s01.a>0?1:0),w11=t.x*t.y*(s11.a>0?1:0);
-    float sum=w00+w10+w01+w11;return sum<=1e-6?s00:(s00*w00+s10*w10+s01*w01+s11*w11)/sum;
-}
-
-[numthreads(8,8,1)]
-void Main(uint3 tid:SV_DispatchThreadID){
-    uint width=Params.x,height=Params.y;if(tid.x>=width||tid.y>=height)return;
-    bool moving=(Params.z&1u)!=0u;uint grid=max(Params.w,1u);uint phase=Params.z>>1u;
-    float4 value=moving?ReconstructSparse(int2(tid.xy),int2(width,height),int(grid),int(phase)):LoadSample(int2(tid.xy),int2(width,height));
-    Resolved[tid.xy]=float4(max(value.rgb/max(value.a,1.0f),0.0.xxx),1.0f);
 }
 )HLSL";
 
