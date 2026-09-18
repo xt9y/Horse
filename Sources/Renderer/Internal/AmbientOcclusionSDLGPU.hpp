@@ -33,20 +33,20 @@ public:
         SDL_GPURenderPass *pass,
         SDL_GPUCommandBuffer *command,
         bool enabled,
-        std::uint32_t sampler_slot = 16u
+        std::uint32_t storage_slot = 6u
     ) const;
     void clear();
 
     bool ready() const { return ready_; }
 
 private:
-    void clearTextures();
+    void clearBuffers();
 
     SDL_GPUComputePipeline *pipeline_ = nullptr;
     SDL_GPUComputePipeline *filter_pipeline_ = nullptr;
     SDL_GPUSampler *sampler_ = nullptr;
-    SDL_GPUTexture *raw_ = nullptr;
-    SDL_GPUTexture *filtered_ = nullptr;
+    SDL_GPUBuffer *raw_ = nullptr;
+    SDL_GPUBuffer *filtered_ = nullptr;
     std::uint32_t width_ = 0u;
     std::uint32_t height_ = 0u;
     bool ready_ = false;
