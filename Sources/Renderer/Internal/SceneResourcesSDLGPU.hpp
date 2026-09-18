@@ -121,6 +121,7 @@ private:
     std::vector<RasterMaterialResources> raster_materials_;
     std::unordered_map<Models::MaterialHandle, std::size_t> raster_material_indices_;
 
+    std::uint64_t texture_storage_generation_ = 0u;
     std::uint64_t geometry_revision_ = UINT64_MAX;
     std::uint64_t resource_revision_ = UINT64_MAX;
     std::uint64_t material_revision_ = UINT64_MAX;
