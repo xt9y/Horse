@@ -3,9 +3,26 @@
 #include <cmath>
 
 namespace Camera {
+namespace {
+
+bool camera_enabled = true;
+
+} // namespace
+
+void setEnabled(bool value)
+{
+    camera_enabled = value;
+}
+
+bool enabled()
+{
+    return camera_enabled;
+}
 
 Ecs::Entity activeCamera(const Ecs::World& world)
 {
+    if (!camera_enabled) return Ecs::INVALID_ENTITY;
+
     Ecs::Entity result = Ecs::INVALID_ENTITY;
     world.each<CameraComponent, Renderer::Transform>(
         [&](Ecs::Entity entity, const CameraComponent& camera, const Renderer::Transform&) {
