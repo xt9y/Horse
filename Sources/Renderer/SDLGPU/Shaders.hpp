@@ -94,7 +94,23 @@ void PSMain() {}
 )HLSL";
 
 inline constexpr const char *Depth = R"HLSL(
-void PSMain() {}
+struct VSOut {
+    float4 position : SV_Position;
+    float3 world : TEXCOORD0;
+    float3 normal : TEXCOORD1;
+    float2 uv : TEXCOORD2;
+    nointerpolation uint material : TEXCOORD3;
+    nointerpolation uint mirrored : TEXCOORD4;
+};
+
+float4 PSMain(VSOut input) : SV_Target0
+{
+    float length_squared = dot(input.normal, input.normal);
+    float3 normal = length_squared > 1.0e-8
+        ? input.normal * rsqrt(length_squared)
+        : float3(0.0, 1.0, 0.0);
+    return float4(normal, 1.0);
+}
 )HLSL";
 
 inline constexpr const char *Raster = PBRShaders::Raster;
