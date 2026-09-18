@@ -55,6 +55,16 @@ struct Field {
 Settings& settings();
 const Settings& currentSettings();
 
+inline bool enabled(const Ecs::World& world)
+{
+    for (const Ecs::Entity entity : world.entities()) {
+        const GlobalIlluminationComponent *component =
+            world.get<GlobalIlluminationComponent>(entity);
+        if (component) return component->enabled;
+    }
+    return false;
+}
+
 void setRaysPerProbe(std::size_t value);
 void setProbeBudgetPerFrame(std::size_t value);
 void setProbeDimensionRange(std::uint32_t minimum, std::uint32_t maximum);
