@@ -52,6 +52,15 @@ bool cachedLoad(const std::string& path, Document *output, std::string *error)
     const auto found = loaders().find(extension);
     if (found == loaders().end() || !found->second) return false;
 
+    if (cacheEligible(path)) {
+        std::string cache_error;
+        if (Internal::ModelCache::load(path, output, &cache_error)) {
+            if (error) error->clear();
+            return true;
+        }
+    }
+
+    Internal::TextureImportScope texture_import;
     sourceLoads().fetch_add(1u, std::memory_order_relaxed);
     if (!found->second(path, output, error)) return false;
 
