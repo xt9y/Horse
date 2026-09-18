@@ -1,8 +1,10 @@
 #include <Renderer/Internal/ReconstructionSDLGPU.hpp>
 #include <Renderer/Reconstruction/Reconstruction.hpp>
+#include <Renderer/SDLGPU/ReconstructionShaders.hpp>
 
 #include <cassert>
 #include <cstdint>
+#include <string_view>
 #include <type_traits>
 
 int main()
@@ -53,6 +55,15 @@ int main()
     controller.observe(0.0f, settings);
     controller.observe(500.0f, settings);
     assert(controller.averageFrameMs() == before);
+
+    const std::string_view resolve = Renderer::SDLGPU::ReconstructionShaders::Resolve;
+    const std::size_t history_write = resolve.find("NextColor[pixel] = color;");
+    const std::size_t debug_branch = resolve.find("if (Control.w != 0u)");
+    assert(history_write != std::string_view::npos);
+    assert(debug_branch != std::string_view::npos);
+    assert(history_write < debug_branch);
+    assert(resolve.find("if (depth <= 0.0 && expected_depth > 0.0) return 0.0;") !=
+        std::string_view::npos);
 
     return 0;
 }
