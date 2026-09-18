@@ -44,6 +44,13 @@ Quality quality()
     return storage().quality;
 }
 
+std::uint32_t limitEnvironmentMipLevels(
+    std::uint32_t available_levels,
+    Quality quality)
+{
+    return std::min(std::max(available_levels, 1u), maximumMipLevels(quality));
+}
+
 std::uint32_t environmentMipLevels(
     std::uint32_t width,
     std::uint32_t height,
@@ -57,7 +64,7 @@ std::uint32_t environmentMipLevels(
         size >>= 1u;
         ++levels;
     }
-    return std::min(levels, maximumMipLevels(quality));
+    return limitEnvironmentMipLevels(levels, quality);
 }
 
 float environmentLod(float roughness, std::uint32_t mip_levels)
