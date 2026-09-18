@@ -163,8 +163,11 @@ void renderSDLGPU(
         return;
     }
 
+    const Scenes::CameraState raster_camera = Scenes::cameraState(camera);
+    if (!raster_camera.valid) return;
+
     const SDLGPU::FrameUniforms uniforms = SDLGPU::makeFrameUniforms(
-        camera,
+        raster_camera,
         output.width,
         output.height,
         output.width,
