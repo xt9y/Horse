@@ -29,20 +29,7 @@ constexpr float kGoldenRatioFraction = 0.61803398875f;
 
 using Clock = std::chrono::steady_clock;
 
-struct Tuning {
-    std::size_t rays_per_probe = 0u;
-    std::size_t probe_budget_per_frame = 0u;
-    std::uint32_t minimum_probe_dimension = 0u;
-    std::uint32_t maximum_probe_dimension = 0u;
-    float bounds_margin_scale = 0.0f;
-    float minimum_bounds_margin = 0.0f;
-    float ray_epsilon = 0.0f;
-    std::uint8_t maximum_bounces = 0u;
-    std::uint32_t maximum_photon_count = 0u;
-    bool paused = false;
-};
-
-Tuning tuning;
+Settings tuning;
 
 Vec3 add(Vec3 a, Vec3 b)
 {
@@ -473,6 +460,16 @@ void disableIlluminationState()
 }
 
 } // namespace
+
+Settings& settings()
+{
+    return tuning;
+}
+
+const Settings& currentSettings()
+{
+    return tuning;
+}
 
 void setRaysPerProbe(std::size_t value) { tuning.rays_per_probe = value; }
 void setProbeBudgetPerFrame(std::size_t value) { tuning.probe_budget_per_frame = value; }
