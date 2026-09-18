@@ -1,5 +1,7 @@
 #include "Models/Formats/Registry.hpp"
 
+#include "Core/Jobs/Jobs.hpp"
+
 #include "Models/Internal/ModelCache.hpp"
 #include "Models/Internal/StagedModel.hpp"
 #include "Models/Internal/TextureStreaming.hpp"
@@ -8,8 +10,10 @@
 #include <atomic>
 #include <cctype>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace Models::Formats {
@@ -43,6 +47,28 @@ bool cacheEligible(const std::string& path)
     return extension == ".gltf" || extension == ".glb";
 }
 
+void queueCacheBuild(const std::string& path)
+{
+    if (!cacheEligible(path)) return;
+
+    static std::mutex mutex;
+    static std::unordered_set<std::string> queued;
+    {
+        std::lock_guard lock(mutex);
+        if (!queued.insert(path).second) return;
+    }
+
+    if (!Core::Jobs::trySubmit([path] {
+            Internal::StagedModel staged;
+            std::string error;
+            (void)stage(path, &staged, &error);
+        }))
+    {
+        std::lock_guard lock(mutex);
+        queued.erase(path);
+    }
+}
+
 bool cachedLoad(const std::string& path, Document *output, std::string *error)
 {
     if (!output) return false;
@@ -64,12 +90,7 @@ bool cachedLoad(const std::string& path, Document *output, std::string *error)
     sourceLoads().fetch_add(1u, std::memory_order_relaxed);
     if (!found->second(path, output, error)) return false;
 
-    if (cacheEligible(path)) {
-        Internal::ModelCache::Payload payload;
-        std::string cache_error;
-        if (Internal::ModelCache::encode(path, *output, &payload, &cache_error))
-            Internal::ModelCache::writeAsync(path, std::move(payload));
-    }
+    queueCacheBuild(path);
     return true;
 }
 
