@@ -1,8 +1,10 @@
 #include "Renderer/Rasterizer/Rasterizer.hpp"
 
+#include "Models/Models.hpp"
 #include "Renderer/Internal/FontPass.hpp"
 #include "Renderer/Internal/FrameSDLGPU.hpp"
 #include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
+#include "Renderer/Internal/HiZSDLGPU.hpp"
 #include "Renderer/Internal/RasterGeometrySDLGPU.hpp"
 #include "Renderer/Internal/ShadowMapsSDLGPU.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
@@ -77,6 +79,27 @@ SDL_GPUGraphicsPipeline *createRasterPipeline(
     return SDL_CreateGPUGraphicsPipeline(SDLGPU::device(), &info);
 }
 
+SDL_GPUGraphicsPipeline *createDepthPipeline(
+    SDL_GPUShader *vertex,
+    SDL_GPUShader *fragment)
+{
+    SDL_GPUGraphicsPipelineCreateInfo info{};
+    info.vertex_shader = vertex;
+    info.fragment_shader = fragment;
+    info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+    info.rasterizer_state.enable_depth_clip = true;
+    info.multisample_state.sample_count = SDL_GPU_SAMPLECOUNT_1;
+    info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    info.depth_stencil_state.enable_depth_test = true;
+    info.depth_stencil_state.enable_depth_write = true;
+    info.target_info.depth_stencil_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+    info.target_info.has_depth_stencil_target = true;
+    return SDL_CreateGPUGraphicsPipeline(SDLGPU::device(), &info);
+}
+
 } // namespace
 
 struct Rasterizer::Impl {
@@ -85,8 +108,10 @@ struct Rasterizer::Impl {
     Scenes::SDLGPU::SceneResources scene;
     RasterizerSDLGPU::RasterGeometry geometry;
     RasterizerSDLGPU::ShadowMaps shadows;
+    Visibility::SDLGPU::HiZPyramid hi_z;
     SDL_GPUGraphicsPipeline *pipeline = nullptr;
     SDL_GPUGraphicsPipeline *sky_pipeline = nullptr;
+    SDL_GPUGraphicsPipeline *depth_pipeline = nullptr;
     SDL_GPUBuffer *visibility_buffer = nullptr;
     std::size_t visibility_capacity = 0u;
     std::vector<std::uint32_t> visibility;
@@ -143,21 +168,36 @@ struct Rasterizer::Impl {
         SDL_GPUShader *ps = SDLGPU::compileGraphicsShader(
             SDLGPU::Shaders::Raster, SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT,
             "Horse Raster PS", "PSMain");
+        SDL_GPUShader *depth_ps = SDLGPU::compileGraphicsShader(
+            SDLGPU::Shaders::Depth, SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT,
+            "Horse Depth PS", "PSMain");
         SDL_GPUShader *sky_vs = SDLGPU::compileGraphicsShader(
             SDLGPU::Shaders::Sky, SDL_SHADERCROSS_SHADERSTAGE_VERTEX,
             "Horse Sky VS", "SkyVS");
         SDL_GPUShader *sky_ps = SDLGPU::compileGraphicsShader(
             SDLGPU::Shaders::Sky, SDL_SHADERCROSS_SHADERSTAGE_FRAGMENT,
             "Horse Sky PS", "SkyPS");
+
         if (vs && ps) pipeline = createRasterPipeline(vs, ps, false);
+        if (vs && depth_ps) depth_pipeline = createDepthPipeline(vs, depth_ps);
         if (sky_vs && sky_ps) sky_pipeline = createRasterPipeline(sky_vs, sky_ps, true);
+
         if (vs) SDL_ReleaseGPUShader(SDLGPU::device(), vs);
         if (ps) SDL_ReleaseGPUShader(SDLGPU::device(), ps);
+        if (depth_ps) SDL_ReleaseGPUShader(SDLGPU::device(), depth_ps);
         if (sky_vs) SDL_ReleaseGPUShader(SDLGPU::device(), sky_vs);
         if (sky_ps) SDL_ReleaseGPUShader(SDLGPU::device(), sky_ps);
+
         if (!pipeline || !sky_pipeline) {
             std::fprintf(stderr, "[Rasterizer/SDL_GPU]: pipeline creation failed: %s\n", SDL_GetError());
             return false;
+        }
+        if (!depth_pipeline) {
+            settings.depth_prepass = false;
+            settings.hi_z = false;
+            std::fprintf(stderr,
+                "[Rasterizer/SDL_GPU]: depth prepass unavailable; continuing without Hi-Z: %s\n",
+                SDL_GetError());
         }
         return true;
     }
@@ -165,9 +205,11 @@ struct Rasterizer::Impl {
     void destroyPipelines()
     {
         if (SDLGPU::device()) {
+            if (depth_pipeline) SDL_ReleaseGPUGraphicsPipeline(SDLGPU::device(), depth_pipeline);
             if (sky_pipeline) SDL_ReleaseGPUGraphicsPipeline(SDLGPU::device(), sky_pipeline);
             if (pipeline) SDL_ReleaseGPUGraphicsPipeline(SDLGPU::device(), pipeline);
         }
+        depth_pipeline = nullptr;
         sky_pipeline = nullptr;
         pipeline = nullptr;
     }
@@ -201,6 +243,17 @@ bool Rasterizer::init()
         shutdown();
         return false;
     }
+
+    if (impl_->settings.hi_z && !impl_->hi_z.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)))
+    {
+        impl_->settings.hi_z = false;
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: Hi-Z unavailable; continuing without it: %s\n",
+            SDL_GetError());
+    }
+
     impl_->initialized = true;
     std::fprintf(stderr, "[Rasterizer/SDL_GPU]: %s PBR backend active\n", SDLGPU::driver());
     return true;
@@ -211,8 +264,20 @@ void Rasterizer::resize(int width, int height)
     if (!impl_) return;
     impl_->width = std::max(width, 1);
     impl_->height = std::max(height, 1);
-    if (impl_->initialized && !impl_->frame.resize(impl_->width, impl_->height))
+    if (!impl_->initialized) return;
+
+    if (!impl_->frame.resize(impl_->width, impl_->height))
         std::fprintf(stderr, "[Rasterizer/SDL_GPU]: resize failed: %s\n", SDL_GetError());
+
+    if (impl_->settings.hi_z && !impl_->hi_z.resize(
+            static_cast<std::uint32_t>(impl_->width),
+            static_cast<std::uint32_t>(impl_->height)))
+    {
+        impl_->settings.hi_z = false;
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: Hi-Z resize failed; disabling Hi-Z: %s\n",
+            SDL_GetError());
+    }
 }
 
 bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& output)
@@ -237,6 +302,12 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
 
     auto *command = static_cast<SDL_GPUCommandBuffer *>(output.command);
     const Scenes::CameraState camera = Scenes::cameraState(Scenes::Scene::cameraState(world));
+    const SDLGPU::FrameUniforms uniforms = SDLGPU::makeFrameUniforms(
+        camera, impl_->width, impl_->height, impl_->width, impl_->height,
+        0u, impl_->geometry.vertexCount() / 3u,
+        impl_->scene.materialCount(), impl_->scene.textureCount(),
+        Scenes::SceneCache::opacityCutoff());
+
     if (!impl_->shadows.update(
             command,
             impl_->geometry,
@@ -257,6 +328,68 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         return false;
     }
 
+    bool depth_prepass_done = false;
+    if (camera.valid && impl_->settings.enabled && impl_->settings.depth_prepass &&
+        impl_->depth_pipeline && impl_->geometry.worldVertexCount() > 0u)
+    {
+        SDL_GPUDepthStencilTargetInfo depth_prepass{};
+        depth_prepass.texture = impl_->frame.depth();
+        depth_prepass.clear_depth = 1.0f;
+        depth_prepass.load_op = SDL_GPU_LOADOP_CLEAR;
+        depth_prepass.store_op = SDL_GPU_STOREOP_STORE;
+        depth_prepass.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+        depth_prepass.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+
+        SDL_GPURenderPass *depth_pass = SDL_BeginGPURenderPass(
+            command,
+            nullptr,
+            0u,
+            &depth_prepass
+        );
+        if (!depth_pass) {
+            Frame::SDLGPU::cancel(output);
+            return false;
+        }
+
+        SDL_BindGPUGraphicsPipeline(depth_pass, impl_->depth_pipeline);
+        impl_->geometry.bind(depth_pass);
+        SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
+        SDL_BindGPUVertexStorageBuffers(depth_pass, 4u, visibility_buffers, 1u);
+        SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
+
+        for (const RasterizerSDLGPU::RasterGeometry::DrawRange& draw : impl_->geometry.draws()) {
+            if (draw.camera_layer || draw.vertex_count == 0u) continue;
+            const Models::MaterialData *material = Models::material(draw.material);
+            if (!material || material->alpha_mode != Models::AlphaMode::Opaque) continue;
+
+            const RasterDrawUniforms draw_uniforms{
+                static_cast<std::uint32_t>(std::min<std::size_t>(draw.first_vertex, UINT32_MAX)),
+            };
+            SDL_PushGPUVertexUniformData(
+                command,
+                1u,
+                &draw_uniforms,
+                sizeof(draw_uniforms)
+            );
+            SDL_DrawGPUPrimitives(
+                depth_pass,
+                static_cast<Uint32>(std::min<std::size_t>(draw.vertex_count, UINT32_MAX)),
+                1u,
+                0u,
+                0u
+            );
+        }
+        SDL_EndGPURenderPass(depth_pass);
+        depth_prepass_done = true;
+
+        if (impl_->settings.hi_z && !impl_->hi_z.build(command, impl_->frame.depth())) {
+            impl_->settings.hi_z = false;
+            std::fprintf(stderr,
+                "[Rasterizer/SDL_GPU]: Hi-Z build failed; disabling Hi-Z: %s\n",
+                SDL_GetError());
+        }
+    }
+
     SDL_GPUColorTargetInfo colors[2]{};
     colors[0].texture = impl_->frame.color();
     colors[0].clear_color = {
@@ -271,7 +404,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     SDL_GPUDepthStencilTargetInfo depth{};
     depth.texture = impl_->frame.depth();
     depth.clear_depth = 1.0f;
-    depth.load_op = SDL_GPU_LOADOP_CLEAR;
+    depth.load_op = depth_prepass_done ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
     depth.store_op = SDL_GPU_STOREOP_STORE;
     depth.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
     depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
@@ -281,12 +414,6 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         Frame::SDLGPU::cancel(output);
         return false;
     }
-
-    const SDLGPU::FrameUniforms uniforms = SDLGPU::makeFrameUniforms(
-        camera, impl_->width, impl_->height, impl_->width, impl_->height,
-        0u, impl_->geometry.vertexCount() / 3u,
-        impl_->scene.materialCount(), impl_->scene.textureCount(),
-        Scenes::SceneCache::opacityCutoff());
 
     const auto draw_ranges = [&](SDL_GPURenderPass *target, bool camera_layer) -> bool {
         for (const RasterizerSDLGPU::RasterGeometry::DrawRange& draw : impl_->geometry.draws()) {
@@ -400,6 +527,7 @@ void Rasterizer::shutdown()
     if (!impl_) return;
     Internal::shutdownFonts(Internal::GraphicsApi::SDLGPU);
     Internal::shutdownGlobalIlluminationSDLGPU();
+    impl_->hi_z.clear();
     impl_->shadows.clear();
     impl_->geometry.clear();
     if (impl_->visibility_buffer && SDLGPU::device())
@@ -419,12 +547,16 @@ bool Rasterizer::initialized() const { return impl_ && impl_->initialized; }
 bool Rasterizer::enabled() const { return impl_ && impl_->settings.enabled; }
 void Rasterizer::setEnabled(bool enabled) { if (impl_) impl_->settings.enabled = enabled; }
 void Rasterizer::setViewportCulling(bool value) { if (impl_) impl_->settings.viewport_culling = value; }
+void Rasterizer::setDepthPrepass(bool value) { if (impl_) impl_->settings.depth_prepass = value; }
+void Rasterizer::setHiZ(bool value) { if (impl_) impl_->settings.hi_z = value; }
 void Rasterizer::setShadowResolution(int value) { if (impl_) impl_->settings.shadow_resolution = std::max(value, 1); }
 void Rasterizer::setShadowCascades(int value) { if (impl_) impl_->settings.shadow_cascades = std::max(value, 1); }
 void Rasterizer::setShadowDistance(float value) { if (impl_) impl_->settings.shadow_distance = std::max(value, 1.0f); }
 void Rasterizer::setShadowNearPlane(float value) { if (impl_) impl_->settings.shadow_near_plane = std::max(value, 1.0e-4f); }
 void Rasterizer::setClearColor(Vec4 value) { if (impl_) impl_->settings.clear_color = value; }
 bool Rasterizer::viewportCulling() const { return impl_ && impl_->settings.viewport_culling; }
+bool Rasterizer::depthPrepass() const { return impl_ && impl_->settings.depth_prepass; }
+bool Rasterizer::hiZ() const { return impl_ && impl_->settings.hi_z; }
 int Rasterizer::shadowResolution() const { return impl_ ? impl_->settings.shadow_resolution : 0; }
 int Rasterizer::shadowCascades() const { return impl_ ? impl_->settings.shadow_cascades : 0; }
 float Rasterizer::shadowDistance() const { return impl_ ? impl_->settings.shadow_distance : 0.0f; }
