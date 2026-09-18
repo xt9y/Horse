@@ -71,12 +71,16 @@ int main()
     Renderer::Rasterizer rasterizer;
     assert(rasterizer.depthPrepass());
     assert(rasterizer.hiZ());
+    assert(rasterizer.occlusionCulling());
     rasterizer.setDepthPrepass(false);
     rasterizer.setHiZ(false);
+    rasterizer.setOcclusionCulling(false);
     assert(!rasterizer.depthPrepass());
     assert(!rasterizer.hiZ());
+    assert(!rasterizer.occlusionCulling());
     rasterizer.setDepthPrepass(true);
     rasterizer.setHiZ(true);
+    rasterizer.setOcclusionCulling(true);
 
     rasterizer.setShadowQuality(Renderer::Quality::Low);
     assert(rasterizer.shadowQuality() == Renderer::Quality::Low);
