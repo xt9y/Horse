@@ -3,6 +3,7 @@
 #include "Renderer/Internal/DebugRenderPass.hpp"
 #include "Renderer/Internal/Display.hpp"
 #include "Renderer/Internal/FontPass.hpp"
+#include "Renderer/Internal/LinesRenderPass.hpp"
 #include "Renderer/GaussianSplat/GaussianSplat.hpp"
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
@@ -23,6 +24,7 @@ void IRenderer::render(const Ecs::World& world)
     if (post_process_ && !post_process_->process(output)) return;
     if (!Internal::renderDisplay(world, output)) return;
     if (!compose(output)) return;
+    Lines::Internal::render(world, output);
     Debug::RenderPass::render(world, output);
     Internal::renderFonts(world, output);
     UI::Internal::RenderPass::render(output);
