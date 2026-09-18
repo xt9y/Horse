@@ -339,8 +339,9 @@ Surface MakeSurface(Hit hit, float3 ray_direction) {
     surface.alpha = base.base_color.a * base_sample.a;
     if (material.tex1.z >= 0) surface.alpha *= SampleSlot(material.tex1.z, surface.uv).r;
     float4 mr = material.tex0.z >= 0 ? SampleSlot(material.tex0.z, surface.uv) : 1.0.xxxx;
-    surface.roughness = max(saturate(material.pbr.x * mr.r), 0.04);
-    surface.metallic = saturate(material.pbr.y * mr.g);
+    bool gltf_mr = material.tex5.z > 0;
+    surface.roughness = max(saturate(material.pbr.x * (gltf_mr ? mr.g : mr.r)), 0.04);
+    surface.metallic = saturate(material.pbr.y * (gltf_mr ? mr.b : mr.g));
     surface.ao = saturate(material.pbr.z *
         (material.tex1.x >= 0 ? SampleSlot(material.tex1.x, surface.uv).r : 1.0));
 
