@@ -20,9 +20,9 @@ cbuffer HiZData : register(b0, space2) {
 
 float ReadDepth(uint2 pixel)
 {
-    uint2 source_size = max(Size.xy, 1u.xx);
-    uint2 clamped = min(pixel, source_size - 1u.xx);
-    float2 uv = (float2(clamped) + 0.5.xx) / float2(source_size);
+    uint2 source_size = max(Size.xy, uint2(1u, 1u));
+    uint2 clamped = min(pixel, source_size - uint2(1u, 1u));
+    float2 uv = (float2(clamped) + float2(0.5, 0.5)) / float2(source_size);
     return Source.SampleLevel(SourceSampler, uv, 0.0).r;
 }
 
