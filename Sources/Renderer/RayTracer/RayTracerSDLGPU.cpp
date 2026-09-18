@@ -3,7 +3,9 @@
 #include "Renderer/Internal/FontPass.hpp"
 #include "Renderer/Internal/FrameSDLGPU.hpp"
 #include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
+#include "Renderer/Internal/ReconstructionSDLGPU.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
+#include "Renderer/SDLGPU/ReconstructionTraceShaders.hpp"
 #include "Renderer/SDLGPU/Shaders.hpp"
 #include "Renderer/SDLGPU/Uniforms.hpp"
 #include "Renderer/Scenes/Scene.hpp"
@@ -13,6 +15,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -26,7 +29,8 @@ constexpr SDL_GPUTextureUsageFlags TraceColorUsage =
 constexpr SDL_GPUTextureUsageFlags TraceDepthUsage =
     SDL_GPU_TEXTUREUSAGE_SAMPLER |
     SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
-constexpr SDL_GPUTextureUsageFlags TraceAccumulationUsage =
+constexpr SDL_GPUTextureUsageFlags TraceSurfaceUsage =
+    SDL_GPU_TEXTUREUSAGE_SAMPLER |
     SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE;
 
 bool clearColor(SDL_GPUCommandBuffer *command, SDL_GPUTexture *color)
@@ -43,86 +47,82 @@ bool clearColor(SDL_GPUCommandBuffer *command, SDL_GPUTexture *color)
     return true;
 }
 
-void blitTrace(
-    SDL_GPUCommandBuffer *command,
-    SDL_GPUTexture *source,
-    std::uint32_t source_width,
-    std::uint32_t source_height,
-    SDL_GPUTexture *destination,
-    std::uint32_t destination_width,
-    std::uint32_t destination_height)
-{
-    SDL_GPUBlitInfo info{};
-    info.source.texture = source;
-    info.source.w = source_width;
-    info.source.h = source_height;
-    info.destination.texture = destination;
-    info.destination.w = destination_width;
-    info.destination.h = destination_height;
-    info.load_op = SDL_GPU_LOADOP_DONT_CARE;
-    info.filter = SDL_GPU_FILTER_LINEAR;
-    SDL_BlitGPUTexture(command, &info);
-}
-
 } // namespace
 
 struct RayTracer::Impl {
+    using Clock = std::chrono::steady_clock;
+
     RayTracerSettings settings{};
     Frame::SDLGPU::Target frame;
     Scenes::SDLGPU::SceneResources scene;
+    Internal::ReconstructionSDLGPU reconstruction;
+    Reconstruction::BudgetController budget;
     SDL_GPUComputePipeline *pipeline = nullptr;
     SDL_GPUTexture *trace_color = nullptr;
     SDL_GPUTexture *trace_depth = nullptr;
-    SDL_GPUTexture *accumulation = nullptr;
+    SDL_GPUTexture *trace_surface = nullptr;
+    Clock::time_point previous_frame_time{};
+    std::uint64_t previous_camera_signature = 0u;
+    std::uint32_t frame_index = 0u;
     int width = 1;
     int height = 1;
     int trace_width = 1;
     int trace_height = 1;
     bool initialized = false;
     bool gpu_retained = false;
+    bool have_frame_time = false;
+    bool have_camera_signature = false;
 
-    bool configured() const { return settings.resolution_divisor > 0; }
+    bool configured() const { return true; }
     bool active() const { return initialized && settings.enabled; }
 
     void updateResolution()
     {
-        if (settings.resolution_divisor <= 0) {
-            trace_width = 0;
-            trace_height = 0;
-            return;
+        trace_width = std::max(width, 1);
+        trace_height = std::max(height, 1);
+    }
+
+    void observeFrameTime()
+    {
+        const Clock::time_point now = Clock::now();
+        if (have_frame_time) {
+            const float elapsed = std::chrono::duration<float, std::milli>(
+                now - previous_frame_time).count();
+            budget.observe(elapsed, settings.reconstruction);
         }
-        trace_width = std::max(width / settings.resolution_divisor, 1);
-        trace_height = std::max(height / settings.resolution_divisor, 1);
+        previous_frame_time = now;
+        have_frame_time = true;
     }
 
     void destroyTargets()
     {
         SDL_GPUDevice *device = SDLGPU::device();
         if (device) {
-            if (accumulation) SDL_ReleaseGPUTexture(device, accumulation);
+            if (trace_surface) SDL_ReleaseGPUTexture(device, trace_surface);
             if (trace_depth) SDL_ReleaseGPUTexture(device, trace_depth);
             if (trace_color) SDL_ReleaseGPUTexture(device, trace_color);
         }
-        accumulation = nullptr;
+        trace_surface = nullptr;
         trace_depth = nullptr;
         trace_color = nullptr;
     }
 
     bool createTargets()
     {
-        if (trace_width <= 0 || trace_height <= 0) return false;
+        updateResolution();
         const auto w = static_cast<std::uint32_t>(trace_width);
         const auto h = static_cast<std::uint32_t>(trace_height);
         trace_color = SDLGPU::createTexture(
-            SDLGPU::colorFormat(), TraceColorUsage, w, h, "Horse Ray Color");
+            SDLGPU::colorFormat(), TraceColorUsage, w, h, "Horse Ray Fresh Color");
         trace_depth = SDLGPU::createTexture(
-            SDL_GPU_TEXTUREFORMAT_R32_FLOAT, TraceDepthUsage, w, h, "Horse Ray Depth");
-        accumulation = SDLGPU::createTexture(
+            SDL_GPU_TEXTUREFORMAT_R32_FLOAT, TraceDepthUsage, w, h, "Horse Ray Fresh Depth");
+        trace_surface = SDLGPU::createTexture(
             SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT,
-            TraceAccumulationUsage,
-            w, h,
-            "Horse Ray Scratch");
-        if (trace_color && trace_depth && accumulation) return true;
+            TraceSurfaceUsage,
+            w,
+            h,
+            "Horse Ray Fresh Surface");
+        if (trace_color && trace_depth && trace_surface) return true;
         std::fprintf(stderr, "[RayTracer/SDL_GPU]: target creation failed: %s\n", SDL_GetError());
         destroyTargets();
         return false;
@@ -135,30 +135,47 @@ struct RayTracer::Impl {
         updateResolution();
         if (trace_color && old_width == trace_width && old_height == trace_height) return true;
         destroyTargets();
+        reconstruction.reset();
         return createTargets();
     }
 
     bool dispatch(
         const Scenes::CameraState& camera,
         const GlobalIllumination::Field *global_illumination,
-        Internal::FrameOutput& output)
+        Internal::FrameOutput& output,
+        bool camera_moving,
+        bool reset_history)
     {
         auto *command = static_cast<SDL_GPUCommandBuffer *>(output.command);
-        if (!command || !pipeline || !trace_color || !trace_depth || !accumulation) return false;
+        if (!command || !pipeline || !trace_color || !trace_depth || !trace_surface) return false;
 
+        const std::uint32_t grid = budget.grid();
         const SDLGPU::FrameUniforms uniforms = SDLGPU::makeFrameUniforms(
             camera,
-            trace_width, trace_height,
-            width, height,
-            scene.nodeCount(), scene.triangleCount(), scene.materialCount(), scene.textureCount(),
+            trace_width,
+            trace_height,
+            width,
+            height,
+            scene.nodeCount(),
+            scene.triangleCount(),
+            scene.materialCount(),
+            scene.textureCount(),
             Scenes::SceneCache::opacityCutoff(),
-            0u, 0u, 1u, true, false);
+            frame_index,
+            0u,
+            1u,
+            reset_history,
+            camera_moving,
+            grid,
+            grid,
+            grid,
+            1u);
         SDL_PushGPUComputeUniformData(command, 0u, &uniforms, sizeof uniforms);
 
         SDL_GPUStorageTextureReadWriteBinding writable[3]{};
         writable[0].texture = trace_color;
         writable[1].texture = trace_depth;
-        writable[2].texture = accumulation;
+        writable[2].texture = trace_surface;
         SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(command, writable, 3u, nullptr, 0u);
         if (!pass) return false;
         SDL_BindGPUComputePipeline(pass, pipeline);
@@ -174,15 +191,21 @@ struct RayTracer::Impl {
         SDL_EndGPUComputePass(pass);
         if (!gi_ok) return false;
 
-        blitTrace(
+        const bool reconstructed = reconstruction.resolve(
             command,
             trace_color,
-            static_cast<std::uint32_t>(trace_width),
-            static_cast<std::uint32_t>(trace_height),
+            trace_depth,
+            trace_surface,
             frame.color(),
-            static_cast<std::uint32_t>(width),
-            static_cast<std::uint32_t>(height));
-        return true;
+            frame.linearDepth(),
+            camera,
+            settings.reconstruction,
+            frame_index,
+            grid,
+            camera_moving,
+            reset_history);
+        ++frame_index;
+        return reconstructed;
     }
 };
 
@@ -209,11 +232,15 @@ bool RayTracer::init()
     impl_->width = std::max(Window::width(), 1);
     impl_->height = std::max(Window::height(), 1);
     impl_->updateResolution();
+
+    const std::string trace_source =
+        std::string(SDLGPU::Shaders::Trace) + SDLGPU::ReconstructionTraceShaders::Entries;
     std::string error;
     impl_->pipeline = SDLGPU::compileComputePipeline(
-        SDLGPU::Shaders::Trace, "Horse Ray Tracer", "RayMain");
+        trace_source.c_str(), "Horse Ray Tracer", "SparseRayMain");
     if (!impl_->pipeline ||
         !impl_->frame.resize(impl_->width, impl_->height) ||
+        !impl_->reconstruction.resize(impl_->width, impl_->height) ||
         !impl_->scene.init(&error) ||
         !impl_->createTargets())
     {
@@ -222,17 +249,27 @@ bool RayTracer::init()
         return false;
     }
 
+    impl_->budget.reset();
+    impl_->frame_index = 0u;
+    impl_->have_frame_time = false;
+    impl_->have_camera_signature = false;
     impl_->initialized = true;
     std::fprintf(
         stderr,
-        "[RayTracer/SDL_GPU]: %s compute/BVH, output %dx%d, trace %dx%d\n",
+        "[RayTracer/SDL_GPU]: %s sparse native compute/BVH, output %dx%d, trace %dx%d\n",
         SDLGPU::driver(), impl_->width, impl_->height, impl_->trace_width, impl_->trace_height);
     return true;
 }
 
 bool RayTracer::activate()
 {
-    return impl_ && impl_->initialized;
+    if (!impl_ || !impl_->initialized) return false;
+    impl_->budget.reset();
+    impl_->reconstruction.reset();
+    impl_->frame_index = 0u;
+    impl_->have_frame_time = false;
+    impl_->have_camera_signature = false;
+    return true;
 }
 
 void RayTracer::deactivate() {}
@@ -246,7 +283,9 @@ void RayTracer::resize(int width, int height)
     const int old_height = impl_->trace_height;
     impl_->updateResolution();
     if (!impl_->initialized) return;
-    if (!impl_->frame.resize(impl_->width, impl_->height)) {
+    if (!impl_->frame.resize(impl_->width, impl_->height) ||
+        !impl_->reconstruction.resize(impl_->width, impl_->height))
+    {
         std::fprintf(stderr, "[RayTracer/SDL_GPU]: frame resize failed: %s\n", SDL_GetError());
         return;
     }
@@ -261,12 +300,16 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
     if (!impl_ || !impl_->initialized) return false;
     if (!impl_->recreateTargetsIfNeeded()) return false;
 
+    impl_->observeFrameTime();
+
     std::string error;
     const auto sync = impl_->scene.sync(world, &error);
     if (!sync.ok) {
         std::fprintf(stderr, "[RayTracer/SDL_GPU]: scene sync failed: %s\n", error.c_str());
         return false;
     }
+    if (sync.scene_changed) impl_->reconstruction.reset();
+
     if (!impl_->frame.begin(output)) return false;
     output.scene_resources = &impl_->scene;
 
@@ -278,7 +321,19 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
             static_cast<SDL_GPUCommandBuffer *>(output.command), impl_->frame.color());
     }
 
-    if (!impl_->dispatch(camera, output.global_illumination, output)) {
+    const std::uint64_t signature = Scenes::cameraSignature(camera);
+    const bool camera_moving =
+        impl_->have_camera_signature && signature != impl_->previous_camera_signature;
+    impl_->previous_camera_signature = signature;
+    impl_->have_camera_signature = true;
+
+    if (!impl_->dispatch(
+            camera,
+            output.global_illumination,
+            output,
+            camera_moving,
+            sync.scene_changed))
+    {
         Frame::SDLGPU::cancel(output);
         return false;
     }
@@ -287,7 +342,7 @@ bool RayTracer::renderScene(const Ecs::World& world, Internal::FrameOutput& outp
     output.width = impl_->width;
     output.height = impl_->height;
     output.color_texture = impl_->frame.color();
-    output.depth_texture = impl_->trace_depth;
+    output.depth_texture = impl_->frame.linearDepth();
     output.velocity_texture = impl_->frame.velocity();
     return true;
 }
@@ -307,6 +362,7 @@ void RayTracer::shutdown()
     if (!impl_) return;
     Internal::shutdownFonts(Internal::GraphicsApi::SDLGPU);
     Internal::shutdownGlobalIlluminationSDLGPU();
+    impl_->reconstruction.shutdown();
     if (SDLGPU::device() && impl_->pipeline)
         SDL_ReleaseGPUComputePipeline(SDLGPU::device(), impl_->pipeline);
     impl_->pipeline = nullptr;
@@ -316,6 +372,10 @@ void RayTracer::shutdown()
     if (impl_->gpu_retained) SDLGPU::release();
     impl_->gpu_retained = false;
     impl_->initialized = false;
+    impl_->budget.reset();
+    impl_->frame_index = 0u;
+    impl_->have_frame_time = false;
+    impl_->have_camera_signature = false;
 }
 
 bool RayTracer::initialized() const { return impl_ && impl_->initialized; }
