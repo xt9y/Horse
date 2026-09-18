@@ -1,13 +1,10 @@
 #include "Renderer/Lines/Lines.hpp"
 
-#include "Camera/Camera.hpp"
 #include "Renderer/Internal/DebugRenderPass.hpp"
 #include "Renderer/Internal/LinesRenderPass.hpp"
-#include "Renderer/Math.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 
-#include <algorithm>
 #include <vector>
 
 namespace Renderer::Lines {
@@ -58,33 +55,7 @@ void render(const Ecs::World& world, Renderer::Internal::FrameOutput& output)
     const Scenes::Scene::CameraState camera = Scenes::Scene::cameraState(world);
     if (!camera.valid) return;
 
-    const Vec3 forward = Math::normalize(Camera::flightDirection(
-        camera.transform.rotation.y,
-        camera.transform.rotation.x
-    ));
-    const Vec3 right = Math::normalize(Camera::strafeDirection(camera.transform.rotation.y));
-    const Vec3 up = Math::normalize(Math::cross(right, forward));
-
-    const float aspect =
-        static_cast<float>(std::max(output.width, 1)) /
-        static_cast<float>(std::max(output.height, 1));
-
-    const float far_distance = std::max(camera.far_plane, camera.near_plane + 1.0f);
-
-    const Math::Mat4 projection = Math::perspective(
-        camera.fov_degrees,
-        aspect,
-        camera.near_plane,
-        far_distance
-    );
-    const Math::Mat4 view = Math::viewMatrix(
-        camera.transform.position,
-        forward,
-        right,
-        up
-    );
-
-    Debug::RenderPass::renderSDLGPU(vertices(), projection, view, output);
+    Debug::RenderPass::renderSDLGPU(vertices(), camera, output);
 }
 
 } // namespace Internal
