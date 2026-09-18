@@ -1,6 +1,7 @@
 #include "Renderer/Internal/DebugRenderPass.hpp"
 
 #include "Renderer/SDLGPU/Context.hpp"
+#include "Renderer/SDLGPU/Uniforms.hpp"
 
 #include <SDL3/SDL.h>
 
@@ -20,8 +21,17 @@ struct DebugVertex {
 };
 
 StructuredBuffer<DebugVertex> Vertices : register(t0, space0);
-cbuffer DebugUniforms : register(b0, space1) {
-    float4x4 MVP;
+
+cbuffer Frame : register(b0, space1) {
+    float4 CameraPositionNear;
+    float4 CameraForwardFar;
+    float4 CameraRightAspect;
+    float4 CameraUpTanHalfFov;
+    float4 ProjectionAlpha;
+    float4 Resolution;
+    int4 Counts;
+    uint4 FrameData;
+    uint4 PathPolicy;
 };
 
 struct VertexOut {
@@ -32,9 +42,29 @@ struct VertexOut {
 VertexOut VSMain(uint vertex_id : SV_VertexID)
 {
     DebugVertex source = Vertices[vertex_id];
+    float3 delta = source.position.xyz - CameraPositionNear.xyz;
+    float depth = dot(delta, CameraForwardFar.xyz);
+
     VertexOut result;
-    result.position = mul(MVP, source.position);
-    result.position.z = (result.position.z + result.position.w) * 0.5f;
+    if (ProjectionAlpha.z > 0.5) {
+        float x = dot(delta, CameraRightAspect.xyz) / max(ProjectionAlpha.x, 1.0e-6);
+        float y = dot(delta, CameraUpTanHalfFov.xyz) / max(ProjectionAlpha.y, 1.0e-6);
+        float z = saturate((depth - CameraPositionNear.w) /
+            max(CameraForwardFar.w - CameraPositionNear.w, 1.0e-5));
+        result.position = float4(x, y, z, 1.0);
+    } else {
+        float x = dot(delta, CameraRightAspect.xyz) /
+            max(CameraUpTanHalfFov.w * CameraRightAspect.w, 1.0e-6);
+        float y = dot(delta, CameraUpTanHalfFov.xyz) /
+            max(CameraUpTanHalfFov.w, 1.0e-6);
+        float near_z = CameraPositionNear.w;
+        float far_z = CameraForwardFar.w;
+        float z = far_z < 3.0e37
+            ? (far_z * depth - near_z * far_z) / max(far_z - near_z, 1.0e-5)
+            : depth - near_z;
+        result.position = float4(x, y, z, depth);
+    }
+
     float opacity = saturate(source.color.a);
     result.color = float4(source.color.rgb * opacity, 1.0f);
     return result;
@@ -45,7 +75,6 @@ float4 PSMain(VertexOut input) : SV_Target0
     return input.color;
 }
 )HLSL";
-
 struct State {
     SDL_GPUGraphicsPipeline *pipeline = nullptr;
     SDL_GPUBuffer *vertices = nullptr;
@@ -117,8 +146,7 @@ bool ensureVertexBuffer(std::size_t bytes)
 
 void renderSDLGPU(
     const std::vector<Vertex>& lines,
-    const Math::Mat4& projection,
-    const Math::Mat4& view,
+    const Scenes::Scene::CameraState& camera,
     Renderer::Internal::FrameOutput& output)
 {
     auto *command = static_cast<SDL_GPUCommandBuffer *>(output.command);
@@ -135,8 +163,19 @@ void renderSDLGPU(
         return;
     }
 
-    const Math::Mat4 mvp = Math::multiply(projection, view);
-    SDL_PushGPUVertexUniformData(command, 0u, mvp.data(), sizeof(float) * 16u);
+    const SDLGPU::FrameUniforms uniforms = SDLGPU::makeFrameUniforms(
+        camera,
+        output.width,
+        output.height,
+        output.width,
+        output.height,
+        0u,
+        0u,
+        0u,
+        0u,
+        0.0f
+    );
+    SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
 
     SDL_GPUColorTargetInfo target{};
     target.texture = color;
