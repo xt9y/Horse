@@ -1,5 +1,6 @@
 #include "Renderer/Internal/ShadowMapsSDLGPU.hpp"
 
+#include "Renderer/Internal/ShadowCascades.hpp"
 #include "Renderer/Math.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/SDLGPU/Shaders.hpp"
@@ -91,7 +92,8 @@ ShadowView orthographicView(
     float half_width,
     float half_height,
     std::size_t layer,
-    float cascade_far)
+    float cascade_far,
+    float cascade_blend_start)
 {
     Vec3 right{};
     Vec3 up{};
@@ -102,7 +104,12 @@ ShadowView orthographicView(
         {forward.x, forward.y, forward.z, far_plane},
         {right.x, right.y, right.z, std::max(half_width, 1.0e-4f)},
         {up.x, up.y, up.z, std::max(half_height, 1.0e-4f)},
-        {1.0f, static_cast<float>(layer), cascade_far, 0.0f},
+        {
+            1.0f,
+            static_cast<float>(layer),
+            cascade_far,
+            cascade_blend_start,
+        },
     };
 }
 
@@ -259,7 +266,7 @@ struct ShadowMaps::Impl {
         static constexpr std::array<Vec3, 6> directions {{
             { 1.0f,  0.0f,  0.0f}, {-1.0f,  0.0f,  0.0f},
             { 0.0f,  1.0f,  0.0f}, { 0.0f, -1.0f,  0.0f},
-            { 0.0f,  0.0f,  1.0f}, { 0.0f,  0.0f, -1.0f},
+            { 0.0f,  0.0f,  1.0f}, { 0.0f, -1.0f,  0.0f},
         }};
         const float near_plane = std::max(settings.near_plane, 1.0e-4f);
         const float far_plane = light.range > near_plane
@@ -368,6 +375,7 @@ struct ShadowMaps::Impl {
             const float shadow_near = std::max(settings.near_plane, 1.0e-4f);
             const Vec3 position = subtract(center, multiply(light.direction, radius * 2.0f));
             const float shadow_far = std::max(radius * 4.0f, shadow_near + 1.0f);
+            const float blend_start = ShadowCascades::transitionStart(previous, split);
             if (!appendView(orthographicView(
                     position,
                     light.direction,
@@ -376,7 +384,8 @@ struct ShadowMaps::Impl {
                     radius,
                     radius,
                     views.size(),
-                    split)))
+                    split,
+                    blend_start)))
                 break;
             previous = split;
         }
