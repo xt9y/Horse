@@ -268,6 +268,7 @@ bool SceneResources::syncTextures(std::string *error)
     }
 
     if (upload_command && !SDL_SubmitGPUCommandBuffer(upload_command)) {
+        SDL_CancelGPUCommandBuffer(upload_command);
         discard_uploads();
         if (error) *error = "failed to submit batched SDL_GPU texture uploads";
         return false;
