@@ -10,6 +10,8 @@ namespace Renderer {
 struct RasterizerSettings {
     bool enabled = true;
     bool viewport_culling = true;
+    bool depth_prepass = true;
+    bool hi_z = true;
     Quality shadow_quality = Quality::High;
     int shadow_resolution = 1024;
     int shadow_cascades = 4;
@@ -37,6 +39,8 @@ public:
     void setEnabled(bool enabled) override;
 
     void setViewportCulling(bool value);
+    void setDepthPrepass(bool value);
+    void setHiZ(bool value);
     void setShadowQuality(Quality value)
     {
         settings().shadow_quality = value;
@@ -66,6 +70,8 @@ public:
     void setClearColor(Vec4 value);
 
     bool viewportCulling() const;
+    bool depthPrepass() const;
+    bool hiZ() const;
     Quality shadowQuality() const { return settings().shadow_quality; }
     int shadowResolution() const;
     int shadowCascades() const;
