@@ -54,6 +54,8 @@ const Settings& currentSettings();
 
 void setQuality(Quality value);
 Quality quality();
+std::uint32_t maximumProbes(Quality quality);
+std::uint32_t probeResolution(Quality quality);
 
 State state(const Ecs::World& world);
 float probeInfluence(const Probe& probe, Vec3 position);
