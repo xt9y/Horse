@@ -33,14 +33,20 @@ int main()
     assert(submission.find("SDL_GPU_BUFFERUSAGE_INDEX") != std::string::npos);
     assert(submission.find("SDL_BindGPUIndexBuffer") != std::string::npos);
     assert(submission.find("SDL_GPU_INDEXELEMENTSIZE_32BIT") != std::string::npos);
+    assert(submission.find("SDL_GPU_BUFFERUSAGE_INDIRECT") != std::string::npos);
+    assert(submission.find("SDL_GPUIndexedIndirectDrawCommand") != std::string::npos);
+    assert(submission.find("SDL_DrawGPUIndexedPrimitivesIndirect") != std::string::npos);
+    assert(submission.find("batch.command_count") != std::string::npos);
 
     const std::string rasterizer =
         read("Sources/Renderer/Rasterizer/RasterizerSDLGPU.cpp");
     assert(rasterizer.find("RasterizerSDLGPU::DrawSubmission submission") != std::string::npos);
     assert(rasterizer.find("submission.sync(impl_->geometry") != std::string::npos);
     assert(rasterizer.find("submission.bindIndex(") != std::string::npos);
+    assert(rasterizer.find("submission.batches()") != std::string::npos);
+    assert(rasterizer.find("submission.drawIndirect(") != std::string::npos);
     assert(rasterizer.find("SDL_DrawGPUIndexedPrimitives(") != std::string::npos);
-    assert(rasterizer.find("draw.first_vertex, UINT32_MAX" ) != std::string::npos);
+    assert(rasterizer.find("draw.first_vertex, UINT32_MAX") != std::string::npos);
     assert(rasterizer.find("RasterDrawUniforms draw_uniforms{\n                static_cast<std::uint32_t>(std::min<std::size_t>(draw.first_vertex") == std::string::npos);
 
     return 0;
