@@ -13,6 +13,7 @@
 #include "Renderer/Internal/RasterDrawSubmissionSDLGPU.hpp"
 #include "Renderer/Internal/RasterGeometrySDLGPU.hpp"
 #include "Renderer/Internal/ShadowMapsSDLGPU.hpp"
+#include "Renderer/RenderGraph/RenderGraph.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/SDLGPU/Shaders.hpp"
 #include "Renderer/SDLGPU/Uniforms.hpp"
@@ -432,63 +433,82 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     const bool needs_depth_prepass =
         impl_->settings.depth_prepass || impl_->settings.occlusion_culling || ao_requested;
     const bool needs_hi_z = impl_->settings.hi_z || impl_->settings.occlusion_culling;
+    const bool depth_planned =
+        camera.valid && impl_->settings.enabled && needs_depth_prepass &&
+        impl_->depth_pipeline && impl_->geometry.worldVertexCount() > 0u;
 
     bool depth_prepass_done = false;
     bool hi_z_ready = false;
-    if (camera.valid && impl_->settings.enabled && needs_depth_prepass &&
-        impl_->depth_pipeline && impl_->geometry.worldVertexCount() > 0u)
-    {
-        SDL_GPUColorTargetInfo normal_target{};
-        normal_target.texture = impl_->frame.normal();
-        normal_target.clear_color = {0.0f, 0.0f, 0.0f, 0.0f};
-        normal_target.load_op = SDL_GPU_LOADOP_CLEAR;
-        normal_target.store_op = SDL_GPU_STOREOP_STORE;
+    bool ao_active = false;
 
-        SDL_GPUDepthStencilTargetInfo depth_prepass{};
-        depth_prepass.texture = impl_->frame.depth();
-        depth_prepass.clear_depth = 1.0f;
-        depth_prepass.load_op = SDL_GPU_LOADOP_CLEAR;
-        depth_prepass.store_op = SDL_GPU_STOREOP_STORE;
-        depth_prepass.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
-        depth_prepass.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
+    RenderGraph::Graph graph;
+    const auto depth_resource = graph.resource("Depth");
+    const auto normal_resource = graph.resource("Normal");
+    const auto hi_z_resource = graph.resource("Hi-Z");
+    const auto visibility_resource = graph.resource("Visibility", true);
+    const auto compact_resource = graph.resource("Draw Submission");
+    const auto ao_resource = graph.resource("Ambient Occlusion");
+    const auto lighting_resource = graph.resource("Lighting", true);
+    const auto forward_plus_resource = graph.resource("Forward+");
 
-        SDL_GPURenderPass *depth_pass = SDL_BeginGPURenderPass(
-            command,
-            &normal_target,
-            1u,
-            &depth_prepass
-        );
-        if (!depth_pass) {
-            Frame::SDLGPU::cancel(output);
-            return false;
-        }
+    RenderGraph::Pass depth_graph_pass = RenderGraph::InvalidPass;
+    if (depth_planned) {
+        depth_graph_pass = graph.pass("Depth", [&]() -> bool {
+            SDL_GPUColorTargetInfo normal_target{};
+            normal_target.texture = impl_->frame.normal();
+            normal_target.clear_color = {0.0f, 0.0f, 0.0f, 0.0f};
+            normal_target.load_op = SDL_GPU_LOADOP_CLEAR;
+            normal_target.store_op = SDL_GPU_STOREOP_STORE;
 
-        SDL_BindGPUGraphicsPipeline(depth_pass, impl_->depth_pipeline);
-        impl_->geometry.bind(depth_pass);
-        impl_->submission.bindIndex(depth_pass);
-        SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
-        SDL_BindGPUVertexStorageBuffers(depth_pass, 4u, visibility_buffers, 1u);
-        SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
-        SDL_PushGPUVertexUniformData(command, 1u, &draw_uniforms, sizeof(draw_uniforms));
+            SDL_GPUDepthStencilTargetInfo depth_prepass{};
+            depth_prepass.texture = impl_->frame.depth();
+            depth_prepass.clear_depth = 1.0f;
+            depth_prepass.load_op = SDL_GPU_LOADOP_CLEAR;
+            depth_prepass.store_op = SDL_GPU_STOREOP_STORE;
+            depth_prepass.stencil_load_op = SDL_GPU_LOADOP_DONT_CARE;
+            depth_prepass.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
 
-        for (const RasterizerSDLGPU::RasterGeometry::DrawRange& draw : impl_->geometry.draws()) {
-            if (draw.camera_layer || draw.vertex_count == 0u) continue;
-            const Models::MaterialData *material = Models::material(draw.material);
-            if (!material || material->alpha_mode != Models::AlphaMode::Opaque) continue;
-
-            SDL_DrawGPUIndexedPrimitives(
-                depth_pass,
-                static_cast<Uint32>(std::min<std::size_t>(draw.vertex_count, UINT32_MAX)),
+            SDL_GPURenderPass *depth_pass = SDL_BeginGPURenderPass(
+                command,
+                &normal_target,
                 1u,
-                static_cast<Uint32>(std::min<std::size_t>(draw.first_vertex, UINT32_MAX)),
-                0,
-                0u
+                &depth_prepass
             );
-        }
-        SDL_EndGPURenderPass(depth_pass);
-        depth_prepass_done = true;
+            if (!depth_pass) return false;
 
-        if (needs_hi_z) {
+            SDL_BindGPUGraphicsPipeline(depth_pass, impl_->depth_pipeline);
+            impl_->geometry.bind(depth_pass);
+            impl_->submission.bindIndex(depth_pass);
+            SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
+            SDL_BindGPUVertexStorageBuffers(depth_pass, 4u, visibility_buffers, 1u);
+            SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
+            SDL_PushGPUVertexUniformData(command, 1u, &draw_uniforms, sizeof(draw_uniforms));
+
+            for (const RasterizerSDLGPU::RasterGeometry::DrawRange& draw : impl_->geometry.draws()) {
+                if (draw.camera_layer || draw.vertex_count == 0u) continue;
+                const Models::MaterialData *material = Models::material(draw.material);
+                if (!material || material->alpha_mode != Models::AlphaMode::Opaque) continue;
+
+                SDL_DrawGPUIndexedPrimitives(
+                    depth_pass,
+                    static_cast<Uint32>(std::min<std::size_t>(draw.vertex_count, UINT32_MAX)),
+                    1u,
+                    static_cast<Uint32>(std::min<std::size_t>(draw.first_vertex, UINT32_MAX)),
+                    0,
+                    0u
+                );
+            }
+            SDL_EndGPURenderPass(depth_pass);
+            depth_prepass_done = true;
+            return true;
+        });
+        graph.write(depth_graph_pass, depth_resource);
+        graph.write(depth_graph_pass, normal_resource);
+    }
+
+    RenderGraph::Pass hi_z_graph_pass = RenderGraph::InvalidPass;
+    if (depth_planned && needs_hi_z) {
+        hi_z_graph_pass = graph.pass("Hi-Z", [&]() -> bool {
             hi_z_ready = impl_->hi_z.build(command, impl_->frame.depth());
             if (!hi_z_ready) {
                 impl_->settings.hi_z = false;
@@ -497,63 +517,96 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
                     "[Rasterizer/SDL_GPU]: Hi-Z build failed; disabling GPU occlusion: %s\n",
                     SDL_GetError());
             }
-        }
+            return true;
+        });
+        graph.read(hi_z_graph_pass, depth_resource);
+        graph.write(hi_z_graph_pass, hi_z_resource);
     }
 
-    if (hi_z_ready && impl_->settings.occlusion_culling &&
-        !impl_->occlusion.cull(
-            command,
-            impl_->hi_z,
-            impl_->visibility_buffer,
-            uniforms,
-            static_cast<std::uint32_t>(impl_->width),
-            static_cast<std::uint32_t>(impl_->height)))
-    {
-        impl_->settings.occlusion_culling = false;
-        std::fprintf(stderr,
-            "[Rasterizer/SDL_GPU]: occlusion dispatch failed; disabling occlusion: %s\n",
-            SDL_GetError());
+    if (impl_->settings.occlusion_culling && hi_z_graph_pass != RenderGraph::InvalidPass) {
+        const RenderGraph::Pass visibility_pass = graph.pass("Visibility", [&]() -> bool {
+            if (!hi_z_ready) return true;
+            if (!impl_->occlusion.cull(
+                    command,
+                    impl_->hi_z,
+                    impl_->visibility_buffer,
+                    uniforms,
+                    static_cast<std::uint32_t>(impl_->width),
+                    static_cast<std::uint32_t>(impl_->height)))
+            {
+                impl_->settings.occlusion_culling = false;
+                std::fprintf(stderr,
+                    "[Rasterizer/SDL_GPU]: occlusion dispatch failed; disabling occlusion: %s\n",
+                    SDL_GetError());
+            }
+            return true;
+        });
+        graph.read(visibility_pass, hi_z_resource);
+        graph.read(visibility_pass, visibility_resource);
+        graph.write(visibility_pass, visibility_resource);
     }
 
-    if (impl_->settings.gpu_driven &&
-        !impl_->submission.compact(command, impl_->visibility_buffer, &error))
-    {
-        std::fprintf(stderr,
-            "[Rasterizer/SDL_GPU]: GPU draw compaction unavailable; using static indirect batches: %s%s%s\n",
-            error.empty() ? "" : error.c_str(),
-            error.empty() ? "" : " | ",
-            SDL_GetError());
+    if (impl_->settings.gpu_driven) {
+        const RenderGraph::Pass compact_pass = graph.pass("GPU Draw Compaction", [&]() -> bool {
+            if (!impl_->submission.compact(command, impl_->visibility_buffer, &error)) {
+                std::fprintf(stderr,
+                    "[Rasterizer/SDL_GPU]: GPU draw compaction unavailable; using static indirect batches: %s%s%s\n",
+                    error.empty() ? "" : error.c_str(),
+                    error.empty() ? "" : " | ",
+                    SDL_GetError());
+            }
+            return true;
+        });
+        graph.read(compact_pass, visibility_resource);
+        graph.write(compact_pass, compact_resource);
     }
 
-    bool ao_active = false;
-    if (ao_requested && depth_prepass_done) {
-        ao_active = impl_->ambient_occlusion.build(
-            command,
-            impl_->frame.depth(),
-            impl_->frame.normal(),
-            uniforms,
-            ao_settings,
-            &error
-        );
-        if (!ao_active) {
-            impl_->ambient_occlusion_available = false;
-            std::fprintf(stderr,
-                "[Rasterizer/SDL_GPU]: ambient occlusion build failed; disabling AO runtime: %s%s%s\n",
-                error.empty() ? "" : error.c_str(),
-                error.empty() ? "" : " | ",
-                SDL_GetError());
-        }
+    if (ao_requested && depth_planned) {
+        const RenderGraph::Pass ao_pass = graph.pass("Ambient Occlusion", [&]() -> bool {
+            if (!depth_prepass_done) return true;
+            ao_active = impl_->ambient_occlusion.build(
+                command,
+                impl_->frame.depth(),
+                impl_->frame.normal(),
+                uniforms,
+                ao_settings,
+                &error
+            );
+            if (!ao_active) {
+                impl_->ambient_occlusion_available = false;
+                std::fprintf(stderr,
+                    "[Rasterizer/SDL_GPU]: ambient occlusion build failed; disabling AO runtime: %s%s%s\n",
+                    error.empty() ? "" : error.c_str(),
+                    error.empty() ? "" : " | ",
+                    SDL_GetError());
+            }
+            return true;
+        });
+        graph.read(ao_pass, depth_resource);
+        graph.read(ao_pass, normal_resource);
+        graph.write(ao_pass, ao_resource);
     }
 
-    if (camera.valid && impl_->settings.enabled && impl_->settings.forward_plus &&
-        !impl_->forward_plus.build(command, output.global_illumination, uniforms, &error))
-    {
-        impl_->settings.forward_plus = false;
-        std::fprintf(stderr,
-            "[Rasterizer/SDL_GPU]: Forward+ build failed; using full light loop: %s%s%s\n",
-            error.empty() ? "" : error.c_str(),
-            error.empty() ? "" : " | ",
-            SDL_GetError());
+    if (camera.valid && impl_->settings.enabled && impl_->settings.forward_plus) {
+        const RenderGraph::Pass forward_plus_pass = graph.pass("Forward+", [&]() -> bool {
+            if (!impl_->forward_plus.build(command, output.global_illumination, uniforms, &error)) {
+                impl_->settings.forward_plus = false;
+                std::fprintf(stderr,
+                    "[Rasterizer/SDL_GPU]: Forward+ build failed; using full light loop: %s%s%s\n",
+                    error.empty() ? "" : error.c_str(),
+                    error.empty() ? "" : " | ",
+                    SDL_GetError());
+            }
+            return true;
+        });
+        graph.read(forward_plus_pass, lighting_resource);
+        graph.write(forward_plus_pass, forward_plus_resource);
+    }
+
+    if (!graph.execute(&error)) {
+        std::fprintf(stderr, "[Rasterizer/SDL_GPU]: render graph failed: %s\n", error.c_str());
+        Frame::SDLGPU::cancel(output);
+        return false;
     }
 
     SDL_GPUColorTargetInfo colors[2]{};
