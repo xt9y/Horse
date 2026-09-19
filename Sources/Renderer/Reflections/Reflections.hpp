@@ -49,6 +49,14 @@ struct Blend {
     std::uint32_t count = 0u;
 };
 
+struct ProbeAtlasLayout {
+    std::uint32_t width = 1u;
+    std::uint32_t height = 1u;
+    std::uint32_t probe_count = 0u;
+    std::uint32_t layers = 1u;
+    std::uint32_t mip_levels = 1u;
+};
+
 Settings& settings();
 const Settings& currentSettings();
 
@@ -56,6 +64,7 @@ void setQuality(Quality value);
 Quality quality();
 std::uint32_t maximumProbes(Quality quality);
 std::uint32_t probeResolution(Quality quality);
+ProbeAtlasLayout probeAtlasLayout(std::uint32_t probe_count, Quality quality);
 
 State state(const Ecs::World& world);
 float probeInfluence(const Probe& probe, Vec3 position);
