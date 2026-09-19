@@ -28,6 +28,7 @@ public:
 private:
     const Ecs::World *world_ = nullptr;
     Scenes::Scene::RenderRevision revision_{};
+    std::uint64_t config_revision_ = 0u;
     bool initialized_ = false;
     std::uint64_t synchronizations_ = 0u;
 
