@@ -92,6 +92,7 @@ public:
 
     bool sync(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::size_t maximum_texture_slots, std::string *error = nullptr);
     bool sync(const Ecs::World& world, std::size_t maximum_texture_slots, std::string *error = nullptr);
+    bool syncGeometry(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::string *error = nullptr);
     bool syncResources(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::size_t maximum_texture_slots, std::string *error = nullptr);
     bool syncResources(const Ecs::World& world, std::size_t maximum_texture_slots, std::string *error = nullptr);
     std::uint64_t signature(const Ecs::World& world, const std::vector<Scene::RenderItem>& items) const;
