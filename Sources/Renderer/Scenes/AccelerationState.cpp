@@ -1,5 +1,6 @@
 #include "Renderer/Internal/AccelerationState.hpp"
 
+#include <algorithm>
 #include <limits>
 
 namespace Renderer::Internal {
@@ -45,6 +46,52 @@ void collectDynamicItems(
 
 } // namespace
 
+void AccelerationState::rebuildTransformDependencies(const Ecs::World& world)
+{
+    transform_dependents_.clear();
+    render_item_marks_.assign(render_items_.size(), 0u);
+    render_item_generation_ = 0u;
+
+    const std::size_t maximum = world.size() + 1u;
+    for (std::size_t item_index = 0u; item_index < render_items_.size(); ++item_index) {
+        Ecs::Entity current = render_items_[item_index].entity;
+        for (std::size_t depth = 0u; depth < maximum; ++depth) {
+            if (current == Ecs::INVALID_ENTITY || !world.alive(current)) break;
+            transform_dependents_[current].push_back(item_index);
+
+            const Parent *parent = world.get<Parent>(current);
+            if (!parent || parent->entity == Ecs::INVALID_ENTITY ||
+                !world.alive(parent->entity) || parent->entity == current)
+                break;
+            current = parent->entity;
+        }
+    }
+}
+
+bool AccelerationState::collectDirtyRenderItems(const std::vector<Ecs::Entity>& entities)
+{
+    dirty_render_items_.clear();
+    if (render_item_marks_.size() != render_items_.size()) return false;
+
+    ++render_item_generation_;
+    if (render_item_generation_ == 0u) {
+        std::fill(render_item_marks_.begin(), render_item_marks_.end(), 0u);
+        render_item_generation_ = 1u;
+    }
+
+    for (const Ecs::Entity entity : entities) {
+        const auto found = transform_dependents_.find(entity);
+        if (found == transform_dependents_.end()) continue;
+        for (const std::size_t item_index : found->second) {
+            if (item_index >= render_items_.size()) return false;
+            if (render_item_marks_[item_index] == render_item_generation_) continue;
+            render_item_marks_[item_index] = render_item_generation_;
+            dirty_render_items_.push_back(item_index);
+        }
+    }
+    return true;
+}
+
 bool AccelerationState::sync(const Ecs::World& world, std::string *error)
 {
     if (error) error->clear();
@@ -63,8 +110,25 @@ bool AccelerationState::sync(const Ecs::World& world, std::string *error)
         transformOnlyRevision(current, revision_);
 
     if (transform_only) {
-        if (!Scenes::Scene::refreshRenderItemTransforms(world, render_items_))
-            Scenes::Scene::collectRenderItems(world, render_items_);
+        const bool exact_changes = world.changedEntities(
+            Ecs::ChangeKind::Transform,
+            revision_.transform,
+            dirty_entities_
+        ) && collectDirtyRenderItems(dirty_entities_);
+
+        bool partial = exact_changes;
+        if (partial && !Scenes::Scene::refreshRenderItemTransforms(
+                world,
+                render_items_,
+                dirty_render_items_))
+            partial = false;
+
+        if (!partial) {
+            if (!Scenes::Scene::refreshRenderItemTransforms(world, render_items_)) {
+                Scenes::Scene::collectRenderItems(world, render_items_);
+                rebuildTransformDependencies(world);
+            }
+        }
 
         if (!dynamic_items_.empty()) {
             collectDynamicItems(world, render_items_, dynamic_items_);
@@ -74,12 +138,16 @@ bool AccelerationState::sync(const Ecs::World& world, std::string *error)
             }
         }
 
-        if (!acceleration_.syncTransforms(world, render_items_, error)) {
+        const bool acceleration_ok = partial
+            ? acceleration_.syncTransforms(world, render_items_, dirty_render_items_, error)
+            : acceleration_.syncTransforms(world, render_items_, error);
+        if (!acceleration_ok) {
             clear();
             return false;
         }
     } else {
         Scenes::Scene::collectRenderItems(world, render_items_);
+        rebuildTransformDependencies(world);
         if (!scene_.syncResources(
                 world,
                 render_items_,
@@ -117,6 +185,11 @@ void AccelerationState::clear()
     scene_.clear();
     render_items_.clear();
     dynamic_items_.clear();
+    transform_dependents_.clear();
+    render_item_marks_.clear();
+    render_item_generation_ = 0u;
+    dirty_entities_.clear();
+    dirty_render_items_.clear();
 }
 
 AccelerationState& accelerationState()
