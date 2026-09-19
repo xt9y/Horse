@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -33,6 +34,11 @@ enum class ChangeKind : std::uint8_t {
 class World {
 private:
     static constexpr std::size_t missing_entity = std::numeric_limits<std::size_t>::max();
+
+    struct ChangeEvent {
+        std::uint64_t revision = 0u;
+        Entity entity = INVALID_ENTITY;
+    };
 
     struct StorageBase {
         virtual ~StorageBase() = default;
@@ -238,8 +244,11 @@ public:
         return index < change_revisions_.size() ? change_revisions_[index] : change_revision_;
     }
 
+    bool changedEntities(ChangeKind kind, std::uint64_t since, std::vector<Entity>& out) const;
+
     void markChanged() { touchAll(); }
     void markChanged(ChangeKind kind) { touch(kind); }
+    void markChanged(ChangeKind kind, Entity entity) { touch(kind, entity); }
 
 private:
     template <typename T>
@@ -275,6 +284,7 @@ private:
     }
 
     void touch(ChangeKind kind);
+    void touch(ChangeKind kind, Entity entity);
     void touchAll();
 
     Entity next_entity_ = 0u;
@@ -283,6 +293,9 @@ private:
     std::unordered_map<std::type_index, std::unique_ptr<StorageBase>> storages_;
     std::uint64_t change_revision_ = 0u;
     std::array<std::uint64_t, static_cast<std::size_t>(ChangeKind::Count)> change_revisions_{};
+    std::array<std::uint64_t, static_cast<std::size_t>(ChangeKind::Count)> coarse_change_revisions_{};
+    std::array<std::uint64_t, static_cast<std::size_t>(ChangeKind::Count)> entity_change_floors_{};
+    std::array<std::deque<ChangeEvent>, static_cast<std::size_t>(ChangeKind::Count)> entity_change_history_{};
 };
 
 } // namespace Ecs
