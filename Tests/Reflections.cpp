@@ -44,7 +44,7 @@ int main()
     assert(environment_layout.height == 512u);
     assert(environment_layout.probe_count == 0u);
     assert(environment_layout.layers == 1u);
-    assert(environment_layout.mip_levels == 11u);
+    assert(environment_layout.mip_levels == 9u);
 
     const Reflections::ProbeAtlasLayout low_layout =
         Reflections::probeAtlasLayout(10u, false, Quality::Low);
@@ -52,7 +52,15 @@ int main()
     assert(low_layout.height == 128u);
     assert(low_layout.probe_count == 2u);
     assert(low_layout.layers == 3u);
-    assert(low_layout.mip_levels == 9u);
+    assert(low_layout.mip_levels == 5u);
+
+    const Reflections::ProbeAtlasLayout medium_layout =
+        Reflections::probeAtlasLayout(10u, true, Quality::Medium);
+    assert(medium_layout.width == 512u);
+    assert(medium_layout.height == 256u);
+    assert(medium_layout.probe_count == 4u);
+    assert(medium_layout.layers == 5u);
+    assert(medium_layout.mip_levels == 7u);
 
     const Reflections::ProbeAtlasLayout high_layout =
         Reflections::probeAtlasLayout(3u, true, Quality::High);
@@ -60,7 +68,15 @@ int main()
     assert(high_layout.height == 512u);
     assert(high_layout.probe_count == 3u);
     assert(high_layout.layers == 4u);
-    assert(high_layout.mip_levels == 11u);
+    assert(high_layout.mip_levels == 9u);
+
+    const Reflections::ProbeAtlasLayout ultra_layout =
+        Reflections::probeAtlasLayout(30u, true, Quality::Ultra);
+    assert(ultra_layout.width == 1024u);
+    assert(ultra_layout.height == 512u);
+    assert(ultra_layout.probe_count == 16u);
+    assert(ultra_layout.layers == 17u);
+    assert(ultra_layout.mip_levels == 11u);
 
     assert(Reflections::limitEnvironmentMipLevels(13u, Quality::Low) == 5u);
     assert(Reflections::limitEnvironmentMipLevels(13u, Quality::Medium) == 7u);
