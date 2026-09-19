@@ -4,6 +4,7 @@
 #include <functional>
 #include <limits>
 #include <queue>
+#include <utility>
 
 namespace Renderer::RenderGraph {
 namespace {
