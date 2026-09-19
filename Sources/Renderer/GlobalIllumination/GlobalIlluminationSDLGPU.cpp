@@ -8,6 +8,8 @@
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
 
+#include <SDL3/SDL.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
