@@ -93,6 +93,16 @@ Models::MeshData accelerationMesh()
     return mesh;
 }
 
+const Renderer::Scenes::AccelerationInstance *instanceFor(
+    const Renderer::Scenes::AccelerationScene& acceleration,
+    Ecs::Entity entity)
+{
+    for (const Renderer::Scenes::AccelerationInstance& instance : acceleration.instances()) {
+        if (instance.entity() == entity) return &instance;
+    }
+    return nullptr;
+}
+
 } // namespace
 
 int main()
@@ -134,6 +144,7 @@ int main()
     assert(shared.synchronizations() == 1u);
     const std::uint64_t shared_blas_revision = shared.acceleration().blasRevision();
     const std::uint64_t shared_tlas_revision = shared.acceleration().tlasRevision();
+    const std::uint64_t shared_resource_updates = shared.scene().resourceUpdates();
     assert(shared.sync(world, &error));
     assert(shared.synchronizations() == 1u);
 
@@ -145,6 +156,7 @@ int main()
     assert(shared.synchronizations() == 2u);
     assert(shared.acceleration().blasRevision() == shared_blas_revision);
     assert(shared.acceleration().tlasRevision() > shared_tlas_revision);
+    assert(shared.scene().resourceUpdates() == shared_resource_updates);
 
     Renderer::GlobalIllumination::TraceScene trace_scene;
     assert(trace_scene.build(world, items, &error));
@@ -195,10 +207,51 @@ int main()
     const std::uint64_t blas_revision = acceleration.blasRevision();
     const std::uint64_t tlas_revision = acceleration.tlasRevision();
     acceleration_items[1].transform.value.position.x = 4.0f;
-    assert(acceleration.sync(acceleration_world, acceleration_items, &error));
+    assert(acceleration.syncTransforms(acceleration_world, acceleration_items, &error));
     assert(error.empty());
     assert(acceleration.blasRevision() == blas_revision);
     assert(acceleration.tlasRevision() > tlas_revision);
+
+    Ecs::World partial_world;
+    std::vector<Renderer::Scenes::Scene::RenderItem> partial_items;
+    partial_items.reserve(8u);
+    for (std::uint32_t index = 0u; index < 8u; ++index) {
+        const Ecs::Entity entity = partial_world.createEntity();
+        partial_items.push_back(accelerationItem(
+            entity,
+            mesh,
+            static_cast<float>(index) * 4.0f));
+    }
+
+    Renderer::Scenes::AccelerationScene partial;
+    assert(partial.sync(partial_world, partial_items, &error));
+    assert(error.empty());
+    assert(partial.tlasNodes().size() > 1u);
+    const std::vector<Renderer::Scenes::GpuNode> topology_before = partial.tlasNodes();
+    const Ecs::Entity moved_entity = partial_items.back().entity;
+    const Ecs::Entity untouched_entity = partial_items.front().entity;
+    const Renderer::Scenes::AccelerationInstance *untouched_before =
+        instanceFor(partial, untouched_entity);
+    assert(untouched_before);
+    const Renderer::Math::Mat4 untouched_matrix = untouched_before->object_to_world;
+    const std::uint64_t partial_tlas_revision = partial.tlasRevision();
+
+    partial_items.back().transform.value.position.x += 20.0f;
+    assert(partial.syncTransforms(partial_world, partial_items, &error));
+    assert(error.empty());
+    assert(partial.tlasRevision() > partial_tlas_revision);
+    assert(partial.tlasNodes().size() == topology_before.size());
+    for (std::size_t index = 0u; index < topology_before.size(); ++index) {
+        assert(partial.tlasNodes()[index].first == topology_before[index].first);
+        assert(partial.tlasNodes()[index].meta == topology_before[index].meta);
+    }
+    const Renderer::Scenes::AccelerationInstance *moved_after = instanceFor(partial, moved_entity);
+    const Renderer::Scenes::AccelerationInstance *untouched_after =
+        instanceFor(partial, untouched_entity);
+    assert(moved_after);
+    assert(untouched_after);
+    assert(moved_after->object_to_world[12] == partial_items.back().transform.value.position.x);
+    assert(untouched_after->object_to_world == untouched_matrix);
 
     Models::MeshData changed = accelerationMesh();
     changed.vertices[2].position.y = 2.0f;
