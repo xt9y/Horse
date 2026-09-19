@@ -195,5 +195,9 @@ void build(C_Build *b)
     c_sources(reflection_prefilter_tests, "Tests/ReflectionPrefilter.cpp");
     configureTest(reflection_prefilter_tests, library);
 
+    C_Target *volumetrics_layout_tests = c_test(b, "HorseVolumetricsComputeLayoutTests");
+    c_sources(volumetrics_layout_tests, "Tests/VolumetricsComputeLayout.cpp");
+    configureTest(volumetrics_layout_tests, library);
+
     c_default_target(b, library);
 }
