@@ -73,10 +73,11 @@ SDL_GPUTexture *createTextureArray(
     return texture;
 }
 
-bool uploadTextureRgba8Layer(
+bool uploadTextureRgba8Subresource(
     SDL_GPUCommandBuffer *command,
     SDL_GPUTexture *texture,
     std::uint32_t layer,
+    std::uint32_t mip_level,
     std::uint32_t width,
     std::uint32_t height,
     const void *rgba,
@@ -90,7 +91,7 @@ bool uploadTextureRgba8Layer(
 
     SDL_GPUTransferBufferCreateInfo transfer_info{};
     transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-    transfer_info.size = static_cast<Uint32>(size);
+    transfer_info.size = static_cast<Uint32>(minimum_size);
     SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device(), &transfer_info);
     if (!transfer) return false;
 
@@ -99,7 +100,7 @@ bool uploadTextureRgba8Layer(
         SDL_ReleaseGPUTransferBuffer(device(), transfer);
         return false;
     }
-    std::memcpy(mapped, rgba, size);
+    std::memcpy(mapped, rgba, minimum_size);
     SDL_UnmapGPUTransferBuffer(device(), transfer);
 
     SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(command);
@@ -115,6 +116,7 @@ bool uploadTextureRgba8Layer(
 
     SDL_GPUTextureRegion destination{};
     destination.texture = texture;
+    destination.mip_level = mip_level;
     destination.layer = layer;
     destination.w = width;
     destination.h = height;
@@ -123,6 +125,26 @@ bool uploadTextureRgba8Layer(
     SDL_EndGPUCopyPass(copy);
     SDL_ReleaseGPUTransferBuffer(device(), transfer);
     return true;
+}
+
+bool uploadTextureRgba8Layer(
+    SDL_GPUCommandBuffer *command,
+    SDL_GPUTexture *texture,
+    std::uint32_t layer,
+    std::uint32_t width,
+    std::uint32_t height,
+    const void *rgba,
+    std::size_t size)
+{
+    return uploadTextureRgba8Subresource(
+        command,
+        texture,
+        layer,
+        0u,
+        width,
+        height,
+        rgba,
+        size);
 }
 
 bool generateMipmaps(SDL_GPUCommandBuffer *command, SDL_GPUTexture *texture)
