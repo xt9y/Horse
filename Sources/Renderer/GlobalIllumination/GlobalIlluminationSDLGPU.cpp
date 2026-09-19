@@ -173,6 +173,12 @@ bool bindReflectionProbes(SDL_GPURenderPass *pass)
     const Reflections::Settings& reflection_settings = Reflections::currentSettings();
     const bool enabled =
         Features::currentSettings().reflections && reflection_settings.strength > 0.0f;
+
+    if (!enabled && reflection_probes.ready()) {
+        reflection_probes.bind(pass, 14u, 7u);
+        return true;
+    }
+
     const Reflections::State empty_reflections{};
     const EnvironmentState empty_environment{};
     const Reflections::State& reflections = enabled ? shading.reflections : empty_reflections;
