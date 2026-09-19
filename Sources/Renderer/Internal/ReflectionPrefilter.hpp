@@ -1,0 +1,34 @@
+#ifndef HORSE_RENDERER_INTERNAL_REFLECTION_PREFILTER_HPP
+#define HORSE_RENDERER_INTERNAL_REFLECTION_PREFILTER_HPP
+
+#include "Models/Images/Image.hpp"
+#include "Renderer/Quality.hpp"
+
+#include <cstdint>
+#include <vector>
+
+namespace Renderer::Reflections::Internal {
+
+struct PrefilterLevel {
+    std::uint32_t width = 1u;
+    std::uint32_t height = 1u;
+    std::vector<std::uint8_t> rgba;
+};
+
+struct PrefilterChain {
+    std::vector<PrefilterLevel> levels;
+};
+
+std::uint32_t prefilterSampleCount(Quality quality);
+
+PrefilterChain prefilterEquirectangular(
+    const Models::Images::Image& source,
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t mip_levels,
+    Quality quality
+);
+
+} // namespace Renderer::Reflections::Internal
+
+#endif
