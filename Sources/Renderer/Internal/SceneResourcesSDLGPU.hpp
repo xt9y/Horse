@@ -69,7 +69,6 @@ public:
     SDL_GPUBuffer *nodeBuffer() const { return nodes_; }
     SDL_GPUBuffer *triangleBuffer() const { return triangles_; }
     bool hasEnvironmentTexture() const;
-    std::uint32_t environmentMipLevels() const { return environment_mip_levels_; }
 
 private:
     struct RasterMaterialResources {
@@ -118,11 +117,9 @@ private:
     SDL_GPUTexture *white_ = nullptr;
     SDL_GPUSampler *sampler_ = nullptr;
     std::unordered_map<Models::TextureHandle, SDL_GPUTexture *> texture_cache_;
-    std::unordered_map<Models::TextureHandle, std::uint32_t> texture_mip_levels_;
     std::array<SDL_GPUTextureSamplerBinding, MaximumTextureSlots> texture_bindings_{};
     std::vector<RasterMaterialResources> raster_materials_;
     std::unordered_map<Models::MaterialHandle, std::size_t> raster_material_indices_;
-    std::uint32_t environment_mip_levels_ = 1u;
 
     std::uint64_t texture_storage_generation_ = 0u;
     std::uint64_t geometry_revision_ = UINT64_MAX;
