@@ -95,8 +95,9 @@ float aabbDistance(
         : std::numeric_limits<float>::infinity();
 }
 
+template <typename Triangle>
 bool triangleHit(
-    const Scenes::GpuTriangle& triangle,
+    const Triangle& triangle,
     Vec3 origin,
     Vec3 direction,
     float maximum_distance,
@@ -168,6 +169,345 @@ void pushChildrenNearFirst(
     else if (right_hit) stack[stack_size++] = node.meta;
 }
 
+TraceHit traceLegacyClosest(
+    const Scenes::SceneCache& cache,
+    Vec3 origin,
+    Vec3 direction,
+    float maximum_distance,
+    float ray_epsilon)
+{
+    TraceHit hit;
+    hit.distance = maximum_distance;
+    if (cache.nodes().empty() || cache.triangles().empty()) return hit;
+
+    std::array<std::uint32_t, 64> stack{};
+    std::size_t stack_size = 0u;
+    stack[stack_size++] = 0u;
+
+    while (stack_size > 0u) {
+        const std::uint32_t node_index = stack[--stack_size];
+        if (node_index >= cache.nodes().size()) continue;
+        const Scenes::GpuNode& node = cache.nodes()[node_index];
+        if (!std::isfinite(aabbDistance(node, origin, direction, hit.distance))) continue;
+
+        if ((node.meta & Scenes::LeafBit) != 0u) {
+            const std::uint32_t count = node.meta & ~Scenes::LeafBit;
+            for (std::uint32_t index = 0u; index < count; ++index) {
+                const std::uint32_t triangle_index = node.first + index;
+                if (triangle_index >= cache.triangles().size()) break;
+                const Scenes::GpuTriangle& triangle = cache.triangles()[triangle_index];
+                float distance = hit.distance;
+                float u = 0.0f;
+                float v = 0.0f;
+                if (!triangleHit(
+                        triangle,
+                        origin,
+                        direction,
+                        hit.distance,
+                        ray_epsilon,
+                        distance,
+                        u,
+                        v))
+                    continue;
+
+                const float w = 1.0f - u - v;
+                Vec3 normal{
+                    triangle.n0[0] * w + triangle.n1[0] * u + triangle.n2[0] * v,
+                    triangle.n0[1] * w + triangle.n1[1] * u + triangle.n2[1] * v,
+                    triangle.n0[2] * w + triangle.n1[2] * u + triangle.n2[2] * v,
+                };
+                normal = normalize(normal);
+                if (dot(normal, direction) > 0.0f) normal = multiply(normal, -1.0f);
+
+                hit.found = true;
+                hit.distance = distance;
+                hit.position = add(origin, multiply(direction, distance));
+                hit.normal = normal;
+                hit.uv = {
+                    triangle.uv01[0] * w + triangle.uv01[2] * u + triangle.uv2[0] * v,
+                    triangle.uv01[1] * w + triangle.uv01[3] * u + triangle.uv2[1] * v,
+                };
+                hit.triangle = triangle_index;
+                hit.material = std::bit_cast<std::uint32_t>(triangle.p0[3]);
+            }
+            continue;
+        }
+
+        pushChildrenNearFirst(
+            cache.nodes(),
+            node,
+            origin,
+            direction,
+            hit.distance,
+            stack,
+            stack_size);
+    }
+    return hit;
+}
+
+TraceHit traceAccelerationClosest(
+    const Scenes::AccelerationScene& acceleration,
+    const Scenes::SceneCache& resources,
+    Vec3 origin,
+    Vec3 direction,
+    float maximum_distance,
+    float ray_epsilon)
+{
+    TraceHit hit;
+    hit.distance = maximum_distance;
+    if (acceleration.tlasNodes().empty() || acceleration.instances().empty()) return hit;
+
+    std::array<std::uint32_t, 64> tlas_stack{};
+    std::size_t tlas_stack_size = 0u;
+    tlas_stack[tlas_stack_size++] = 0u;
+
+    while (tlas_stack_size > 0u) {
+        const std::uint32_t node_index = tlas_stack[--tlas_stack_size];
+        if (node_index >= acceleration.tlasNodes().size()) continue;
+        const Scenes::GpuNode& node = acceleration.tlasNodes()[node_index];
+        if (!std::isfinite(aabbDistance(node, origin, direction, hit.distance))) continue;
+
+        if ((node.meta & Scenes::LeafBit) == 0u) {
+            pushChildrenNearFirst(
+                acceleration.tlasNodes(),
+                node,
+                origin,
+                direction,
+                hit.distance,
+                tlas_stack,
+                tlas_stack_size);
+            continue;
+        }
+
+        const std::uint32_t instance_count = node.meta & ~Scenes::LeafBit;
+        for (std::uint32_t local_instance = 0u; local_instance < instance_count; ++local_instance) {
+            const std::uint32_t instance_index = node.first + local_instance;
+            if (instance_index >= acceleration.instances().size()) break;
+            const Scenes::AccelerationInstance& instance = acceleration.instances()[instance_index];
+            if (instance.blasIndex() >= acceleration.blases().size()) continue;
+            const Scenes::AccelerationBlas& blas = acceleration.blases()[instance.blasIndex()];
+            if (blas.node_count == 0u || blas.triangle_count == 0u) continue;
+
+            const Vec3 local_origin = Math::transformPoint(instance.world_to_object, origin);
+            const Vec3 local_direction = Math::transformVector(instance.world_to_object, direction);
+            std::array<std::uint32_t, 64> blas_stack{};
+            std::size_t blas_stack_size = 0u;
+            blas_stack[blas_stack_size++] = blas.node_offset;
+
+            while (blas_stack_size > 0u) {
+                const std::uint32_t blas_node_index = blas_stack[--blas_stack_size];
+                if (blas_node_index >= acceleration.blasNodes().size()) continue;
+                const Scenes::GpuNode& blas_node = acceleration.blasNodes()[blas_node_index];
+                if (!std::isfinite(aabbDistance(
+                        blas_node,
+                        local_origin,
+                        local_direction,
+                        hit.distance)))
+                    continue;
+
+                if ((blas_node.meta & Scenes::LeafBit) == 0u) {
+                    pushChildrenNearFirst(
+                        acceleration.blasNodes(),
+                        blas_node,
+                        local_origin,
+                        local_direction,
+                        hit.distance,
+                        blas_stack,
+                        blas_stack_size);
+                    continue;
+                }
+
+                const std::uint32_t triangle_count = blas_node.meta & ~Scenes::LeafBit;
+                for (std::uint32_t local_triangle = 0u; local_triangle < triangle_count; ++local_triangle) {
+                    const std::uint32_t triangle_index = blas_node.first + local_triangle;
+                    if (triangle_index >= acceleration.localTriangles().size()) break;
+                    const Scenes::AccelerationTriangle& triangle =
+                        acceleration.localTriangles()[triangle_index];
+                    float distance = hit.distance;
+                    float u = 0.0f;
+                    float v = 0.0f;
+                    if (!triangleHit(
+                            triangle,
+                            local_origin,
+                            local_direction,
+                            hit.distance,
+                            ray_epsilon,
+                            distance,
+                            u,
+                            v))
+                        continue;
+
+                    const float w = 1.0f - u - v;
+                    Vec3 local_normal{
+                        triangle.n0[0] * w + triangle.n1[0] * u + triangle.n2[0] * v,
+                        triangle.n0[1] * w + triangle.n1[1] * u + triangle.n2[1] * v,
+                        triangle.n0[2] * w + triangle.n1[2] * u + triangle.n2[2] * v,
+                    };
+                    Vec3 normal = normalize(Math::transformNormal(
+                        instance.world_to_object,
+                        local_normal));
+                    if (dot(normal, direction) > 0.0f) normal = multiply(normal, -1.0f);
+
+                    hit.found = true;
+                    hit.distance = distance;
+                    hit.position = add(origin, multiply(direction, distance));
+                    hit.normal = normal;
+                    hit.uv = {
+                        triangle.uv01[0] * w + triangle.uv01[2] * u + triangle.uv2[0] * v,
+                        triangle.uv01[1] * w + triangle.uv01[3] * u + triangle.uv2[1] * v,
+                    };
+                    hit.triangle = triangle_index;
+                    hit.material = resources.materialIndex(instance.material());
+                }
+            }
+        }
+    }
+    return hit;
+}
+
+bool legacyOccluded(
+    const Scenes::SceneCache& cache,
+    Vec3 origin,
+    Vec3 direction,
+    float maximum_distance,
+    float ray_epsilon)
+{
+    if (cache.nodes().empty() || cache.triangles().empty()) return false;
+
+    std::array<std::uint32_t, 64> stack{};
+    std::size_t stack_size = 0u;
+    stack[stack_size++] = 0u;
+    while (stack_size > 0u) {
+        const std::uint32_t node_index = stack[--stack_size];
+        if (node_index >= cache.nodes().size()) continue;
+        const Scenes::GpuNode& node = cache.nodes()[node_index];
+        if (!std::isfinite(aabbDistance(node, origin, direction, maximum_distance))) continue;
+
+        if ((node.meta & Scenes::LeafBit) != 0u) {
+            const std::uint32_t count = node.meta & ~Scenes::LeafBit;
+            for (std::uint32_t index = 0u; index < count; ++index) {
+                const std::uint32_t triangle_index = node.first + index;
+                if (triangle_index >= cache.triangles().size()) break;
+                float distance = maximum_distance;
+                float u = 0.0f;
+                float v = 0.0f;
+                if (triangleHit(
+                        cache.triangles()[triangle_index],
+                        origin,
+                        direction,
+                        maximum_distance,
+                        ray_epsilon,
+                        distance,
+                        u,
+                        v))
+                    return true;
+            }
+            continue;
+        }
+
+        pushChildrenNearFirst(
+            cache.nodes(),
+            node,
+            origin,
+            direction,
+            maximum_distance,
+            stack,
+            stack_size);
+    }
+    return false;
+}
+
+bool accelerationOccluded(
+    const Scenes::AccelerationScene& acceleration,
+    Vec3 origin,
+    Vec3 direction,
+    float maximum_distance,
+    float ray_epsilon)
+{
+    if (acceleration.tlasNodes().empty() || acceleration.instances().empty()) return false;
+
+    std::array<std::uint32_t, 64> tlas_stack{};
+    std::size_t tlas_stack_size = 0u;
+    tlas_stack[tlas_stack_size++] = 0u;
+    while (tlas_stack_size > 0u) {
+        const std::uint32_t node_index = tlas_stack[--tlas_stack_size];
+        if (node_index >= acceleration.tlasNodes().size()) continue;
+        const Scenes::GpuNode& node = acceleration.tlasNodes()[node_index];
+        if (!std::isfinite(aabbDistance(node, origin, direction, maximum_distance))) continue;
+
+        if ((node.meta & Scenes::LeafBit) == 0u) {
+            pushChildrenNearFirst(
+                acceleration.tlasNodes(),
+                node,
+                origin,
+                direction,
+                maximum_distance,
+                tlas_stack,
+                tlas_stack_size);
+            continue;
+        }
+
+        const std::uint32_t instance_count = node.meta & ~Scenes::LeafBit;
+        for (std::uint32_t local_instance = 0u; local_instance < instance_count; ++local_instance) {
+            const std::uint32_t instance_index = node.first + local_instance;
+            if (instance_index >= acceleration.instances().size()) break;
+            const Scenes::AccelerationInstance& instance = acceleration.instances()[instance_index];
+            if (instance.blasIndex() >= acceleration.blases().size()) continue;
+            const Scenes::AccelerationBlas& blas = acceleration.blases()[instance.blasIndex()];
+            if (blas.node_count == 0u || blas.triangle_count == 0u) continue;
+
+            const Vec3 local_origin = Math::transformPoint(instance.world_to_object, origin);
+            const Vec3 local_direction = Math::transformVector(instance.world_to_object, direction);
+            std::array<std::uint32_t, 64> blas_stack{};
+            std::size_t blas_stack_size = 0u;
+            blas_stack[blas_stack_size++] = blas.node_offset;
+            while (blas_stack_size > 0u) {
+                const std::uint32_t blas_node_index = blas_stack[--blas_stack_size];
+                if (blas_node_index >= acceleration.blasNodes().size()) continue;
+                const Scenes::GpuNode& blas_node = acceleration.blasNodes()[blas_node_index];
+                if (!std::isfinite(aabbDistance(
+                        blas_node,
+                        local_origin,
+                        local_direction,
+                        maximum_distance)))
+                    continue;
+
+                if ((blas_node.meta & Scenes::LeafBit) != 0u) {
+                    const std::uint32_t triangle_count = blas_node.meta & ~Scenes::LeafBit;
+                    for (std::uint32_t local_triangle = 0u; local_triangle < triangle_count; ++local_triangle) {
+                        const std::uint32_t triangle_index = blas_node.first + local_triangle;
+                        if (triangle_index >= acceleration.localTriangles().size()) break;
+                        float distance = maximum_distance;
+                        float u = 0.0f;
+                        float v = 0.0f;
+                        if (triangleHit(
+                                acceleration.localTriangles()[triangle_index],
+                                local_origin,
+                                local_direction,
+                                maximum_distance,
+                                ray_epsilon,
+                                distance,
+                                u,
+                                v))
+                            return true;
+                    }
+                    continue;
+                }
+
+                pushChildrenNearFirst(
+                    acceleration.blasNodes(),
+                    blas_node,
+                    local_origin,
+                    local_direction,
+                    maximum_distance,
+                    blas_stack,
+                    blas_stack_size);
+            }
+        }
+    }
+    return false;
+}
+
 Vec3 textureColor(const Scenes::SceneCache& cache, int texture_index, Vec2 uv)
 {
     if (texture_index < 0 || static_cast<std::size_t>(texture_index) >= cache.textureHandles().size()) {
@@ -215,12 +555,22 @@ bool TraceScene::build(
     const std::vector<Scenes::Scene::RenderItem>& items,
     std::string *error)
 {
-    return cache_.sync(
-        world,
-        items,
-        std::numeric_limits<std::size_t>::max(),
-        error
-    );
+    if (!cache_.syncResources(
+            world,
+            items,
+            std::numeric_limits<std::size_t>::max(),
+            error))
+        return false;
+
+    std::vector<Scenes::Scene::RenderItem> dynamic_items;
+    dynamic_items.reserve(items.size());
+    for (const Scenes::Scene::RenderItem& item : items) {
+        if (!Scenes::AccelerationScene::eligible(world, item))
+            dynamic_items.push_back(item);
+    }
+
+    if (!cache_.syncGeometry(world, dynamic_items, error)) return false;
+    return acceleration_.sync(world, items, error);
 }
 
 TraceHit TraceScene::traceClosest(
@@ -229,73 +579,22 @@ TraceHit TraceScene::traceClosest(
     float maximum_distance,
     float ray_epsilon) const
 {
-    TraceHit hit;
-    hit.distance = maximum_distance;
-    if (cache_.nodes().empty() || cache_.triangles().empty()) return hit;
-
     direction = normalize(direction);
-    std::array<std::uint32_t, 64> stack{};
-    std::size_t stack_size = 0u;
-    stack[stack_size++] = 0u;
-
-    while (stack_size > 0u) {
-        const std::uint32_t node_index = stack[--stack_size];
-        if (node_index >= cache_.nodes().size()) continue;
-        const Scenes::GpuNode& node = cache_.nodes()[node_index];
-        if (!std::isfinite(aabbDistance(node, origin, direction, hit.distance))) continue;
-
-        if ((node.meta & Scenes::LeafBit) != 0u) {
-            const std::uint32_t count = node.meta & ~Scenes::LeafBit;
-            for (std::uint32_t index = 0u; index < count; ++index) {
-                const std::uint32_t triangle_index = node.first + index;
-                if (triangle_index >= cache_.triangles().size()) break;
-                const Scenes::GpuTriangle& triangle = cache_.triangles()[triangle_index];
-                float distance = hit.distance;
-                float u = 0.0f;
-                float v = 0.0f;
-                if (!triangleHit(
-                    triangle,
-                    origin,
-                    direction,
-                    hit.distance,
-                    ray_epsilon,
-                    distance,
-                    u,
-                    v
-                )) continue;
-
-                const float w = 1.0f - u - v;
-                Vec3 normal{
-                    triangle.n0[0] * w + triangle.n1[0] * u + triangle.n2[0] * v,
-                    triangle.n0[1] * w + triangle.n1[1] * u + triangle.n2[1] * v,
-                    triangle.n0[2] * w + triangle.n1[2] * u + triangle.n2[2] * v,
-                };
-                normal = normalize(normal);
-                if (dot(normal, direction) > 0.0f) normal = multiply(normal, -1.0f);
-
-                hit.found = true;
-                hit.distance = distance;
-                hit.position = add(origin, multiply(direction, distance));
-                hit.normal = normal;
-                hit.uv = {
-                    triangle.uv01[0] * w + triangle.uv01[2] * u + triangle.uv2[0] * v,
-                    triangle.uv01[1] * w + triangle.uv01[3] * u + triangle.uv2[1] * v,
-                };
-                hit.triangle = triangle_index;
-                hit.material = std::bit_cast<std::uint32_t>(triangle.p0[3]);
-            }
-            continue;
-        }
-
-        pushChildrenNearFirst(
-            cache_.nodes(),
-            node,
-            origin,
-            direction,
-            hit.distance,
-            stack,
-            stack_size);
-    }
+    TraceHit hit = traceLegacyClosest(
+        cache_,
+        origin,
+        direction,
+        maximum_distance,
+        ray_epsilon);
+    const TraceHit accelerated = traceAccelerationClosest(
+        acceleration_,
+        cache_,
+        origin,
+        direction,
+        hit.distance,
+        ray_epsilon);
+    if (accelerated.found && (!hit.found || accelerated.distance < hit.distance))
+        return accelerated;
     return hit;
 }
 
@@ -305,52 +604,14 @@ bool TraceScene::occluded(
     float maximum_distance,
     float ray_epsilon) const
 {
-    if (cache_.nodes().empty() || cache_.triangles().empty()) return false;
-
     direction = normalize(direction);
-    std::array<std::uint32_t, 64> stack{};
-    std::size_t stack_size = 0u;
-    stack[stack_size++] = 0u;
-
-    while (stack_size > 0u) {
-        const std::uint32_t node_index = stack[--stack_size];
-        if (node_index >= cache_.nodes().size()) continue;
-        const Scenes::GpuNode& node = cache_.nodes()[node_index];
-        if (!std::isfinite(aabbDistance(node, origin, direction, maximum_distance))) continue;
-
-        if ((node.meta & Scenes::LeafBit) != 0u) {
-            const std::uint32_t count = node.meta & ~Scenes::LeafBit;
-            for (std::uint32_t index = 0u; index < count; ++index) {
-                const std::uint32_t triangle_index = node.first + index;
-                if (triangle_index >= cache_.triangles().size()) break;
-
-                float distance = maximum_distance;
-                float u = 0.0f;
-                float v = 0.0f;
-                if (triangleHit(
-                        cache_.triangles()[triangle_index],
-                        origin,
-                        direction,
-                        maximum_distance,
-                        ray_epsilon,
-                        distance,
-                        u,
-                        v))
-                    return true;
-            }
-            continue;
-        }
-
-        pushChildrenNearFirst(
-            cache_.nodes(),
-            node,
-            origin,
-            direction,
-            maximum_distance,
-            stack,
-            stack_size);
-    }
-    return false;
+    if (legacyOccluded(cache_, origin, direction, maximum_distance, ray_epsilon)) return true;
+    return accelerationOccluded(
+        acceleration_,
+        origin,
+        direction,
+        maximum_distance,
+        ray_epsilon);
 }
 
 Vec3 TraceScene::albedo(const TraceHit& hit) const
@@ -377,11 +638,29 @@ Vec3 TraceScene::albedo(const TraceHit& hit) const
 TraceBounds TraceScene::bounds() const
 {
     TraceBounds result;
-    if (cache_.nodes().empty()) return result;
-    const Scenes::GpuNode& root = cache_.nodes().front();
-    result.minimum = {root.min_x, root.min_y, root.min_z};
-    result.maximum = {root.max_x, root.max_y, root.max_z};
-    result.valid = true;
+    const auto include = [&](const Scenes::GpuNode& root, TraceBounds *bounds) {
+        const Vec3 minimum{root.min_x, root.min_y, root.min_z};
+        const Vec3 maximum{root.max_x, root.max_y, root.max_z};
+        if (!bounds->valid) {
+            bounds->minimum = minimum;
+            bounds->maximum = maximum;
+            bounds->valid = true;
+            return;
+        }
+        bounds->minimum = {
+            std::min(bounds->minimum.x, minimum.x),
+            std::min(bounds->minimum.y, minimum.y),
+            std::min(bounds->minimum.z, minimum.z),
+        };
+        bounds->maximum = {
+            std::max(bounds->maximum.x, maximum.x),
+            std::max(bounds->maximum.y, maximum.y),
+            std::max(bounds->maximum.z, maximum.z),
+        };
+    };
+
+    if (!cache_.nodes().empty()) include(cache_.nodes().front(), &result);
+    if (!acceleration_.tlasNodes().empty()) include(acceleration_.tlasNodes().front(), &result);
     return result;
 }
 
