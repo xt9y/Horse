@@ -25,9 +25,8 @@ std::string read(const char *path)
 int main()
 {
     const std::string_view shader = Renderer::SDLGPU::PBRShaders::Raster;
-    assert(shader.find("cbuffer VertexDraw") == std::string_view::npos);
-    assert(shader.find("VDraw.x") == std::string_view::npos);
-    assert(shader.find("VVertices[vertex_id]") != std::string_view::npos);
+    assert(shader.find("cbuffer VertexDraw") != std::string_view::npos);
+    assert(shader.find("VVertices[vertex_id + VDraw.x]") != std::string_view::npos);
 
     const std::string submission =
         read("Sources/Renderer/Rasterizer/RasterDrawSubmissionSDLGPU.cpp");
@@ -37,9 +36,12 @@ int main()
 
     const std::string rasterizer =
         read("Sources/Renderer/Rasterizer/RasterizerSDLGPU.cpp");
+    assert(rasterizer.find("RasterizerSDLGPU::DrawSubmission submission") != std::string::npos);
+    assert(rasterizer.find("submission.sync(impl_->geometry") != std::string::npos);
+    assert(rasterizer.find("submission.bindIndex(") != std::string::npos);
     assert(rasterizer.find("SDL_DrawGPUIndexedPrimitives(") != std::string::npos);
-    assert(rasterizer.find("RasterDrawUniforms") == std::string::npos);
-    assert(rasterizer.find("SDL_PushGPUVertexUniformData(\n                command, 1u") == std::string::npos);
+    assert(rasterizer.find("draw.first_vertex, UINT32_MAX" ) != std::string::npos);
+    assert(rasterizer.find("RasterDrawUniforms draw_uniforms{\n                static_cast<std::uint32_t>(std::min<std::size_t>(draw.first_vertex") == std::string::npos);
 
     return 0;
 }
