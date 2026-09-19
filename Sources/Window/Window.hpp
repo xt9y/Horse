@@ -11,7 +11,6 @@ struct Settings {
     int height = 720;
     bool resizable = true;
     bool high_pixel_density = true;
-    bool vsync = true;
 };
 
 bool create(const Settings& settings = {});
@@ -20,7 +19,6 @@ bool poll();
 
 bool created();
 bool closeRequested();
-bool vsync();
 int width();
 int height();
 void setTitle(const char *title);
