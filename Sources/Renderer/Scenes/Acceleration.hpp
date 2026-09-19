@@ -84,6 +84,7 @@ private:
     bool buildBlas(Models::MeshHandle mesh, CachedBlas *out, std::string *error);
     void flattenBlases(const std::vector<Models::MeshHandle>& meshes);
     void rebuildTlas(std::vector<AccelerationInstance> instances);
+    bool refitTlas(const std::vector<AccelerationInstance>& instances);
 
     std::unordered_map<Models::MeshHandle, CachedBlas> blas_cache_;
     std::vector<GpuNode> tlas_nodes_;
@@ -91,8 +92,10 @@ private:
     std::vector<AccelerationTriangle> local_triangles_;
     std::vector<AccelerationBlas> blases_;
     std::vector<AccelerationInstance> instances_;
+    std::vector<std::uint64_t> instance_keys_;
     std::uint64_t blas_revision_ = 0u;
     std::uint64_t tlas_revision_ = 0u;
+    std::uint64_t tlas_topology_signature_ = 0u;
     std::uint64_t tlas_signature_ = 0u;
 };
 
