@@ -6,6 +6,7 @@
 #include "Models/Models.hpp"
 #include "Renderer/Components.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -79,6 +80,11 @@ void collectLights(const Ecs::World& world, std::vector<LightState>& out);
 RenderRevision renderRevision(const Ecs::World& world);
 void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out);
 bool refreshRenderItemTransforms(const Ecs::World& world, std::vector<RenderItem>& items);
+bool refreshRenderItemTransforms(
+    const Ecs::World& world,
+    std::vector<RenderItem>& items,
+    const std::vector<std::size_t>& changed_items
+);
 void collectGaussianItems(const Ecs::World& world, std::vector<RenderItem>& out);
 
 } // namespace Renderer::Scenes::Scene
