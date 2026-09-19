@@ -515,7 +515,9 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             SDL_GetError());
     }
 
-    if (!impl_->submission.compact(command, impl_->visibility_buffer, &error)) {
+    if (impl_->settings.gpu_driven &&
+        !impl_->submission.compact(command, impl_->visibility_buffer, &error))
+    {
         std::fprintf(stderr,
             "[Rasterizer/SDL_GPU]: GPU draw compaction unavailable; using static indirect batches: %s%s%s\n",
             error.empty() ? "" : error.c_str(),
@@ -593,7 +595,11 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
                 binding.texture_count, static_cast<std::size_t>(INT32_MAX)));
             SDL_PushGPUFragmentUniformData(
                 command, 0u, &material_uniforms, sizeof(material_uniforms));
-            if (!impl_->submission.drawIndirect(target, batch, !camera_layer)) return false;
+            if (!impl_->submission.drawIndirect(
+                    target,
+                    batch,
+                    !camera_layer && impl_->settings.gpu_driven))
+                return false;
         }
         return true;
     };
@@ -617,7 +623,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         if (impl_->geometry.worldVertexCount() > 0u) {
             SDL_BindGPUGraphicsPipeline(pass, impl_->pipeline);
             impl_->geometry.bind(pass);
-            impl_->submission.bindIndex(pass, true);
+            impl_->submission.bindIndex(pass, impl_->settings.gpu_driven);
             SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
             SDL_BindGPUVertexStorageBuffers(pass, 4u, visibility_buffers, 1u);
             impl_->scene.bindRasterFragment(pass);
@@ -774,6 +780,7 @@ void Rasterizer::setViewportCulling(bool value) { if (impl_) impl_->settings.vie
 void Rasterizer::setDepthPrepass(bool value) { if (impl_) impl_->settings.depth_prepass = value; }
 void Rasterizer::setHiZ(bool value) { if (impl_) impl_->settings.hi_z = value; }
 void Rasterizer::setOcclusionCulling(bool value) { if (impl_) impl_->settings.occlusion_culling = value; }
+void Rasterizer::setGpuDriven(bool value) { if (impl_) impl_->settings.gpu_driven = value; }
 void Rasterizer::setForwardPlus(bool value) { if (impl_) impl_->settings.forward_plus = value; }
 void Rasterizer::setShadowResolution(int value) { if (impl_) impl_->settings.shadow_resolution = std::max(value, 1); }
 void Rasterizer::setShadowCascades(int value) { if (impl_) impl_->settings.shadow_cascades = std::max(value, 1); }
@@ -784,6 +791,7 @@ bool Rasterizer::viewportCulling() const { return impl_ && impl_->settings.viewp
 bool Rasterizer::depthPrepass() const { return impl_ && impl_->settings.depth_prepass; }
 bool Rasterizer::hiZ() const { return impl_ && impl_->settings.hi_z; }
 bool Rasterizer::occlusionCulling() const { return impl_ && impl_->settings.occlusion_culling; }
+bool Rasterizer::gpuDriven() const { return impl_ && impl_->settings.gpu_driven; }
 bool Rasterizer::forwardPlus() const { return impl_ && impl_->settings.forward_plus; }
 int Rasterizer::shadowResolution() const { return impl_ ? impl_->settings.shadow_resolution : 0; }
 int Rasterizer::shadowCascades() const { return impl_ ? impl_->settings.shadow_cascades : 0; }
