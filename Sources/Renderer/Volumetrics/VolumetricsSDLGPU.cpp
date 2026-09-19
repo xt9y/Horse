@@ -1,12 +1,12 @@
 #include "Renderer/Internal/VolumetricsSDLGPU.hpp"
 
 #include "Renderer/Internal/AccelerationSDLGPU.hpp"
+#include "Renderer/Internal/AccelerationState.hpp"
 #include "Renderer/Internal/GlobalIlluminationSDLGPU.hpp"
 #include "Renderer/Internal/VolumetricMarchShader.hpp"
 #include "Renderer/Renderer.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/SDLGPU/Uniforms.hpp"
-#include "Renderer/Scenes/Acceleration.hpp"
 #include "Renderer/Scenes/Scene.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
 
@@ -18,7 +18,6 @@
 #include <cstdio>
 #include <limits>
 #include <string>
-#include <vector>
 
 namespace Renderer::Internal {
 namespace {
@@ -215,11 +214,7 @@ struct State {
     int resolution_divisor = 0;
     std::uint32_t frame_index = 0u;
     bool pipelines_attempted = false;
-    Scenes::AccelerationScene acceleration;
-    Scenes::SceneCache dynamic_scene;
     Scenes::SDLGPU::AccelerationResources acceleration_gpu;
-    std::vector<Scenes::Scene::RenderItem> render_items;
-    std::vector<Scenes::Scene::RenderItem> dynamic_items;
 };
 
 State state;
@@ -378,18 +373,9 @@ bool ensureTargets(int width, int height, int divisor)
 
 bool syncAcceleration(const Ecs::World& world, std::string *error)
 {
-    Scenes::Scene::collectRenderItems(world, state.render_items);
-    if (!state.acceleration.sync(world, state.render_items, error)) return false;
-
-    state.dynamic_items.clear();
-    for (const Scenes::Scene::RenderItem& item : state.render_items) {
-        if (item.layer != RenderLayer::World) continue;
-        if (!Scenes::AccelerationScene::eligible(world, item))
-            state.dynamic_items.push_back(item);
-    }
-
-    if (!state.dynamic_scene.syncGeometry(world, state.dynamic_items, error)) return false;
-    return state.acceleration_gpu.sync(state.acceleration, state.dynamic_scene, error);
+    if (!syncAccelerationState(world, error)) return false;
+    const AccelerationState& shared = accelerationState();
+    return state.acceleration_gpu.sync(shared.acceleration(), shared.scene(), error);
 }
 
 AccelerationUniforms accelerationUniforms()
@@ -592,10 +578,6 @@ void shutdownVolumetricsSDLGPU()
 {
     destroyTargets();
     state.acceleration_gpu.clear();
-    state.acceleration.clear();
-    state.dynamic_scene.clear();
-    state.render_items.clear();
-    state.dynamic_items.clear();
 
     SDL_GPUDevice *device = Renderer::SDLGPU::device();
     if (device) {
