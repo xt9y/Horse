@@ -89,6 +89,7 @@ public:
     static std::size_t maximumTriangles() { return maximum_triangles_; }
     static float opacityCutoff() { return opacity_cutoff_; }
     static std::uint8_t alphaThreshold() { return alpha_threshold_; }
+    static std::uint64_t configRevision() { return config_revision_; }
 
     bool sync(const Ecs::World& world, const std::vector<Scene::RenderItem>& items, std::size_t maximum_texture_slots, std::string *error = nullptr);
     bool sync(const Ecs::World& world, std::size_t maximum_texture_slots, std::string *error = nullptr);
