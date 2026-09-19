@@ -151,6 +151,7 @@ struct Rasterizer::Impl {
         if (!visibility_buffer || visibility_capacity < bytes) {
             SDL_GPUBuffer *replacement = SDLGPU::createBuffer(
                 SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ |
+                    SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ |
                     SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE,
                 bytes,
                 visibility.data(),
@@ -514,6 +515,14 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             SDL_GetError());
     }
 
+    if (!impl_->submission.compact(command, impl_->visibility_buffer, &error)) {
+        std::fprintf(stderr,
+            "[Rasterizer/SDL_GPU]: GPU draw compaction unavailable; using static indirect batches: %s%s%s\n",
+            error.empty() ? "" : error.c_str(),
+            error.empty() ? "" : " | ",
+            SDL_GetError());
+    }
+
     bool ao_active = false;
     if (ao_requested && depth_prepass_done) {
         ao_active = impl_->ambient_occlusion.build(
@@ -584,7 +593,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
                 binding.texture_count, static_cast<std::size_t>(INT32_MAX)));
             SDL_PushGPUFragmentUniformData(
                 command, 0u, &material_uniforms, sizeof(material_uniforms));
-            if (!impl_->submission.drawIndirect(target, batch)) return false;
+            if (!impl_->submission.drawIndirect(target, batch, !camera_layer)) return false;
         }
         return true;
     };
@@ -608,7 +617,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         if (impl_->geometry.worldVertexCount() > 0u) {
             SDL_BindGPUGraphicsPipeline(pass, impl_->pipeline);
             impl_->geometry.bind(pass);
-            impl_->submission.bindIndex(pass);
+            impl_->submission.bindIndex(pass, true);
             SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
             SDL_BindGPUVertexStorageBuffers(pass, 4u, visibility_buffers, 1u);
             impl_->scene.bindRasterFragment(pass);
