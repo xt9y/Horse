@@ -64,7 +64,11 @@ void setQuality(Quality value);
 Quality quality();
 std::uint32_t maximumProbes(Quality quality);
 std::uint32_t probeResolution(Quality quality);
-ProbeAtlasLayout probeAtlasLayout(std::uint32_t probe_count, Quality quality);
+ProbeAtlasLayout probeAtlasLayout(
+    std::uint32_t probe_count,
+    bool environment_texture,
+    Quality quality
+);
 
 State state(const Ecs::World& world);
 float probeInfluence(const Probe& probe, Vec3 position);
