@@ -170,8 +170,16 @@ bool upload(const GlobalIllumination::Field *field)
 bool bindReflectionProbes(SDL_GPURenderPass *pass)
 {
     const ShadingState& shading = shadingState();
+    const Reflections::Settings& reflection_settings = Reflections::currentSettings();
+    const bool enabled =
+        Features::currentSettings().reflections && reflection_settings.strength > 0.0f;
+    const Reflections::State empty_reflections{};
+    const EnvironmentState empty_environment{};
+    const Reflections::State& reflections = enabled ? shading.reflections : empty_reflections;
+    const EnvironmentState& environment = enabled ? shading.environment : empty_environment;
+
     std::string error;
-    if (!reflection_probes.sync(shading.reflections, shading.environment, &error)) {
+    if (!reflection_probes.sync(reflections, environment, &error)) {
         std::fprintf(
             stderr,
             "[Horse Reflections]: probe resource sync failed: %s%s%s\n",
