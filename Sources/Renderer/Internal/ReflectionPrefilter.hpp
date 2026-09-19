@@ -5,6 +5,7 @@
 #include "Renderer/Quality.hpp"
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace Renderer::Reflections::Internal {
