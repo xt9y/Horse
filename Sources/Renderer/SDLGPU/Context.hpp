@@ -60,6 +60,15 @@ SDL_GPUTexture *createTexture(
     std::uint32_t mip_levels,
     const char *label = nullptr
 );
+SDL_GPUTexture *createTextureArray(
+    SDL_GPUTextureFormat format,
+    SDL_GPUTextureUsageFlags usage,
+    std::uint32_t width,
+    std::uint32_t height,
+    std::uint32_t layers,
+    std::uint32_t mip_levels,
+    const char *label = nullptr
+);
 bool uploadTextureRgba8(
     SDL_GPUTexture *texture,
     std::uint32_t width,
@@ -70,6 +79,15 @@ bool uploadTextureRgba8(
 bool uploadTextureRgba8(
     SDL_GPUCommandBuffer *command,
     SDL_GPUTexture *texture,
+    std::uint32_t width,
+    std::uint32_t height,
+    const void *rgba,
+    std::size_t size
+);
+bool uploadTextureRgba8Layer(
+    SDL_GPUCommandBuffer *command,
+    SDL_GPUTexture *texture,
+    std::uint32_t layer,
     std::uint32_t width,
     std::uint32_t height,
     const void *rgba,
