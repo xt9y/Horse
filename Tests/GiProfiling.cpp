@@ -5,6 +5,7 @@
 #include <Models/Models.hpp>
 #include <Renderer/GlobalIllumination/Debug.hpp>
 #include <Renderer/GlobalIllumination/TraceScene.hpp>
+#include <Renderer/Internal/AccelerationState.hpp>
 #include <Renderer/ModelScene.hpp>
 #include <Renderer/Scenes/Acceleration.hpp>
 #include <Renderer/Scenes/Scene.hpp>
@@ -127,6 +128,24 @@ int main()
     Renderer::Scenes::Scene::collectRenderItems(world, items);
     assert(!items.empty());
 
+    Renderer::Internal::AccelerationState shared;
+    assert(shared.sync(world, &error));
+    assert(error.empty());
+    assert(shared.synchronizations() == 1u);
+    const std::uint64_t shared_blas_revision = shared.acceleration().blasRevision();
+    const std::uint64_t shared_tlas_revision = shared.acceleration().tlasRevision();
+    assert(shared.sync(world, &error));
+    assert(shared.synchronizations() == 1u);
+
+    Renderer::Transform *shared_transform = world.get<Renderer::Transform>(items.front().entity);
+    assert(shared_transform);
+    shared_transform->position.x += 0.25f;
+    world.markChanged(Ecs::ChangeKind::Transform);
+    assert(shared.sync(world, &error));
+    assert(shared.synchronizations() == 2u);
+    assert(shared.acceleration().blasRevision() == shared_blas_revision);
+    assert(shared.acceleration().tlasRevision() > shared_tlas_revision);
+
     Renderer::GlobalIllumination::TraceScene trace_scene;
     assert(trace_scene.build(world, items, &error));
     assert(error.empty());
@@ -135,7 +154,7 @@ int main()
     assert(trace_scene.cache().triangles().empty());
 
     const Renderer::GlobalIllumination::TraceHit hit = trace_scene.traceClosest(
-        {0.25f, 0.25f, 0.0f},
+        {0.50f, 0.25f, 0.0f},
         {0.0f, 0.0f, -1.0f},
         20.0f,
         1.0e-4f);
@@ -143,7 +162,7 @@ int main()
     assert(std::abs(hit.distance - 2.0f) < 1.0e-4f);
 
     assert(trace_scene.occluded(
-        {0.25f, 0.25f, 0.0f},
+        {0.50f, 0.25f, 0.0f},
         {0.0f, 0.0f, -1.0f},
         20.0f,
         1.0e-4f));
