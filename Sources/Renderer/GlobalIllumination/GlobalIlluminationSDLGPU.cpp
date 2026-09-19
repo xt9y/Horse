@@ -3,6 +3,7 @@
 #include "Models/Core/Texture.hpp"
 #include "Renderer/Environment.hpp"
 #include "Renderer/Features.hpp"
+#include "Renderer/Internal/ReflectionProbesSDLGPU.hpp"
 #include "Renderer/Reflections/Reflections.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
@@ -10,7 +11,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace Renderer::Internal {
@@ -29,6 +32,7 @@ Quality uploaded_reflection_quality = Quality::High;
 float uploaded_reflection_strength = -1.0f;
 bool uploaded_reflection_enabled = false;
 bool uploaded_valid = false;
+Reflections::SDLGPU::ProbeAtlas reflection_probes;
 
 bool upload(const GlobalIllumination::Field *field)
 {
@@ -161,6 +165,22 @@ bool upload(const GlobalIllumination::Field *field)
     return true;
 }
 
+bool bindReflectionProbes(SDL_GPURenderPass *pass)
+{
+    std::string error;
+    if (!reflection_probes.sync(shadingState().reflections, &error)) {
+        std::fprintf(
+            stderr,
+            "[Horse Reflections]: probe resource sync failed: %s%s%s\n",
+            error.empty() ? "" : error.c_str(),
+            error.empty() ? "" : " | ",
+            SDL_GetError());
+        if (!reflection_probes.ready()) return false;
+    }
+    reflection_probes.bind(pass, 14u, 7u);
+    return true;
+}
+
 } // namespace
 
 bool bindGlobalIlluminationSDLGPU(
@@ -171,6 +191,7 @@ bool bindGlobalIlluminationSDLGPU(
     if (!pass || !upload(field)) return false;
     SDL_GPUBuffer *buffers[] = {buffer};
     SDL_BindGPUFragmentStorageBuffers(pass, slot, buffers, 1u);
+    if (slot == 2u && !bindReflectionProbes(pass)) return false;
     return true;
 }
 
@@ -187,6 +208,7 @@ bool bindGlobalIlluminationSDLGPU(
 
 void shutdownGlobalIlluminationSDLGPU()
 {
+    reflection_probes.clear();
     if (buffer && Renderer::SDLGPU::device())
         SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), buffer);
     buffer = nullptr;
