@@ -21,6 +21,15 @@ int main()
     assert(settings.strength == 1.0f);
     assert(Reflections::quality() == Quality::High);
 
+    assert(Reflections::maximumProbes(Quality::Low) == 2u);
+    assert(Reflections::maximumProbes(Quality::Medium) == 4u);
+    assert(Reflections::maximumProbes(Quality::High) == 8u);
+    assert(Reflections::maximumProbes(Quality::Ultra) == 16u);
+    assert(Reflections::probeResolution(Quality::Low) == 256u);
+    assert(Reflections::probeResolution(Quality::Medium) == 512u);
+    assert(Reflections::probeResolution(Quality::High) == 1024u);
+    assert(Reflections::probeResolution(Quality::Ultra) == 1024u);
+
     assert(Reflections::limitEnvironmentMipLevels(13u, Quality::Low) == 5u);
     assert(Reflections::limitEnvironmentMipLevels(13u, Quality::Medium) == 7u);
     assert(Reflections::limitEnvironmentMipLevels(13u, Quality::High) == 9u);
