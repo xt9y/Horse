@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -170,7 +171,7 @@ std::vector<float> probeMetadata(
         data[offset + 6u] = std::max(probe.half_extents.z, 0.0f);
         data[offset + 7u] = std::max(probe.blend_distance, 0.0f);
         data[offset + 8u] = static_cast<float>(index);
-        data[offset + 9u] = static_cast<float>(probe.priority);
+        data[offset + 9u] = std::bit_cast<float>(probe.priority);
     }
     return data;
 }
