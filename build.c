@@ -187,5 +187,9 @@ void build(C_Build *b)
     c_sources(reflection_shader_tests, "Tests/ReflectionShaderLayout.cpp");
     configureTest(reflection_shader_tests, library);
 
+    C_Target *reflection_prefilter_tests = c_test(b, "HorseReflectionPrefilterTests");
+    c_sources(reflection_prefilter_tests, "Tests/ReflectionPrefilter.cpp");
+    configureTest(reflection_prefilter_tests, library);
+
     c_default_target(b, library);
 }
