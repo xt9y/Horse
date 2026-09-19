@@ -17,6 +17,12 @@ struct Vec3f {
     float z = 0.0f;
 };
 
+struct LinearImage {
+    int width = 0;
+    int height = 0;
+    std::vector<float> rgb;
+};
+
 Vec3f add(Vec3f a, Vec3f b)
 {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
@@ -70,28 +76,53 @@ std::uint8_t toByte(float value)
         std::clamp(value * 255.0f + 0.5f, 0.0f, 255.0f));
 }
 
-std::array<float, 3> sourcePixel(const Models::Images::Image& source, int x, int y)
+LinearImage linearize(const Models::Images::Image& source)
 {
-    if (source.width <= 0 || source.height <= 0 || source.rgba.empty()) return {};
+    LinearImage result;
+    if (source.width <= 0 || source.height <= 0 || source.rgba.empty()) return result;
+
+    result.width = source.width;
+    result.height = source.height;
+    const std::size_t pixel_count =
+        static_cast<std::size_t>(result.width) * static_cast<std::size_t>(result.height);
+    result.rgb.resize(pixel_count * 3u, 0.0f);
+
+    for (std::size_t pixel = 0u; pixel < pixel_count; ++pixel) {
+        const std::size_t source_offset = pixel * 4u;
+        const std::size_t destination_offset = pixel * 3u;
+        if (source_offset + 2u >= source.rgba.size()) break;
+        result.rgb[destination_offset + 0u] =
+            srgbToLinear(static_cast<float>(source.rgba[source_offset + 0u]) / 255.0f);
+        result.rgb[destination_offset + 1u] =
+            srgbToLinear(static_cast<float>(source.rgba[source_offset + 1u]) / 255.0f);
+        result.rgb[destination_offset + 2u] =
+            srgbToLinear(static_cast<float>(source.rgba[source_offset + 2u]) / 255.0f);
+    }
+    return result;
+}
+
+std::array<float, 3> sourcePixel(const LinearImage& source, int x, int y)
+{
+    if (source.width <= 0 || source.height <= 0 || source.rgb.empty()) return {};
 
     x %= source.width;
     if (x < 0) x += source.width;
     y = std::clamp(y, 0, source.height - 1);
     const std::size_t offset =
         (static_cast<std::size_t>(y) * static_cast<std::size_t>(source.width) +
-         static_cast<std::size_t>(x)) * 4u;
-    if (offset + 2u >= source.rgba.size()) return {};
+         static_cast<std::size_t>(x)) * 3u;
+    if (offset + 2u >= source.rgb.size()) return {};
 
     return {
-        srgbToLinear(static_cast<float>(source.rgba[offset + 0u]) / 255.0f),
-        srgbToLinear(static_cast<float>(source.rgba[offset + 1u]) / 255.0f),
-        srgbToLinear(static_cast<float>(source.rgba[offset + 2u]) / 255.0f),
+        source.rgb[offset + 0u],
+        source.rgb[offset + 1u],
+        source.rgb[offset + 2u],
     };
 }
 
-std::array<float, 3> sampleEquirect(const Models::Images::Image& source, Vec3f direction)
+std::array<float, 3> sampleEquirect(const LinearImage& source, Vec3f direction)
 {
-    if (source.width <= 0 || source.height <= 0 || source.rgba.empty()) return {};
+    if (source.width <= 0 || source.height <= 0 || source.rgb.empty()) return {};
 
     direction = normalize(direction);
     const float u = std::atan2(direction.z, direction.x) / (2.0f * Pi) + 0.5f;
@@ -181,7 +212,7 @@ Vec3f importanceSampleGgx(std::array<float, 2> xi, Vec3f normal, float roughness
 }
 
 std::array<float, 3> prefilterDirection(
-    const Models::Images::Image& source,
+    const LinearImage& source,
     Vec3f normal,
     float roughness,
     std::uint32_t sample_count)
@@ -215,7 +246,7 @@ std::array<float, 3> prefilterDirection(
 }
 
 PrefilterLevel prefilterLevel(
-    const Models::Images::Image& source,
+    const LinearImage& source,
     std::uint32_t width,
     std::uint32_t height,
     float roughness,
@@ -274,12 +305,10 @@ PrefilterChain prefilterEquirectangular(
 
     const bool valid_source =
         source.width > 0 && source.height > 0 && !source.rgba.empty();
-    const std::uint32_t sample_count = prefilterSampleCount(quality);
-
-    for (std::uint32_t level = 0u; level < mip_levels; ++level) {
-        const std::uint32_t level_width = std::max(width >> level, 1u);
-        const std::uint32_t level_height = std::max(height >> level, 1u);
-        if (!valid_source) {
+    if (!valid_source) {
+        for (std::uint32_t level = 0u; level < mip_levels; ++level) {
+            const std::uint32_t level_width = std::max(width >> level, 1u);
+            const std::uint32_t level_height = std::max(height >> level, 1u);
             PrefilterLevel fallback;
             fallback.width = level_width;
             fallback.height = level_height;
@@ -289,14 +318,20 @@ PrefilterChain prefilterEquirectangular(
             for (std::size_t alpha = 3u; alpha < fallback.rgba.size(); alpha += 4u)
                 fallback.rgba[alpha] = 255u;
             result.levels.push_back(std::move(fallback));
-            continue;
         }
+        return result;
+    }
 
+    const LinearImage linear_source = linearize(source);
+    const std::uint32_t sample_count = prefilterSampleCount(quality);
+    for (std::uint32_t level = 0u; level < mip_levels; ++level) {
+        const std::uint32_t level_width = std::max(width >> level, 1u);
+        const std::uint32_t level_height = std::max(height >> level, 1u);
         const float roughness = mip_levels <= 1u
             ? 0.0f
             : static_cast<float>(level) / static_cast<float>(mip_levels - 1u);
         result.levels.push_back(prefilterLevel(
-            source,
+            linear_source,
             level_width,
             level_height,
             roughness,
