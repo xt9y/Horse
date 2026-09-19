@@ -22,6 +22,14 @@ public:
         bool camera_layer = false;
     };
 
+    struct DrawItem {
+        std::size_t first_vertex = 0u;
+        std::size_t vertex_count = 0u;
+        Models::MaterialHandle material = Models::INVALID_MATERIAL;
+        Ecs::Entity entity = Ecs::INVALID_ENTITY;
+        bool camera_layer = false;
+    };
+
     RasterGeometry() = default;
     ~RasterGeometry();
 
@@ -42,6 +50,7 @@ public:
     std::size_t cameraVertexCount() const;
     bool hasCameraGeometry() const;
     const std::vector<DrawRange>& draws() const;
+    const std::vector<DrawItem>& drawItems() const;
     std::uint64_t revision() const;
     std::uint64_t shadowRevision() const;
 
