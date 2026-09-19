@@ -10,6 +10,13 @@
 
 namespace Renderer::GlobalIllumination::Debug {
 
+enum class SceneUpdate : std::uint8_t {
+    None,
+    Resources,
+    Geometry,
+    Topology,
+};
+
 struct Statistics {
     std::size_t photons = 0u;
     std::size_t probes = 0u;
@@ -22,8 +29,13 @@ struct Statistics {
     std::uint8_t bounces = 0u;
     float photon_radius = 0.0f;
     float progress = 0.0f;
+    SceneUpdate scene_update = SceneUpdate::None;
+    std::uint64_t topology_updates = 0u;
+    std::uint64_t geometry_updates = 0u;
+    std::uint64_t resource_updates = 0u;
     double scene_build_ms = 0.0;
     double photon_build_ms = 0.0;
+    double probe_update_ms = 0.0;
     bool calculating = false;
 };
 
