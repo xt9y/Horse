@@ -110,7 +110,7 @@ ProbeAtlasLayout probeAtlasLayout(
     layout.width = std::max(probeResolution(quality), 1u);
     layout.height = std::max(layout.width / 2u, 1u);
     layout.layers = 1u + layout.probe_count;
-    layout.mip_levels = environmentMipLevels(layout.width, layout.height, Quality::Ultra);
+    layout.mip_levels = environmentMipLevels(layout.width, layout.height, quality);
     return layout;
 }
 
