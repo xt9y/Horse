@@ -10,6 +10,7 @@ namespace Renderer::Reflections::Internal {
 namespace {
 
 constexpr float Pi = 3.14159265358979323846f;
+constexpr float Y1 = 0.48860251190f;
 
 struct Vec3f {
     float x = 0.0f;
@@ -288,6 +289,48 @@ std::uint32_t prefilterSampleCount(Quality quality)
         case Quality::Ultra: return 64u;
     }
     return 32u;
+}
+
+IrradianceSH irradianceEquirectangular(const Models::Images::Image& source)
+{
+    IrradianceSH result;
+    const LinearImage linear_source = linearize(source);
+    if (linear_source.width <= 0 || linear_source.height <= 0 || linear_source.rgb.empty())
+        return result;
+
+    const std::uint32_t width = static_cast<std::uint32_t>(linear_source.width);
+    const std::uint32_t height = static_cast<std::uint32_t>(linear_source.height);
+    const float delta_phi = 2.0f * Pi / static_cast<float>(width);
+    const float delta_theta = Pi / static_cast<float>(height);
+    float total_weight = 0.0f;
+
+    for (std::uint32_t y = 0u; y < height; ++y) {
+        const float theta =
+            (static_cast<float>(y) + 0.5f) * delta_theta;
+        const float solid_angle_row = std::sin(theta) * delta_theta * delta_phi;
+
+        for (std::uint32_t x = 0u; x < width; ++x) {
+            const Vec3f direction = directionForPixel(x, y, width, height);
+            const auto color = sourcePixel(
+                linear_source,
+                static_cast<int>(x),
+                static_cast<int>(y));
+            total_weight += solid_angle_row;
+
+            for (std::size_t channel = 0u; channel < 3u; ++channel) {
+                result.average[channel] += color[channel] * solid_angle_row;
+                result.x[channel] += color[channel] * Y1 * direction.x * solid_angle_row;
+                result.y[channel] += color[channel] * Y1 * direction.y * solid_angle_row;
+                result.z[channel] += color[channel] * Y1 * direction.z * solid_angle_row;
+            }
+        }
+    }
+
+    if (total_weight > 1.0e-8f) {
+        const float inverse_weight = 1.0f / total_weight;
+        for (float& channel : result.average) channel *= inverse_weight;
+    }
+    return result;
 }
 
 PrefilterChain prefilterEquirectangular(
