@@ -4,12 +4,14 @@
 #include "Ecs/Ecs.hpp"
 #include "Renderer/Environment.hpp"
 #include "Renderer/Lighting/Lighting.hpp"
+#include "Renderer/Reflections/Reflections.hpp"
 
 namespace Renderer::Internal {
 
 struct ShadingState {
     EnvironmentState environment{};
     Lighting::State lighting{};
+    Reflections::State reflections{};
 };
 
 void updateShadingState(const Ecs::World& world);
