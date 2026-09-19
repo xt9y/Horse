@@ -66,6 +66,12 @@ public:
         const std::vector<Scene::RenderItem>& items,
         std::string *error = nullptr
     );
+    bool syncTransforms(
+        const Ecs::World& world,
+        const std::vector<Scene::RenderItem>& items,
+        const std::vector<std::size_t>& changed_items,
+        std::string *error = nullptr
+    );
     void clear();
 
     static bool eligible(const Ecs::World& world, const Scene::RenderItem& item);
@@ -90,7 +96,9 @@ private:
     bool buildBlas(Models::MeshHandle mesh, CachedBlas *out, std::string *error);
     void flattenBlases(const std::vector<Models::MeshHandle>& meshes);
     void rebuildTlas(std::vector<AccelerationInstance> instances);
+    void rebuildTlasMetadata();
     bool refitTlas(const std::vector<AccelerationInstance>& instances);
+    bool refitDirtyTlas(const std::vector<std::size_t>& dirty_slots);
 
     std::unordered_map<Models::MeshHandle, CachedBlas> blas_cache_;
     std::vector<GpuNode> tlas_nodes_;
@@ -99,6 +107,10 @@ private:
     std::vector<AccelerationBlas> blases_;
     std::vector<AccelerationInstance> instances_;
     std::unordered_map<std::uint64_t, std::size_t> instance_slots_;
+    std::vector<std::uint32_t> tlas_parents_;
+    std::vector<std::uint32_t> instance_leaves_;
+    std::vector<std::uint64_t> tlas_dirty_marks_;
+    std::uint64_t tlas_dirty_generation_ = 0u;
     std::uint64_t blas_revision_ = 0u;
     std::uint64_t tlas_revision_ = 0u;
     std::uint64_t tlas_topology_signature_ = 0u;
