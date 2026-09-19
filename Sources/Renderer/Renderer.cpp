@@ -9,10 +9,19 @@
 #include "Renderer/GlobalIllumination/GlobalIllumination.hpp"
 #include "Renderer/Internal/ShadingState.hpp"
 #include "Renderer/Internal/VolumetricsRender.hpp"
+#include "Renderer/SDLGPU/Context.hpp"
 #include "Renderer/Volumetrics/Volumetrics.hpp"
 #include "UI/Internal/RenderPass.hpp"
 
+#include <SDL3/SDL_gpu.h>
+
 namespace Renderer {
+
+bool waitIdle()
+{
+    SDL_GPUDevice *device = SDLGPU::device();
+    return device && SDL_WaitForGPUIdle(device);
+}
 
 void IRenderer::render(const Ecs::World& world)
 {
