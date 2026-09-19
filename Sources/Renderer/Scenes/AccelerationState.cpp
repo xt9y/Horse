@@ -23,7 +23,11 @@ bool AccelerationState::sync(const Ecs::World& world, std::string *error)
     if (error) error->clear();
 
     const Scenes::Scene::RenderRevision current = Scenes::Scene::renderRevision(world);
-    if (initialized_ && world_ == &world && sameAccelerationRevision(current, revision_))
+    const std::uint64_t current_config_revision = Scenes::SceneCache::configRevision();
+    if (initialized_ &&
+        world_ == &world &&
+        config_revision_ == current_config_revision &&
+        sameAccelerationRevision(current, revision_))
         return true;
 
     Scenes::Scene::collectRenderItems(world, render_items_);
@@ -55,6 +59,7 @@ bool AccelerationState::sync(const Ecs::World& world, std::string *error)
 
     world_ = &world;
     revision_ = current;
+    config_revision_ = current_config_revision;
     initialized_ = true;
     ++synchronizations_;
     return true;
@@ -64,6 +69,7 @@ void AccelerationState::clear()
 {
     world_ = nullptr;
     revision_ = {};
+    config_revision_ = 0u;
     initialized_ = false;
     acceleration_.clear();
     scene_.clear();
