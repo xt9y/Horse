@@ -207,5 +207,9 @@ void build(C_Build *b)
     c_sources(raster_render_graph_tests, "Tests/RasterRenderGraph.cpp");
     configureTest(raster_render_graph_tests, library);
 
+    C_Target *scene_cache_profiling_tests = c_test(b, "HorseSceneCacheProfilingTests");
+    c_sources(scene_cache_profiling_tests, "Tests/SceneCacheProfiling.cpp");
+    configureTest(scene_cache_profiling_tests, library);
+
     c_default_target(b, library);
 }
