@@ -16,7 +16,6 @@ struct State {
     std::vector<SDL_Event> events;
     bool owns_sdl = false;
     bool close_requested = false;
-    bool vsync = true;
 };
 
 State& state()
@@ -58,7 +57,6 @@ bool create(const Settings& settings)
     }
 
     value.close_requested = false;
-    value.vsync = settings.vsync;
     value.events.clear();
     return true;
 }
@@ -70,7 +68,6 @@ void destroy()
     if (value.window) SDL_DestroyWindow(value.window);
     value.window = nullptr;
     value.close_requested = false;
-    value.vsync = true;
     if (value.owns_sdl) SDL_Quit();
     value.owns_sdl = false;
 }
@@ -102,11 +99,6 @@ bool created()
 bool closeRequested()
 {
     return state().close_requested;
-}
-
-bool vsync()
-{
-    return state().vsync;
 }
 
 int width()
