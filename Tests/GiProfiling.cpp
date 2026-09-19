@@ -130,7 +130,9 @@ int main()
     Renderer::GlobalIllumination::TraceScene trace_scene;
     assert(trace_scene.build(world, items, &error));
     assert(error.empty());
-    assert(trace_scene.cache().nodes().size() > 1u);
+    assert(!trace_scene.acceleration().blases().empty());
+    assert(!trace_scene.acceleration().tlasNodes().empty());
+    assert(trace_scene.cache().triangles().empty());
 
     const Renderer::GlobalIllumination::TraceHit hit = trace_scene.traceClosest(
         {0.25f, 0.25f, 0.0f},
