@@ -8,11 +8,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
 namespace Renderer::Reflections::SDLGPU {
 namespace {
+
+constexpr std::size_t ProbeVec4Count = 3u;
 
 void hash(std::uint64_t& value, std::uint64_t input)
 {
@@ -36,6 +39,20 @@ std::uint64_t sourceSignature(
     hash(value, storage_generation);
     for (std::uint32_t index = 0u; index < layout.probe_count; ++index)
         hash(value, state.probes[index].texture);
+    return value;
+}
+
+std::uint64_t metadataSignature(
+    const State& state,
+    const ProbeAtlasLayout& layout,
+    Quality quality,
+    std::uint64_t storage_generation)
+{
+    std::uint64_t value = state.revision;
+    hash(value, static_cast<std::uint32_t>(quality));
+    hash(value, layout.probe_count);
+    hash(value, layout.mip_levels);
+    hash(value, storage_generation);
     return value;
 }
 
@@ -129,6 +146,35 @@ std::vector<std::uint8_t> resampleEquirect(
     return result;
 }
 
+std::vector<float> probeMetadata(
+    const State& state,
+    const ProbeAtlasLayout& layout,
+    Quality quality)
+{
+    std::vector<float> data((1u + layout.probe_count * ProbeVec4Count) * 4u, 0.0f);
+    data[0] = static_cast<float>(layout.probe_count);
+    data[1] = static_cast<float>(
+        limitEnvironmentMipLevels(layout.mip_levels, quality));
+
+    for (std::uint32_t index = 0u; index < layout.probe_count; ++index) {
+        const Probe& probe = state.probes[index];
+        const std::size_t offset = 4u + static_cast<std::size_t>(index) * ProbeVec4Count * 4u;
+        data[offset + 0u] = probe.position.x;
+        data[offset + 1u] = probe.position.y;
+        data[offset + 2u] = probe.position.z;
+        data[offset + 3u] = Models::Internal::textureStorageReady(probe.texture)
+            ? std::max(probe.intensity, 0.0f)
+            : 0.0f;
+        data[offset + 4u] = std::max(probe.half_extents.x, 0.0f);
+        data[offset + 5u] = std::max(probe.half_extents.y, 0.0f);
+        data[offset + 6u] = std::max(probe.half_extents.z, 0.0f);
+        data[offset + 7u] = std::max(probe.blend_distance, 0.0f);
+        data[offset + 8u] = static_cast<float>(index);
+        data[offset + 9u] = static_cast<float>(probe.priority);
+    }
+    return data;
+}
+
 } // namespace
 
 ProbeAtlas::~ProbeAtlas()
@@ -149,16 +195,10 @@ bool ProbeAtlas::sync(const State& state, std::string *error)
         static_cast<std::uint32_t>(std::min<std::size_t>(state.probes.size(), UINT32_MAX)),
         current_quality);
     const std::uint64_t storage_generation = Models::Internal::textureStorageGeneration();
-    const std::uint64_t signature =
+    const std::uint64_t texture_signature =
         sourceSignature(state, layout, current_quality, storage_generation);
-
-    if (texture_ && sampler_ && signature == source_signature_ &&
-        storage_generation == texture_storage_generation_ && current_quality == quality_)
-    {
-        probe_count_ = layout.probe_count;
-        mip_levels_ = layout.mip_levels;
-        return true;
-    }
+    const std::uint64_t metadata_signature =
+        metadataSignature(state, layout, current_quality, storage_generation);
 
     if (!sampler_) sampler_ = Renderer::SDLGPU::createLinearSampler();
     if (!sampler_) {
@@ -166,106 +206,155 @@ bool ProbeAtlas::sync(const State& state, std::string *error)
         return false;
     }
 
-    SDL_GPUTexture *replacement = Renderer::SDLGPU::createTextureArray(
-        SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB,
-        SDL_GPU_TEXTUREUSAGE_SAMPLER,
-        layout.width,
-        layout.height,
-        layout.layers,
-        layout.mip_levels,
-        "Horse Reflection Probe Atlas");
-    if (!replacement) {
-        if (error) *error = "failed to create reflection probe texture atlas";
-        return false;
-    }
+    if (!texture_ || texture_signature != source_signature_ ||
+        storage_generation != texture_storage_generation_ || current_quality != quality_)
+    {
+        SDL_GPUTexture *replacement = Renderer::SDLGPU::createTextureArray(
+            SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB,
+            SDL_GPU_TEXTUREUSAGE_SAMPLER,
+            layout.width,
+            layout.height,
+            layout.layers,
+            layout.mip_levels,
+            "Horse Reflection Probe Atlas");
+        if (!replacement) {
+            if (error) *error = "failed to create reflection probe texture atlas";
+            return false;
+        }
 
-    SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(Renderer::SDLGPU::device());
-    if (!command) {
-        SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), replacement);
-        if (error) *error = "failed to acquire reflection probe upload command buffer";
-        return false;
-    }
+        SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(Renderer::SDLGPU::device());
+        if (!command) {
+            SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), replacement);
+            if (error) *error = "failed to acquire reflection probe upload command buffer";
+            return false;
+        }
 
-    std::vector<std::uint8_t> fallback(
-        static_cast<std::size_t>(layout.width) * static_cast<std::size_t>(layout.height) * 4u,
-        0u);
-    for (std::size_t index = 3u; index < fallback.size(); index += 4u) fallback[index] = 255u;
+        std::vector<std::uint8_t> fallback(
+            static_cast<std::size_t>(layout.width) * static_cast<std::size_t>(layout.height) * 4u,
+            0u);
+        for (std::size_t index = 3u; index < fallback.size(); index += 4u)
+            fallback[index] = 255u;
 
-    bool uploaded = true;
-    for (std::uint32_t layer = 0u; layer < layout.layers; ++layer) {
-        const std::vector<std::uint8_t> *pixels = &fallback;
-        std::vector<std::uint8_t> resampled;
+        bool uploaded = true;
+        for (std::uint32_t layer = 0u; layer < layout.layers; ++layer) {
+            const std::vector<std::uint8_t> *pixels = &fallback;
+            std::vector<std::uint8_t> resampled;
 
-        if (layer < layout.probe_count) {
-            const Models::TextureHandle handle = state.probes[layer].texture;
-            if (Models::Internal::textureStorageReady(handle)) {
-                const Models::TextureAsset *asset = Models::texture(handle);
-                if (asset && asset->image.width > 0 && asset->image.height > 0 &&
-                    !asset->image.rgba.empty())
-                {
-                    if (asset->image.width == static_cast<int>(layout.width) &&
-                        asset->image.height == static_cast<int>(layout.height))
+            if (layer < layout.probe_count) {
+                const Models::TextureHandle handle = state.probes[layer].texture;
+                if (Models::Internal::textureStorageReady(handle)) {
+                    const Models::TextureAsset *asset = Models::texture(handle);
+                    if (asset && asset->image.width > 0 && asset->image.height > 0 &&
+                        !asset->image.rgba.empty())
                     {
-                        pixels = &asset->image.rgba;
-                    } else {
-                        resampled = resampleEquirect(asset->image, layout.width, layout.height);
-                        pixels = &resampled;
+                        if (asset->image.width == static_cast<int>(layout.width) &&
+                            asset->image.height == static_cast<int>(layout.height))
+                        {
+                            pixels = &asset->image.rgba;
+                        } else {
+                            resampled = resampleEquirect(asset->image, layout.width, layout.height);
+                            pixels = &resampled;
+                        }
                     }
                 }
             }
+
+            if (!Renderer::SDLGPU::uploadTextureRgba8Layer(
+                    command,
+                    replacement,
+                    layer,
+                    layout.width,
+                    layout.height,
+                    pixels->data(),
+                    pixels->size()))
+            {
+                uploaded = false;
+                break;
+            }
         }
 
-        if (!Renderer::SDLGPU::uploadTextureRgba8Layer(
-                command,
-                replacement,
-                layer,
-                layout.width,
-                layout.height,
-                pixels->data(),
-                pixels->size()))
-        {
-            uploaded = false;
-            break;
+        if (uploaded && layout.mip_levels > 1u)
+            uploaded = Renderer::SDLGPU::generateMipmaps(command, replacement);
+
+        if (!uploaded || !SDL_SubmitGPUCommandBuffer(command)) {
+            SDL_CancelGPUCommandBuffer(command);
+            SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), replacement);
+            if (error) *error = "failed to upload reflection probe texture atlas";
+            return false;
         }
+
+        if (texture_) SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), texture_);
+        texture_ = replacement;
+        source_signature_ = texture_signature;
+        texture_storage_generation_ = storage_generation;
+        quality_ = current_quality;
     }
 
-    if (uploaded && layout.mip_levels > 1u)
-        uploaded = Renderer::SDLGPU::generateMipmaps(command, replacement);
-
-    if (!uploaded || !SDL_SubmitGPUCommandBuffer(command)) {
-        SDL_CancelGPUCommandBuffer(command);
-        SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), replacement);
-        if (error) *error = "failed to upload reflection probe texture atlas";
-        return false;
+    if (!buffer_ || metadata_signature != metadata_signature_) {
+        const std::vector<float> data = probeMetadata(state, layout, current_quality);
+        const std::size_t bytes = data.size() * sizeof(float);
+        if (!buffer_ || buffer_capacity_ < bytes) {
+            SDL_GPUBuffer *replacement = Renderer::SDLGPU::createBuffer(
+                SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ,
+                bytes,
+                data.data(),
+                "Horse Reflection Probe State");
+            if (!replacement) {
+                if (error) *error = "failed to create reflection probe state buffer";
+                return false;
+            }
+            if (buffer_) SDL_ReleaseGPUBuffer(Renderer::SDLGPU::device(), buffer_);
+            buffer_ = replacement;
+            buffer_capacity_ = bytes;
+        } else {
+            SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(Renderer::SDLGPU::device());
+            if (!command || !Renderer::SDLGPU::uploadBuffer(
+                    command,
+                    buffer_,
+                    data.data(),
+                    bytes,
+                    true) ||
+                !SDL_SubmitGPUCommandBuffer(command))
+            {
+                if (command) SDL_CancelGPUCommandBuffer(command);
+                if (error) *error = "failed to upload reflection probe state buffer";
+                return false;
+            }
+        }
+        metadata_signature_ = metadata_signature;
     }
 
-    if (texture_) SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), texture_);
-    texture_ = replacement;
-    source_signature_ = signature;
-    texture_storage_generation_ = storage_generation;
-    quality_ = current_quality;
     probe_count_ = layout.probe_count;
     mip_levels_ = layout.mip_levels;
     return true;
 }
 
-void ProbeAtlas::bind(SDL_GPURenderPass *pass, std::uint32_t slot) const
+void ProbeAtlas::bind(
+    SDL_GPURenderPass *pass,
+    std::uint32_t sampler_slot,
+    std::uint32_t buffer_slot) const
 {
-    if (!pass || !texture_ || !sampler_) return;
-    const SDL_GPUTextureSamplerBinding binding{texture_, sampler_};
-    SDL_BindGPUFragmentSamplers(pass, slot, &binding, 1u);
+    if (!pass || !texture_ || !sampler_ || !buffer_) return;
+    const SDL_GPUTextureSamplerBinding sampler_binding{texture_, sampler_};
+    SDL_BindGPUFragmentSamplers(pass, sampler_slot, &sampler_binding, 1u);
+    SDL_GPUBuffer *buffers[] = {buffer_};
+    SDL_BindGPUFragmentStorageBuffers(pass, buffer_slot, buffers, 1u);
 }
 
 void ProbeAtlas::clear()
 {
     SDL_GPUDevice *gpu = Renderer::SDLGPU::device();
     if (gpu) {
+        if (buffer_) SDL_ReleaseGPUBuffer(gpu, buffer_);
         if (texture_) SDL_ReleaseGPUTexture(gpu, texture_);
         if (sampler_) SDL_ReleaseGPUSampler(gpu, sampler_);
     }
+    buffer_ = nullptr;
+    buffer_capacity_ = 0u;
     texture_ = nullptr;
     sampler_ = nullptr;
     source_signature_ = UINT64_MAX;
+    metadata_signature_ = UINT64_MAX;
     texture_storage_generation_ = UINT64_MAX;
     quality_ = Quality::High;
     probe_count_ = 0u;
