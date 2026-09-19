@@ -91,8 +91,6 @@ private:
     void flattenBlases(const std::vector<Models::MeshHandle>& meshes);
     void rebuildTlas(std::vector<AccelerationInstance> instances);
     bool refitTlas(const std::vector<AccelerationInstance>& instances);
-    bool refitTlasSlots(const std::vector<std::size_t>& slots);
-    void rebuildTlasLinks();
 
     std::unordered_map<Models::MeshHandle, CachedBlas> blas_cache_;
     std::vector<GpuNode> tlas_nodes_;
@@ -101,8 +99,6 @@ private:
     std::vector<AccelerationBlas> blases_;
     std::vector<AccelerationInstance> instances_;
     std::unordered_map<std::uint64_t, std::size_t> instance_slots_;
-    std::vector<std::uint32_t> instance_leaf_nodes_;
-    std::vector<std::uint32_t> tlas_parents_;
     std::uint64_t blas_revision_ = 0u;
     std::uint64_t tlas_revision_ = 0u;
     std::uint64_t tlas_topology_signature_ = 0u;
