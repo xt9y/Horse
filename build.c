@@ -179,5 +179,9 @@ void build(C_Build *b)
     c_sources(reflection_tests, "Tests/Reflections.cpp");
     configureTest(reflection_tests, library);
 
+    C_Target *reflection_probe_tests = c_test(b, "HorseReflectionProbeTests");
+    c_sources(reflection_probe_tests, "Tests/ReflectionProbes.cpp");
+    configureTest(reflection_probe_tests, library);
+
     c_default_target(b, library);
 }
