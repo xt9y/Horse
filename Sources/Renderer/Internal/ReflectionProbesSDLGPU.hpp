@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_INTERNAL_REFLECTION_PROBES_SDLGPU_HPP
 #define HORSE_RENDERER_INTERNAL_REFLECTION_PROBES_SDLGPU_HPP
 
+#include "Renderer/Environment.hpp"
 #include "Renderer/Reflections/Reflections.hpp"
 
 #include <SDL3/SDL_gpu.h>
@@ -19,7 +20,11 @@ public:
     ProbeAtlas(const ProbeAtlas&) = delete;
     ProbeAtlas& operator=(const ProbeAtlas&) = delete;
 
-    bool sync(const State& state, std::string *error = nullptr);
+    bool sync(
+        const State& state,
+        const EnvironmentState& environment,
+        std::string *error = nullptr
+    );
     void bind(
         SDL_GPURenderPass *pass,
         std::uint32_t sampler_slot,
