@@ -71,7 +71,8 @@ Texture2D<float4> Tex10 : register(t10, space2); SamplerState Samp10 : register(
 Texture2D<float4> Tex11 : register(t11, space2); SamplerState Samp11 : register(s11, space2);
 Texture2D<float4> Tex12 : register(t12, space2); SamplerState Samp12 : register(s12, space2);
 Texture2D<float4> Tex13 : register(t13, space2); SamplerState Samp13 : register(s13, space2);
-Texture2D<float4> Tex14 : register(t14, space2); SamplerState Samp14 : register(s14, space2);
+Texture2DArray<float4> ReflectionProbes : register(t14, space2);
+SamplerState ReflectionProbeSampler : register(s14, space2);
 Texture2DArray<float> ShadowMaps : register(t15, space2);
 SamplerComparisonState ShadowSampler : register(s15, space2);
 StructuredBuffer<GpuBaseMaterial> PBaseMaterials : register(t16, space2);
@@ -81,6 +82,7 @@ StructuredBuffer<float4> PShadows : register(t19, space2);
 StructuredBuffer<uint> PForwardTileCounts : register(t20, space2);
 StructuredBuffer<uint> PForwardLightIndices : register(t21, space2);
 StructuredBuffer<float> PAmbientOcclusionBuffer : register(t22, space2);
+StructuredBuffer<float4> PReflectionProbes : register(t23, space2);
 cbuffer PixelFrame : register(b0, space3) {
     float4 PCameraPositionNear;
     float4 PCameraForwardFar;
@@ -112,7 +114,6 @@ float4 SampleSlot(int slot, float2 uv) {
     if (slot == 11) return Tex11.Sample(Samp11, uv);
     if (slot == 12) return Tex12.Sample(Samp12, uv);
     if (slot == 13) return Tex13.Sample(Samp13, uv);
-    if (slot == 14) return Tex14.Sample(Samp14, uv);
     return 1.0.xxxx;
 }
 
@@ -325,6 +326,108 @@ float3 EnvironmentColorLod(float3 direction, float lod) {
 
 float3 EnvironmentColor(float3 direction) {
     return EnvironmentColorLod(direction, 0.0);
+}
+
+float ReflectionProbeInfluence(float3 position, float3 center, float3 extents, float blend_distance) {
+    float3 edge = max(extents, 0.0.xxx) - abs(position - center);
+    if (any(edge <= 0.0.xxx)) return 0.0;
+    if (blend_distance <= 0.0) return 1.0;
+    return saturate(min(edge.x, min(edge.y, edge.z)) / blend_distance);
+}
+
+float3 BoxProjectedDirection(float3 position, float3 direction, float3 center, float3 extents) {
+    direction = normalize(direction);
+    float3 box_min = center - extents;
+    float3 box_max = center + extents;
+    float3 target = lerp(box_min, box_max, step(0.0.xxx, direction));
+    float3 distance_to_face = abs(target - position) / max(abs(direction), 1.0e-5.xxx);
+    float distance_to_box = min(distance_to_face.x, min(distance_to_face.y, distance_to_face.z));
+    float3 hit = position + direction * distance_to_box;
+    float3 projected = hit - center;
+    return dot(projected, projected) > 1.0e-8 ? normalize(projected) : direction;
+}
+
+float3 SampleReflectionProbe(uint probe_index, float3 position, float3 direction, float lod) {
+    uint offset = 1u + probe_index * 3u;
+    float4 center_intensity = PReflectionProbes[offset + 0u];
+    float4 extents_blend = PReflectionProbes[offset + 1u];
+    float4 meta = PReflectionProbes[offset + 2u];
+    float3 projected = BoxProjectedDirection(
+        position,
+        direction,
+        center_intensity.xyz,
+        max(extents_blend.xyz, 1.0e-5.xxx));
+    float u = frac(atan2(projected.z, projected.x) / (2.0 * PI) + 0.5);
+    float v = acos(clamp(projected.y, -1.0, 1.0)) / PI;
+    float3 sampled = ReflectionProbes.SampleLevel(
+        ReflectionProbeSampler,
+        float3(u, v, meta.x),
+        max(lod, 0.0)).rgb;
+    return sampled * max(center_intensity.w, 0.0);
+}
+
+float3 LocalReflectionColor(
+    float3 position,
+    float3 direction,
+    float roughness,
+    out float coverage)
+{
+    coverage = 0.0;
+    uint probe_count = (uint)max(PReflectionProbes[0].x, 0.0);
+    if (probe_count == 0u) return 0.0.xxx;
+
+    uint first = 0xffffffffu;
+    uint second = 0xffffffffu;
+    float first_weight = 0.0;
+    float second_weight = 0.0;
+    float selected_priority = 0.0;
+    bool selected_priority_valid = false;
+
+    for (uint index = 0u; index < probe_count; ++index) {
+        uint offset = 1u + index * 3u;
+        float4 center_intensity = PReflectionProbes[offset + 0u];
+        float4 extents_blend = PReflectionProbes[offset + 1u];
+        float4 meta = PReflectionProbes[offset + 2u];
+        if (center_intensity.w <= 0.0) continue;
+
+        float influence = ReflectionProbeInfluence(
+            position,
+            center_intensity.xyz,
+            extents_blend.xyz,
+            extents_blend.w);
+        if (influence <= 0.0) continue;
+
+        if (!selected_priority_valid) {
+            selected_priority = meta.y;
+            selected_priority_valid = true;
+        } else if (meta.y != selected_priority) {
+            break;
+        }
+
+        if (influence > first_weight) {
+            second = first;
+            second_weight = first_weight;
+            first = index;
+            first_weight = influence;
+        } else if (influence > second_weight) {
+            second = index;
+            second_weight = influence;
+        }
+    }
+
+    if (first == 0xffffffffu) return 0.0.xxx;
+
+    float mip_levels = max(PReflectionProbes[0].y, 1.0);
+    float lod = saturate(roughness) * max(mip_levels - 1.0, 0.0);
+    coverage = saturate(first_weight + second_weight);
+    if (second == 0xffffffffu || second_weight <= 0.0)
+        return SampleReflectionProbe(first, position, direction, lod);
+
+    float total = max(first_weight + second_weight, 1.0e-6);
+    float first_mix = first_weight / total;
+    float second_mix = second_weight / total;
+    return SampleReflectionProbe(first, position, direction, lod) * first_mix +
+        SampleReflectionProbe(second, position, direction, lod) * second_mix;
 }
 
 void BuildBasis(float3 n, float3 position, float2 uv, out float3 tangent, out float3 bitangent) {
@@ -581,12 +684,20 @@ float2 EnvironmentBRDF(float no_v, float roughness) {
     return float2(-1.04, 1.04) * a004 + r.zw;
 }
 
-float3 EnvironmentSpecular(Surface s, float3 view) {
+float3 EnvironmentSpecular(Surface s, float3 view, float3 position) {
     if (PGI[8].x < 0.5 || PGI[8].y <= 0.0) return 0.0.xxx;
     float no_v = max(saturate(dot(s.normal, view)), 1.0e-4);
+    float3 reflection_direction = reflect(-view, s.normal);
     float mip_levels = max(PGI[8].z, 1.0);
     float lod = saturate(s.roughness) * max(mip_levels - 1.0, 0.0);
-    float3 reflected = EnvironmentColorLod(reflect(-view, s.normal), lod);
+    float3 global_reflection = EnvironmentColorLod(reflection_direction, lod);
+    float local_coverage = 0.0;
+    float3 local_reflection = LocalReflectionColor(
+        position,
+        reflection_direction,
+        s.roughness,
+        local_coverage);
+    float3 reflected = lerp(global_reflection, local_reflection, local_coverage);
     float2 brdf = EnvironmentBRDF(no_v, s.roughness);
     float3 f0 = IridescentFresnel(SurfaceF0(s), no_v, s);
     return max(reflected * (f0 * brdf.x + brdf.y) * PGI[8].y, 0.0.xxx);
@@ -775,7 +886,7 @@ PSOut PSMain(VSOut i, bool front_face : SV_IsFrontFace) {
         (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao * screen_ao;
     float3 ambient = PGI[6].xyz * PGI[6].w * s.albedo *
         (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao * screen_ao;
-    float3 specular_environment = EnvironmentSpecular(s, view);
+    float3 specular_environment = EnvironmentSpecular(s, view, i.world);
     float3 transmission = TransmissionEnvironment(s, view);
     float3 diffuse_transmission_environment = EnvironmentColor(-s.normal) * s.albedo *
         s.diffuse_transmission_color * s.diffuse_transmission * (1.0 - s.metallic);
