@@ -8,6 +8,7 @@
 #include "Renderer/Scenes/SceneCache.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -92,7 +93,7 @@ private:
     std::vector<AccelerationTriangle> local_triangles_;
     std::vector<AccelerationBlas> blases_;
     std::vector<AccelerationInstance> instances_;
-    std::vector<std::uint64_t> instance_keys_;
+    std::unordered_map<std::uint64_t, std::size_t> instance_slots_;
     std::uint64_t blas_revision_ = 0u;
     std::uint64_t tlas_revision_ = 0u;
     std::uint64_t tlas_topology_signature_ = 0u;
