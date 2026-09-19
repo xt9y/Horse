@@ -570,11 +570,11 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         return false;
     }
 
-    const auto draw_ranges = [&](SDL_GPURenderPass *target, bool camera_layer) -> bool {
-        for (const RasterizerSDLGPU::RasterGeometry::DrawRange& draw : impl_->geometry.draws()) {
-            if (draw.camera_layer != camera_layer || draw.vertex_count == 0u) continue;
+    const auto draw_batches = [&](SDL_GPURenderPass *target, bool camera_layer) -> bool {
+        for (const RasterizerSDLGPU::DrawSubmission::Batch& batch : impl_->submission.batches()) {
+            if (batch.camera_layer != camera_layer || batch.command_count == 0u) continue;
             const Scenes::SDLGPU::SceneResources::RasterBinding binding =
-                impl_->scene.bindRasterMaterial(target, draw.material);
+                impl_->scene.bindRasterMaterial(target, batch.material);
             if (!binding.valid) return false;
 
             SDLGPU::FrameUniforms material_uniforms = uniforms;
@@ -584,13 +584,7 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
                 binding.texture_count, static_cast<std::size_t>(INT32_MAX)));
             SDL_PushGPUFragmentUniformData(
                 command, 0u, &material_uniforms, sizeof(material_uniforms));
-            SDL_DrawGPUIndexedPrimitives(
-                target,
-                static_cast<Uint32>(std::min<std::size_t>(draw.vertex_count, UINT32_MAX)),
-                1u,
-                static_cast<Uint32>(std::min<std::size_t>(draw.first_vertex, UINT32_MAX)),
-                0,
-                0u);
+            if (!impl_->submission.drawIndirect(target, batch)) return false;
         }
         return true;
     };
@@ -648,10 +642,10 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             }
             SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
             SDL_PushGPUVertexUniformData(command, 1u, &draw_uniforms, sizeof(draw_uniforms));
-            if (!draw_ranges(pass, false)) {
+            if (!draw_batches(pass, false)) {
                 SDL_EndGPURenderPass(pass);
                 Frame::SDLGPU::cancel(output);
-                std::fprintf(stderr, "[Rasterizer/SDL_GPU]: raster material binding failed\n");
+                std::fprintf(stderr, "[Rasterizer/SDL_GPU]: raster indirect batch binding failed\n");
                 return false;
             }
         }
@@ -713,10 +707,10 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         }
         SDL_PushGPUVertexUniformData(command, 0u, &uniforms, sizeof(uniforms));
         SDL_PushGPUVertexUniformData(command, 1u, &draw_uniforms, sizeof(draw_uniforms));
-        if (!draw_ranges(camera_pass, true)) {
+        if (!draw_batches(camera_pass, true)) {
             SDL_EndGPURenderPass(camera_pass);
             Frame::SDLGPU::cancel(output);
-            std::fprintf(stderr, "[Rasterizer/SDL_GPU]: raster material binding failed\n");
+            std::fprintf(stderr, "[Rasterizer/SDL_GPU]: camera raster indirect batch binding failed\n");
             return false;
         }
         SDL_EndGPURenderPass(camera_pass);
