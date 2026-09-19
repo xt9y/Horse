@@ -102,6 +102,20 @@ std::uint32_t treeDepth(const std::vector<Scenes::GpuNode>& nodes, std::uint32_t
     return 1u + std::max(treeDepth(nodes, node.first), treeDepth(nodes, node.meta));
 }
 
+std::uint32_t accelerationDepth(const Scenes::AccelerationScene& acceleration)
+{
+    if (acceleration.tlasNodes().empty()) return 0u;
+    const std::uint32_t tlas_depth = treeDepth(acceleration.tlasNodes(), 0u);
+    std::uint32_t blas_depth = 0u;
+    for (const Scenes::AccelerationBlas& blas : acceleration.blases()) {
+        if (blas.node_count == 0u) continue;
+        blas_depth = std::max(
+            blas_depth,
+            treeDepth(acceleration.blasNodes(), blas.node_offset));
+    }
+    return tlas_depth + blas_depth;
+}
+
 struct SettingsState {
     bool valid = false;
     GlobalIlluminationComponent component{};
@@ -521,11 +535,14 @@ const Field *update(const Ecs::World& world)
         const bool first_sync = !state.revisions_initialized;
         if (render_dirty) {
             const Scenes::SceneCache& previous_cache = state.trace_scene.cache();
+            const Scenes::AccelerationScene& previous_acceleration = state.trace_scene.acceleration();
             const std::uint64_t previous_geometry_revision = previous_cache.geometryRevision();
             const std::uint64_t previous_resource_revision = previous_cache.resourceRevision();
             const std::uint64_t previous_topology_updates = previous_cache.topologyUpdates();
             const std::uint64_t previous_geometry_updates = previous_cache.geometryUpdates();
             const std::uint64_t previous_resource_updates = previous_cache.resourceUpdates();
+            const std::uint64_t previous_blas_revision = previous_acceleration.blasRevision();
+            const std::uint64_t previous_tlas_revision = previous_acceleration.tlasRevision();
             const Clock::time_point started = Clock::now();
             std::string error;
             Scenes::Scene::collectRenderItems(world, state.render_items);
@@ -536,23 +553,27 @@ const Field *update(const Ecs::World& world)
                 scene_changed = true;
             } else {
                 const Scenes::SceneCache& cache = state.trace_scene.cache();
+                const Scenes::AccelerationScene& acceleration = state.trace_scene.acceleration();
+                const bool blas_changed = acceleration.blasRevision() != previous_blas_revision;
+                const bool tlas_changed = acceleration.tlasRevision() != previous_tlas_revision;
                 const bool geometry_changed =
-                    cache.geometryRevision() != previous_geometry_revision;
+                    cache.geometryRevision() != previous_geometry_revision || tlas_changed;
                 const bool resources_changed =
                     cache.resourceRevision() != previous_resource_revision;
-                scene_changed = first_sync || geometry_changed || resources_changed;
-                if (cache.topologyUpdates() != previous_topology_updates)
+                scene_changed = first_sync || blas_changed || geometry_changed || resources_changed;
+                if (cache.topologyUpdates() != previous_topology_updates || blas_changed)
                     state.scene_update = Debug::SceneUpdate::Topology;
-                else if (cache.geometryUpdates() != previous_geometry_updates)
+                else if (cache.geometryUpdates() != previous_geometry_updates || tlas_changed)
                     state.scene_update = Debug::SceneUpdate::Geometry;
                 else if (cache.resourceUpdates() != previous_resource_updates)
                     state.scene_update = Debug::SceneUpdate::Resources;
                 else
                     state.scene_update = Debug::SceneUpdate::None;
-                if (first_sync || geometry_changed) {
-                    state.bvh_depth = cache.nodes().empty()
+                if (first_sync || blas_changed || geometry_changed) {
+                    const std::uint32_t legacy_depth = cache.nodes().empty()
                         ? 0u
                         : treeDepth(cache.nodes(), 0u);
+                    state.bvh_depth = std::max(legacy_depth, accelerationDepth(acceleration));
                 }
             }
             state.scene_build_ms = elapsedMilliseconds(started);
@@ -633,11 +654,15 @@ Statistics statistics()
 {
     Statistics result;
     const Scenes::SceneCache& cache = state.trace_scene.cache();
+    const Scenes::AccelerationScene& acceleration = state.trace_scene.acceleration();
     result.photons = state.photon_map.photonCount();
     result.probes = state.published.valid() ? state.published.probeCount() : 0u;
-    result.triangles = cache.triangles().size();
+    result.triangles = cache.triangles().size() + acceleration.localTriangles().size();
     result.materials = cache.materials().size();
-    result.bvh_nodes = cache.nodes().size();
+    result.bvh_nodes = cache.nodes().size() +
+        acceleration.tlasNodes().size() + acceleration.blasNodes().size();
+    result.instances = acceleration.instances().size();
+    result.blases = acceleration.blases().size();
     result.bvh_depth = state.bvh_depth;
     result.requested_photons = state.photon_settings.photon_count;
     result.bounces = state.bounces;
@@ -646,8 +671,8 @@ Statistics statistics()
         : std::min<std::uint8_t>(static_cast<std::uint8_t>(state.bounce_index + 1u), state.bounces);
     result.photon_radius = state.photon_map.radius();
     result.scene_update = state.scene_update;
-    result.topology_updates = cache.topologyUpdates();
-    result.geometry_updates = cache.geometryUpdates();
+    result.topology_updates = cache.topologyUpdates() + acceleration.blasRevision();
+    result.geometry_updates = cache.geometryUpdates() + acceleration.tlasRevision();
     result.resource_updates = cache.resourceUpdates();
     result.scene_build_ms = state.scene_build_ms;
     result.photon_build_ms = state.photon_build_ms;
