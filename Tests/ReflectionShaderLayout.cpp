@@ -17,6 +17,7 @@ int main()
     assert(shader.find("SampleReflectionProbe") != std::string_view::npos);
     assert(shader.find("BoxProjectedDirection") != std::string_view::npos);
     assert(shader.find("LocalReflectionColor") != std::string_view::npos);
+    assert(shader.find("asint(meta.y)") != std::string_view::npos);
 
     return 0;
 }
