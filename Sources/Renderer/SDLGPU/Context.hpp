@@ -84,6 +84,16 @@ bool uploadTextureRgba8(
     const void *rgba,
     std::size_t size
 );
+bool uploadTextureRgba8Subresource(
+    SDL_GPUCommandBuffer *command,
+    SDL_GPUTexture *texture,
+    std::uint32_t layer,
+    std::uint32_t mip_level,
+    std::uint32_t width,
+    std::uint32_t height,
+    const void *rgba,
+    std::size_t size
+);
 bool uploadTextureRgba8Layer(
     SDL_GPUCommandBuffer *command,
     SDL_GPUTexture *texture,
