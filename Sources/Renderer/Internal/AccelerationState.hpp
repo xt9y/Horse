@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Renderer::Internal {
@@ -26,6 +27,9 @@ public:
     std::uint64_t synchronizations() const { return synchronizations_; }
 
 private:
+    void rebuildTransformDependencies(const Ecs::World& world);
+    bool collectDirtyRenderItems(const std::vector<Ecs::Entity>& entities);
+
     const Ecs::World *world_ = nullptr;
     Scenes::Scene::RenderRevision revision_{};
     std::uint64_t config_revision_ = 0u;
@@ -36,6 +40,11 @@ private:
     Scenes::SceneCache scene_;
     std::vector<Scenes::Scene::RenderItem> render_items_;
     std::vector<Scenes::Scene::RenderItem> dynamic_items_;
+    std::unordered_map<Ecs::Entity, std::vector<std::size_t>> transform_dependents_;
+    std::vector<std::uint64_t> render_item_marks_;
+    std::uint64_t render_item_generation_ = 0u;
+    std::vector<Ecs::Entity> dirty_entities_;
+    std::vector<std::size_t> dirty_render_items_;
 };
 
 AccelerationState& accelerationState();
