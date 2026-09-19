@@ -3,6 +3,7 @@
 #include "Models/Core/Texture.hpp"
 #include "Renderer/Environment.hpp"
 #include "Renderer/Features.hpp"
+#include "Renderer/Internal/ReflectionPrefilter.hpp"
 #include "Renderer/Internal/ReflectionProbesSDLGPU.hpp"
 #include "Renderer/Reflections/Reflections.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
@@ -67,26 +68,56 @@ bool upload(const GlobalIllumination::Field *field)
     }
 
     const EnvironmentState& environment = shading.environment;
+    const Models::TextureAsset *environment_asset =
+        environment.valid && environment.texture != Models::INVALID_TEXTURE
+        ? Models::texture(environment.texture)
+        : nullptr;
+    const bool environment_image_ready =
+        environment_asset && environment_asset->image.width > 0 &&
+        environment_asset->image.height > 0 && !environment_asset->image.rgba.empty();
+    const Reflections::Internal::IrradianceSH environment_irradiance =
+        environment_image_ready
+        ? Reflections::Internal::irradianceEquirectangular(environment_asset->image)
+        : Reflections::Internal::IrradianceSH{};
+
     if (environment.valid) {
-        data[12] = environment.average_color.x; data[13] = environment.average_color.y; data[14] = environment.average_color.z; data[15] = std::max(environment.intensity, 0.0f);
+        data[12] = environment_image_ready
+            ? environment_irradiance.average[0]
+            : environment.average_color.x;
+        data[13] = environment_image_ready
+            ? environment_irradiance.average[1]
+            : environment.average_color.y;
+        data[14] = environment_image_ready
+            ? environment_irradiance.average[2]
+            : environment.average_color.z;
+        data[15] = std::max(environment.intensity, 0.0f);
         data[16] = environment.sky_color.x; data[17] = environment.sky_color.y; data[18] = environment.sky_color.z;
         data[19] = environment.texture != Models::INVALID_TEXTURE ? 1.0f : 0.0f;
         data[20] = environment.fog_color.x; data[21] = environment.fog_color.y; data[22] = environment.fog_color.z; data[23] = static_cast<float>(environment.fog);
         data[24] = environment.ambient_color.x; data[25] = environment.ambient_color.y; data[26] = environment.ambient_color.z; data[27] = std::max(environment.ambient_intensity, 0.0f);
         data[28] = std::max(environment.fog_density, 0.0f); data[29] = std::max(environment.fog_start, 0.0f);
         data[30] = std::max(environment.fog_end, environment.fog_start + 1.0e-4f); data[31] = environment.rotation_degrees * (Pi / 180.0f);
+
+        if (environment_image_ready) {
+            data[35] = environment_irradiance.z[0];
+            data[36] = environment_irradiance.x[0];
+            data[37] = environment_irradiance.x[1];
+            data[38] = environment_irradiance.x[2];
+            data[40] = environment_irradiance.y[0];
+            data[41] = environment_irradiance.y[1];
+            data[42] = environment_irradiance.y[2];
+            data[44] = environment_irradiance.z[1];
+            data[45] = environment_irradiance.z[2];
+        }
     }
 
     std::uint32_t reflection_mip_levels = 1u;
-    if (environment.valid && environment.texture != Models::INVALID_TEXTURE) {
-        const Models::TextureAsset *asset = Models::texture(environment.texture);
-        if (asset && asset->image.width > 0 && asset->image.height > 0) {
-            reflection_mip_levels = Reflections::environmentMipLevels(
-                static_cast<std::uint32_t>(asset->image.width),
-                static_cast<std::uint32_t>(asset->image.height),
-                reflection_settings.quality
-            );
-        }
+    if (environment_image_ready) {
+        reflection_mip_levels = Reflections::environmentMipLevels(
+            static_cast<std::uint32_t>(environment_asset->image.width),
+            static_cast<std::uint32_t>(environment_asset->image.height),
+            reflection_settings.quality
+        );
     }
     data[32] = reflections_enabled ? 1.0f : 0.0f;
     data[33] = std::max(reflection_settings.strength, 0.0f);
@@ -182,10 +213,10 @@ bool bindReflectionProbes(SDL_GPURenderPass *pass)
     const Reflections::State empty_reflections{};
     const EnvironmentState empty_environment{};
     const Reflections::State& reflections = enabled ? shading.reflections : empty_reflections;
-    const EnvironmentState& environment = enabled ? shading.environment : empty_environment;
+    const EnvironmentState& reflection_environment = enabled ? shading.environment : empty_environment;
 
     std::string error;
-    if (!reflection_probes.sync(reflections, environment, &error)) {
+    if (!reflection_probes.sync(reflections, reflection_environment, &error)) {
         std::fprintf(
             stderr,
             "[Horse Reflections]: probe resource sync failed: %s%s%s\n",
