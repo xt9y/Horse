@@ -224,6 +224,51 @@ void collectRenderItems(const Ecs::World& world, std::vector<RenderItem>& out)
     );
 }
 
+bool refreshRenderItemTransforms(const Ecs::World& world, std::vector<RenderItem>& items)
+{
+    for (RenderItem& item : items) {
+        if (item.entity == Ecs::INVALID_ENTITY || !world.alive(item.entity)) return false;
+        if (world.has<LodGroup>(item.entity)) return false;
+
+        const Internal::RenderableComponent* renderable =
+            world.get<Internal::RenderableComponent>(item.entity);
+        const Internal::MeshComponent* mesh_component =
+            world.get<Internal::MeshComponent>(item.entity);
+        const Transform* transform = world.get<Transform>(item.entity);
+        if (!renderable || !renderable->visible || !mesh_component || !transform) return false;
+        if (!item.mesh_component ||
+            mesh_component->mesh != item.mesh_component->mesh ||
+            mesh_component->material != item.mesh_component->material)
+            return false;
+
+        const Transform world_transform = resolvedTransform(world, item.entity, *transform);
+        const Internal::InstanceComponent* instances =
+            world.get<Internal::InstanceComponent>(item.entity);
+        if (!instances) {
+            if (item.instance_index != UINT32_MAX) return false;
+            item.transform = TransformState{world_transform, true};
+            continue;
+        }
+
+        if (item.instance_index == UINT32_MAX ||
+            item.instance_index >= instances->matrices.size())
+            return false;
+
+        Transform instanced{};
+        instanced.matrix_override = Math::multiply(
+            Math::modelMatrix(world_transform),
+            instances->matrices[item.instance_index]
+        );
+        instanced.matrix_override_enabled = true;
+        instanced.position = Math::transformPoint(
+            instanced.matrix_override,
+            {0.0f, 0.0f, 0.0f}
+        );
+        item.transform = TransformState{instanced, true};
+    }
+    return true;
+}
+
 void collectGaussianItems(const Ecs::World& world, std::vector<RenderItem>& out)
 {
     collectItems(world, true, out);
