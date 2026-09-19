@@ -380,7 +380,7 @@ float3 LocalReflectionColor(
     uint second = 0xffffffffu;
     float first_weight = 0.0;
     float second_weight = 0.0;
-    float selected_priority = 0.0;
+    int selected_priority = 0;
     bool selected_priority_valid = false;
 
     for (uint index = 0u; index < probe_count; ++index) {
@@ -397,10 +397,11 @@ float3 LocalReflectionColor(
             extents_blend.w);
         if (influence <= 0.0) continue;
 
+        int priority = asint(meta.y);
         if (!selected_priority_valid) {
-            selected_priority = meta.y;
+            selected_priority = priority;
             selected_priority_valid = true;
-        } else if (meta.y != selected_priority) {
+        } else if (priority != selected_priority) {
             break;
         }
 
