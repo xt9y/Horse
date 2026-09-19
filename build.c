@@ -211,5 +211,9 @@ void build(C_Build *b)
     c_sources(gi_profiling_tests, "Tests/GiProfiling.cpp");
     configureTest(gi_profiling_tests, library);
 
+    C_Target *shared_acceleration_tests = c_test(b, "HorseSharedAccelerationTests");
+    c_sources(shared_acceleration_tests, "Tests/SharedAcceleration.cpp");
+    configureTest(shared_acceleration_tests, library);
+
     c_default_target(b, library);
 }
