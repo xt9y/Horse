@@ -26,6 +26,8 @@ struct FrameOutput : PostProcess::Frame {
 
 } // namespace Internal
 
+bool waitIdle();
+
 class IRenderer {
 public:
     virtual ~IRenderer() = default;
