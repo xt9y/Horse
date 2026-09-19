@@ -16,6 +16,7 @@ void updateShadingState(const Ecs::World& world)
     ShadingState& state = storage();
     state.environment = environmentState(world);
     state.lighting = Lighting::state(world);
+    state.reflections = Reflections::state(world);
 }
 
 const ShadingState& shadingState()
