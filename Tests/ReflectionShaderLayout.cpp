@@ -17,6 +17,11 @@ int main()
     assert(shader.find("PrefilteredEnvironmentColor") != std::string_view::npos);
     assert(shader.find("float3(u, v, 0.0)") != std::string_view::npos);
     assert(shader.find("PReflectionProbes[0].z") != std::string_view::npos);
+    assert(shader.find("EnvironmentIrradiance") != std::string_view::npos);
+    assert(shader.find("PGI[9].xyz") != std::string_view::npos);
+    assert(shader.find("PGI[10].xyz") != std::string_view::npos);
+    assert(shader.find("float3(PGI[8].w, PGI[11].x, PGI[11].y)") != std::string_view::npos);
+    assert(shader.find("environment_diffuse") != std::string_view::npos);
     assert(shader.find("SampleReflectionProbe") != std::string_view::npos);
     assert(shader.find("BoxProjectedDirection") != std::string_view::npos);
     assert(shader.find("LocalReflectionColor") != std::string_view::npos);
