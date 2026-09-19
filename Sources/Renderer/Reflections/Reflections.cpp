@@ -76,6 +76,28 @@ Quality quality()
     return storage().quality;
 }
 
+std::uint32_t maximumProbes(Quality quality)
+{
+    switch (quality) {
+        case Quality::Low: return 2u;
+        case Quality::Medium: return 4u;
+        case Quality::High: return 8u;
+        case Quality::Ultra: return 16u;
+    }
+    return 8u;
+}
+
+std::uint32_t probeResolution(Quality quality)
+{
+    switch (quality) {
+        case Quality::Low: return 256u;
+        case Quality::Medium: return 512u;
+        case Quality::High:
+        case Quality::Ultra: return 1024u;
+    }
+    return 1024u;
+}
+
 State state(const Ecs::World& world)
 {
     State result;
