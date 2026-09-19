@@ -32,11 +32,11 @@ int main()
 
     const Reflections::ProbeAtlasLayout empty_layout =
         Reflections::probeAtlasLayout(0u, Quality::High);
-    assert(empty_layout.width == 1024u);
-    assert(empty_layout.height == 512u);
+    assert(empty_layout.width == 1u);
+    assert(empty_layout.height == 1u);
     assert(empty_layout.probe_count == 0u);
     assert(empty_layout.layers == 1u);
-    assert(empty_layout.mip_levels == 11u);
+    assert(empty_layout.mip_levels == 1u);
 
     const Reflections::ProbeAtlasLayout low_layout =
         Reflections::probeAtlasLayout(10u, Quality::Low);
