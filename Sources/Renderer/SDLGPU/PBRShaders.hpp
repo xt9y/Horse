@@ -328,6 +328,27 @@ float3 EnvironmentColor(float3 direction) {
     return EnvironmentColorLod(direction, 0.0);
 }
 
+float3 EnvironmentIrradiance(float3 normal) {
+    float rotation = PGI[7].w;
+    float sn = sin(rotation);
+    float cs = cos(rotation);
+    float3 n = normalize(normal);
+    n = float3(
+        n.x * cs - n.z * sn,
+        n.y,
+        n.z * cs + n.x * sn);
+
+    const float Y1 = 0.48860251190;
+    float3 x_coefficient = PGI[9].xyz;
+    float3 y_coefficient = PGI[10].xyz;
+    float3 z_coefficient = float3(PGI[8].w, PGI[11].x, PGI[11].y);
+    float3 irradiance_over_pi = PGI[3].xyz;
+    irradiance_over_pi += x_coefficient * ((2.0 / 3.0) * Y1 * n.x);
+    irradiance_over_pi += y_coefficient * ((2.0 / 3.0) * Y1 * n.y);
+    irradiance_over_pi += z_coefficient * ((2.0 / 3.0) * Y1 * n.z);
+    return max(irradiance_over_pi, 0.0.xxx) * max(PGI[3].w, 0.0);
+}
+
 float3 PrefilteredEnvironmentColor(float3 direction, float roughness) {
     float3 sky = PGI[4].xyz;
     float intensity = max(PGI[3].w, 0.0);
@@ -902,14 +923,16 @@ PSOut PSMain(VSOut i, bool front_face : SV_IsFrontFace) {
     float screen_ao = ScreenAmbientOcclusion(i.position.xy);
     float3 diffuse_indirect = SampleGI(i.world, s.normal) * s.albedo *
         (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao * screen_ao;
+    float3 environment_diffuse = EnvironmentIrradiance(s.normal) * s.albedo *
+        (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao * screen_ao;
     float3 ambient = PGI[6].xyz * PGI[6].w * s.albedo *
         (1.0 - s.metallic) * (1.0 - s.transmission) * s.ao * screen_ao;
     float3 specular_environment = EnvironmentSpecular(s, view, i.world);
     float3 transmission = TransmissionEnvironment(s, view);
     float3 diffuse_transmission_environment = EnvironmentColor(-s.normal) * s.albedo *
         s.diffuse_transmission_color * s.diffuse_transmission * (1.0 - s.metallic);
-    float3 color = direct + diffuse_indirect + ambient + specular_environment +
-        transmission + diffuse_transmission_environment + s.emission;
+    float3 color = direct + diffuse_indirect + environment_diffuse + ambient +
+        specular_environment + transmission + diffuse_transmission_environment + s.emission;
 
     float distance_to_camera = length(i.world - PCameraPositionNear.xyz);
     float fog_factor = 0.0;
