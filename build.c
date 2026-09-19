@@ -203,5 +203,9 @@ void build(C_Build *b)
     c_sources(render_graph_tests, "Tests/RenderGraph.cpp");
     configureTest(render_graph_tests, library);
 
+    C_Target *raster_render_graph_tests = c_test(b, "HorseRasterRenderGraphTests");
+    c_sources(raster_render_graph_tests, "Tests/RasterRenderGraph.cpp");
+    configureTest(raster_render_graph_tests, library);
+
     c_default_target(b, library);
 }
