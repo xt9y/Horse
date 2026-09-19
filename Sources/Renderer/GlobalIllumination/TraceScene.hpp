@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_GLOBAL_ILLUMINATION_TRACE_SCENE_HPP
 #define HORSE_RENDERER_GLOBAL_ILLUMINATION_TRACE_SCENE_HPP
 
+#include "Renderer/Scenes/Acceleration.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
 
 #include <cstdint>
@@ -47,13 +48,22 @@ public:
     ) const;
     Vec3 albedo(const TraceHit& hit) const;
     TraceBounds bounds() const;
-    bool empty() const { return cache_.triangles().empty(); }
-    void clear() { cache_.clear(); }
+    bool empty() const
+    {
+        return cache_.triangles().empty() && acceleration_.instances().empty();
+    }
+    void clear()
+    {
+        cache_.clear();
+        acceleration_.clear();
+    }
 
     const Scenes::SceneCache& cache() const { return cache_; }
+    const Scenes::AccelerationScene& acceleration() const { return acceleration_; }
 
 private:
     Scenes::SceneCache cache_;
+    Scenes::AccelerationScene acceleration_;
 };
 
 } // namespace Renderer::GlobalIllumination
