@@ -1,14 +1,13 @@
 #include "Renderer/Internal/ReflectionProbesSDLGPU.hpp"
 
 #include "Models/Internal/TextureStorage.hpp"
+#include "Renderer/Internal/ReflectionPrefilter.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
-#include <array>
 #include <bit>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -24,11 +23,31 @@ void hash(std::uint64_t& value, std::uint64_t input)
     value *= 1099511628211ull;
 }
 
+bool textureReady(Models::TextureHandle handle)
+{
+    if (handle == Models::INVALID_TEXTURE || !Models::Internal::textureStorageReady(handle))
+        return false;
+    const Models::TextureAsset *asset = Models::texture(handle);
+    return asset && asset->image.width > 0 && asset->image.height > 0 &&
+        !asset->image.rgba.empty();
+}
+
+const Models::Images::Image& textureImage(
+    Models::TextureHandle handle,
+    const Models::Images::Image& fallback)
+{
+    if (!textureReady(handle)) return fallback;
+    const Models::TextureAsset *asset = Models::texture(handle);
+    return asset ? asset->image : fallback;
+}
+
 std::uint64_t sourceSignature(
     const State& state,
+    const EnvironmentState& environment,
     const ProbeAtlasLayout& layout,
     Quality quality,
-    std::uint64_t storage_generation)
+    std::uint64_t storage_generation,
+    bool environment_ready)
 {
     std::uint64_t value = 1469598103934665603ull;
     hash(value, static_cast<std::uint32_t>(quality));
@@ -38,6 +57,7 @@ std::uint64_t sourceSignature(
     hash(value, layout.layers);
     hash(value, layout.mip_levels);
     hash(value, storage_generation);
+    hash(value, environment_ready ? environment.texture : Models::INVALID_TEXTURE);
     for (std::uint32_t index = 0u; index < layout.probe_count; ++index)
         hash(value, state.probes[index].texture);
     return value;
@@ -47,115 +67,29 @@ std::uint64_t metadataSignature(
     const State& state,
     const ProbeAtlasLayout& layout,
     Quality quality,
-    std::uint64_t storage_generation)
+    std::uint64_t storage_generation,
+    bool environment_ready)
 {
     std::uint64_t value = state.revision;
     hash(value, static_cast<std::uint32_t>(quality));
     hash(value, layout.probe_count);
     hash(value, layout.mip_levels);
     hash(value, storage_generation);
+    hash(value, environment_ready ? 1u : 0u);
     return value;
-}
-
-float srgbToLinear(float value)
-{
-    value = std::clamp(value, 0.0f, 1.0f);
-    return value <= 0.04045f
-        ? value / 12.92f
-        : std::pow((value + 0.055f) / 1.055f, 2.4f);
-}
-
-float linearToSrgb(float value)
-{
-    value = std::clamp(value, 0.0f, 1.0f);
-    return value <= 0.0031308f
-        ? value * 12.92f
-        : 1.055f * std::pow(value, 1.0f / 2.4f) - 0.055f;
-}
-
-std::array<float, 4> pixel(const Models::Images::Image& image, int x, int y)
-{
-    if (image.width <= 0 || image.height <= 0 || image.rgba.empty()) return {};
-
-    x %= image.width;
-    if (x < 0) x += image.width;
-    y = std::clamp(y, 0, image.height - 1);
-    const std::size_t offset =
-        (static_cast<std::size_t>(y) * static_cast<std::size_t>(image.width) +
-         static_cast<std::size_t>(x)) * 4u;
-    if (offset + 3u >= image.rgba.size()) return {};
-
-    return {
-        srgbToLinear(static_cast<float>(image.rgba[offset + 0u]) / 255.0f),
-        srgbToLinear(static_cast<float>(image.rgba[offset + 1u]) / 255.0f),
-        srgbToLinear(static_cast<float>(image.rgba[offset + 2u]) / 255.0f),
-        static_cast<float>(image.rgba[offset + 3u]) / 255.0f,
-    };
-}
-
-std::uint8_t toByte(float value)
-{
-    return static_cast<std::uint8_t>(
-        std::clamp(value * 255.0f + 0.5f, 0.0f, 255.0f));
-}
-
-std::vector<std::uint8_t> resampleEquirect(
-    const Models::Images::Image& source,
-    std::uint32_t width,
-    std::uint32_t height)
-{
-    std::vector<std::uint8_t> result(
-        static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u,
-        0u);
-    if (source.width <= 0 || source.height <= 0 || source.rgba.empty()) {
-        for (std::size_t index = 3u; index < result.size(); index += 4u) result[index] = 255u;
-        return result;
-    }
-
-    for (std::uint32_t y = 0u; y < height; ++y) {
-        const float source_y =
-            (static_cast<float>(y) + 0.5f) * static_cast<float>(source.height) /
-                static_cast<float>(height) - 0.5f;
-        const int y0 = static_cast<int>(std::floor(source_y));
-        const int y1 = y0 + 1;
-        const float ty = source_y - std::floor(source_y);
-
-        for (std::uint32_t x = 0u; x < width; ++x) {
-            const float source_x =
-                (static_cast<float>(x) + 0.5f) * static_cast<float>(source.width) /
-                    static_cast<float>(width) - 0.5f;
-            const int x0 = static_cast<int>(std::floor(source_x));
-            const int x1 = x0 + 1;
-            const float tx = source_x - std::floor(source_x);
-
-            const auto p00 = pixel(source, x0, y0);
-            const auto p10 = pixel(source, x1, y0);
-            const auto p01 = pixel(source, x0, y1);
-            const auto p11 = pixel(source, x1, y1);
-            const std::size_t destination =
-                (static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + x) * 4u;
-
-            for (std::size_t channel = 0u; channel < 4u; ++channel) {
-                const float a = p00[channel] + (p10[channel] - p00[channel]) * tx;
-                const float b = p01[channel] + (p11[channel] - p01[channel]) * tx;
-                float value = a + (b - a) * ty;
-                if (channel < 3u) value = linearToSrgb(value);
-                result[destination + channel] = toByte(value);
-            }
-        }
-    }
-    return result;
 }
 
 std::vector<float> probeMetadata(
     const State& state,
     const ProbeAtlasLayout& layout,
-    Quality quality)
+    Quality quality,
+    bool environment_ready)
 {
     std::vector<float> data((1u + layout.probe_count * ProbeVec4Count) * 4u, 0.0f);
     data[0] = static_cast<float>(layout.probe_count);
     data[1] = static_cast<float>(
         limitEnvironmentMipLevels(layout.mip_levels, quality));
+    data[2] = environment_ready ? 1.0f : 0.0f;
 
     for (std::uint32_t index = 0u; index < layout.probe_count; ++index) {
         const Probe& probe = state.probes[index];
@@ -163,17 +97,49 @@ std::vector<float> probeMetadata(
         data[offset + 0u] = probe.position.x;
         data[offset + 1u] = probe.position.y;
         data[offset + 2u] = probe.position.z;
-        data[offset + 3u] = Models::Internal::textureStorageReady(probe.texture)
+        data[offset + 3u] = textureReady(probe.texture)
             ? std::max(probe.intensity, 0.0f)
             : 0.0f;
         data[offset + 4u] = std::max(probe.half_extents.x, 0.0f);
         data[offset + 5u] = std::max(probe.half_extents.y, 0.0f);
         data[offset + 6u] = std::max(probe.half_extents.z, 0.0f);
         data[offset + 7u] = std::max(probe.blend_distance, 0.0f);
-        data[offset + 8u] = static_cast<float>(index);
-        data[offset + 9u] = std::bit_cast<float>(probe.priority);
+        data[offset + 8u] = static_cast<float>(index + 1u);
+        data[offset + 9u] = std::bit_cast<float>(static_cast<std::int32_t>(probe.priority));
     }
     return data;
+}
+
+bool uploadPrefilteredLayer(
+    SDL_GPUCommandBuffer *command,
+    SDL_GPUTexture *texture,
+    std::uint32_t layer,
+    const Models::Images::Image& source,
+    const ProbeAtlasLayout& layout,
+    Quality quality)
+{
+    const Internal::PrefilterChain chain = Internal::prefilterEquirectangular(
+        source,
+        layout.width,
+        layout.height,
+        layout.mip_levels,
+        quality);
+    if (chain.levels.size() != layout.mip_levels) return false;
+
+    for (std::uint32_t mip = 0u; mip < layout.mip_levels; ++mip) {
+        const Internal::PrefilterLevel& level = chain.levels[mip];
+        if (!Renderer::SDLGPU::uploadTextureRgba8Subresource(
+                command,
+                texture,
+                layer,
+                mip,
+                level.width,
+                level.height,
+                level.rgba.data(),
+                level.rgba.size()))
+            return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -183,7 +149,10 @@ ProbeAtlas::~ProbeAtlas()
     clear();
 }
 
-bool ProbeAtlas::sync(const State& state, std::string *error)
+bool ProbeAtlas::sync(
+    const State& state,
+    const EnvironmentState& environment,
+    std::string *error)
 {
     if (error) error->clear();
     if (!Renderer::SDLGPU::device()) {
@@ -192,14 +161,26 @@ bool ProbeAtlas::sync(const State& state, std::string *error)
     }
 
     const Quality current_quality = Reflections::quality();
+    const bool environment_ready =
+        environment.valid && textureReady(environment.texture);
     const ProbeAtlasLayout layout = probeAtlasLayout(
         static_cast<std::uint32_t>(std::min<std::size_t>(state.probes.size(), UINT32_MAX)),
+        environment_ready,
         current_quality);
     const std::uint64_t storage_generation = Models::Internal::textureStorageGeneration();
-    const std::uint64_t texture_signature =
-        sourceSignature(state, layout, current_quality, storage_generation);
-    const std::uint64_t metadata_signature =
-        metadataSignature(state, layout, current_quality, storage_generation);
+    const std::uint64_t texture_signature = sourceSignature(
+        state,
+        environment,
+        layout,
+        current_quality,
+        storage_generation,
+        environment_ready);
+    const std::uint64_t metadata_signature = metadataSignature(
+        state,
+        layout,
+        current_quality,
+        storage_generation,
+        environment_ready);
 
     if (!sampler_) sampler_ = Renderer::SDLGPU::createLinearSampler();
     if (!sampler_) {
@@ -217,70 +198,42 @@ bool ProbeAtlas::sync(const State& state, std::string *error)
             layout.height,
             layout.layers,
             layout.mip_levels,
-            "Horse Reflection Probe Atlas");
+            "Horse Reflection Atlas");
         if (!replacement) {
-            if (error) *error = "failed to create reflection probe texture atlas";
+            if (error) *error = "failed to create reflection texture atlas";
             return false;
         }
 
         SDL_GPUCommandBuffer *command = SDL_AcquireGPUCommandBuffer(Renderer::SDLGPU::device());
         if (!command) {
             SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), replacement);
-            if (error) *error = "failed to acquire reflection probe upload command buffer";
+            if (error) *error = "failed to acquire reflection atlas upload command buffer";
             return false;
         }
 
-        std::vector<std::uint8_t> fallback(
-            static_cast<std::size_t>(layout.width) * static_cast<std::size_t>(layout.height) * 4u,
-            0u);
-        for (std::size_t index = 3u; index < fallback.size(); index += 4u)
-            fallback[index] = 255u;
+        const Models::Images::Image empty;
+        bool uploaded = uploadPrefilteredLayer(
+            command,
+            replacement,
+            0u,
+            textureImage(environment_ready ? environment.texture : Models::INVALID_TEXTURE, empty),
+            layout,
+            current_quality);
 
-        bool uploaded = true;
-        for (std::uint32_t layer = 0u; layer < layout.layers; ++layer) {
-            const std::vector<std::uint8_t> *pixels = &fallback;
-            std::vector<std::uint8_t> resampled;
-
-            if (layer < layout.probe_count) {
-                const Models::TextureHandle handle = state.probes[layer].texture;
-                if (Models::Internal::textureStorageReady(handle)) {
-                    const Models::TextureAsset *asset = Models::texture(handle);
-                    if (asset && asset->image.width > 0 && asset->image.height > 0 &&
-                        !asset->image.rgba.empty())
-                    {
-                        if (asset->image.width == static_cast<int>(layout.width) &&
-                            asset->image.height == static_cast<int>(layout.height))
-                        {
-                            pixels = &asset->image.rgba;
-                        } else {
-                            resampled = resampleEquirect(asset->image, layout.width, layout.height);
-                            pixels = &resampled;
-                        }
-                    }
-                }
-            }
-
-            if (!Renderer::SDLGPU::uploadTextureRgba8Layer(
-                    command,
-                    replacement,
-                    layer,
-                    layout.width,
-                    layout.height,
-                    pixels->data(),
-                    pixels->size()))
-            {
-                uploaded = false;
-                break;
-            }
+        for (std::uint32_t index = 0u; uploaded && index < layout.probe_count; ++index) {
+            uploaded = uploadPrefilteredLayer(
+                command,
+                replacement,
+                index + 1u,
+                textureImage(state.probes[index].texture, empty),
+                layout,
+                current_quality);
         }
-
-        if (uploaded && layout.mip_levels > 1u)
-            uploaded = Renderer::SDLGPU::generateMipmaps(command, replacement);
 
         if (!uploaded || !SDL_SubmitGPUCommandBuffer(command)) {
             SDL_CancelGPUCommandBuffer(command);
             SDL_ReleaseGPUTexture(Renderer::SDLGPU::device(), replacement);
-            if (error) *error = "failed to upload reflection probe texture atlas";
+            if (error) *error = "failed to upload prefiltered reflection atlas";
             return false;
         }
 
@@ -292,7 +245,11 @@ bool ProbeAtlas::sync(const State& state, std::string *error)
     }
 
     if (!buffer_ || metadata_signature != metadata_signature_) {
-        const std::vector<float> data = probeMetadata(state, layout, current_quality);
+        const std::vector<float> data = probeMetadata(
+            state,
+            layout,
+            current_quality,
+            environment_ready);
         const std::size_t bytes = data.size() * sizeof(float);
         if (!buffer_ || buffer_capacity_ < bytes) {
             SDL_GPUBuffer *replacement = Renderer::SDLGPU::createBuffer(
