@@ -23,6 +23,8 @@ struct Statistics {
     std::size_t triangles = 0u;
     std::size_t materials = 0u;
     std::size_t bvh_nodes = 0u;
+    std::size_t instances = 0u;
+    std::size_t blases = 0u;
     std::uint32_t bvh_depth = 0u;
     std::uint32_t requested_photons = 0u;
     std::uint8_t bounce = 0u;
