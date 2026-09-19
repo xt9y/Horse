@@ -601,7 +601,16 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
     if (camera.valid && impl_->settings.enabled) {
         SDL_BindGPUGraphicsPipeline(pass, impl_->sky_pipeline);
         impl_->scene.bindSky(pass);
-        Internal::bindGlobalIlluminationSDLGPU(pass, output.global_illumination, 0u);
+        if (!Internal::bindGlobalIlluminationSDLGPU(
+                pass,
+                output.global_illumination,
+                0u))
+        {
+            SDL_EndGPURenderPass(pass);
+            Frame::SDLGPU::cancel(output);
+            std::fprintf(stderr, "[Rasterizer/SDL_GPU]: sky shading-state binding failed\n");
+            return false;
+        }
         SDL_PushGPUFragmentUniformData(command, 0u, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 3u, 1u, 0u, 0u);
 
@@ -611,7 +620,16 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
             SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
             SDL_BindGPUVertexStorageBuffers(pass, 4u, visibility_buffers, 1u);
             impl_->scene.bindRasterFragment(pass);
-            Internal::bindGlobalIlluminationSDLGPU(pass, output.global_illumination, 2u);
+            if (!Internal::bindGlobalIlluminationSDLGPU(
+                    pass,
+                    output.global_illumination,
+                    2u))
+            {
+                SDL_EndGPURenderPass(pass);
+                Frame::SDLGPU::cancel(output);
+                std::fprintf(stderr, "[Rasterizer/SDL_GPU]: PBR shading-state binding failed\n");
+                return false;
+            }
             impl_->shadows.bind(pass);
             if (!impl_->forward_plus.bind(
                     pass,
@@ -665,7 +683,16 @@ bool Rasterizer::renderScene(const Ecs::World& world, Internal::FrameOutput& out
         SDL_GPUBuffer *visibility_buffers[] = {impl_->visibility_buffer};
         SDL_BindGPUVertexStorageBuffers(camera_pass, 4u, visibility_buffers, 1u);
         impl_->scene.bindRasterFragment(camera_pass);
-        Internal::bindGlobalIlluminationSDLGPU(camera_pass, output.global_illumination, 2u);
+        if (!Internal::bindGlobalIlluminationSDLGPU(
+                camera_pass,
+                output.global_illumination,
+                2u))
+        {
+            SDL_EndGPURenderPass(camera_pass);
+            Frame::SDLGPU::cancel(output);
+            std::fprintf(stderr, "[Rasterizer/SDL_GPU]: camera PBR shading-state binding failed\n");
+            return false;
+        }
         impl_->shadows.bind(camera_pass);
         if (!impl_->forward_plus.bind(
                 camera_pass,
