@@ -181,7 +181,7 @@ void AccelerationState::clear()
     revision_ = {};
     config_revision_ = 0u;
     initialized_ = false;
-    acceleration_.clear();
+    acceleration_ = Scenes::AccelerationScene{};
     scene_.clear();
     render_items_.clear();
     dynamic_items_.clear();
