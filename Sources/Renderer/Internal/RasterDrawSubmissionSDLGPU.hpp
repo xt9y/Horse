@@ -17,6 +17,7 @@ public:
     struct Batch {
         Models::MaterialHandle material = Models::INVALID_MATERIAL;
         bool camera_layer = false;
+        bool gpu_eligible = false;
         std::uint32_t first_command = 0u;
         std::uint32_t command_count = 0u;
         std::uint32_t compact_command = UINT32_MAX;
