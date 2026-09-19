@@ -50,6 +50,8 @@ int main()
     assert(submission.find("SV_GroupID") != std::string::npos);
     assert(submission.find("SV_GroupThreadID") != std::string::npos);
     assert(submission.find("SDL_BeginGPUComputePass") != std::string::npos);
+    assert(submission.find("Models::AlphaMode::Blend") != std::string::npos);
+    assert(submission.find("gpu_eligible") != std::string::npos);
 
     const std::string rasterizer =
         read("Sources/Renderer/Rasterizer/RasterizerSDLGPU.cpp");
