@@ -47,6 +47,11 @@ int main()
     assert(march.find("OccludedDynamic") != std::string::npos);
     assert(march.find("space3") == std::string::npos);
 
+    assert(implementation.find("Renderer/Internal/AccelerationState.hpp") != std::string::npos);
+    assert(implementation.find("syncAccelerationState(world, error)") != std::string::npos);
+    assert(implementation.find("accelerationState()") != std::string::npos);
+    assert(implementation.find("Scenes::AccelerationScene acceleration;") == std::string::npos);
+    assert(implementation.find("Scenes::SceneCache dynamic_scene;") == std::string::npos);
     assert(implementation.find("VolumetricMarchShader") != std::string::npos);
     assert(implementation.find("state.acceleration_gpu.bindCompute(pass, 0u)") != std::string::npos);
     assert(implementation.find("bindGlobalIlluminationSDLGPU(pass, global_illumination, 7u)") != std::string::npos);
