@@ -141,12 +141,14 @@ int main()
     assert(!instance.nodes.empty());
     Renderer::Transform *root_transform = world.get<Renderer::Transform>(instance.nodes.front().entity);
     assert(root_transform);
+    const Renderer::Transform root_before = *root_transform;
     const Ecs::Entity cached_entity = items.front().entity;
     const Models::MeshHandle cached_mesh = items.front().mesh_component->mesh;
     const Models::MaterialHandle cached_material = items.front().mesh_component->material;
     const Renderer::RenderLayer cached_layer = items.front().layer;
     const float cached_x = items.front().transform->position.x;
-    root_transform->position.x += 3.0f;
+    root_transform->matrix_override_enabled = false;
+    root_transform->position.x = root_before.position.x + 3.0f;
     world.markChanged(Ecs::ChangeKind::Transform);
     assert(Renderer::Scenes::Scene::refreshRenderItemTransforms(world, items));
     assert(items.front().entity == cached_entity);
@@ -154,7 +156,7 @@ int main()
     assert(items.front().mesh_component->material == cached_material);
     assert(items.front().layer == cached_layer);
     assert(std::abs(items.front().transform->position.x - (cached_x + 3.0f)) < 1.0e-5f);
-    root_transform->position.x -= 3.0f;
+    *root_transform = root_before;
     world.markChanged(Ecs::ChangeKind::Transform);
     assert(Renderer::Scenes::Scene::refreshRenderItemTransforms(world, items));
     assert(std::abs(items.front().transform->position.x - cached_x) < 1.0e-5f);
