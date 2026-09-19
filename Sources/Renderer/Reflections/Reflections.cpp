@@ -101,10 +101,12 @@ std::uint32_t probeResolution(Quality quality)
 ProbeAtlasLayout probeAtlasLayout(std::uint32_t probe_count, Quality quality)
 {
     ProbeAtlasLayout layout;
+    layout.probe_count = std::min(probe_count, maximumProbes(quality));
+    if (layout.probe_count == 0u) return layout;
+
     layout.width = std::max(probeResolution(quality), 1u);
     layout.height = std::max(layout.width / 2u, 1u);
-    layout.probe_count = std::min(probe_count, maximumProbes(quality));
-    layout.layers = std::max(layout.probe_count, 1u);
+    layout.layers = layout.probe_count;
     layout.mip_levels = environmentMipLevels(layout.width, layout.height, Quality::Ultra);
     return layout;
 }
