@@ -136,6 +136,12 @@ Vec3 instanceCentroid(const AccelerationInstance& instance)
     };
 }
 
+std::uint64_t instanceKey(const AccelerationInstance& instance)
+{
+    return (static_cast<std::uint64_t>(instance.entity()) << 32u) |
+        static_cast<std::uint64_t>(instance.instanceIndex());
+}
+
 std::uint32_t buildTlasNode(
     std::vector<GpuNode>& nodes,
     const std::vector<AccelerationInstance>& instances,
@@ -363,6 +369,7 @@ void AccelerationScene::rebuildTlas(std::vector<AccelerationInstance> source)
 {
     tlas_nodes_.clear();
     instances_.clear();
+    instance_slots_.clear();
     if (source.empty()) return;
 
     std::vector<std::uint32_t> order(source.size());
@@ -378,8 +385,64 @@ void AccelerationScene::rebuildTlas(std::vector<AccelerationInstance> source)
     );
 
     instances_.resize(order.size());
-    for (std::size_t index = 0u; index < order.size(); ++index)
+    instance_slots_.reserve(order.size());
+    for (std::size_t index = 0u; index < order.size(); ++index) {
         instances_[index] = std::move(source[order[index]]);
+        instance_slots_.emplace(instanceKey(instances_[index]), index);
+    }
+}
+
+bool AccelerationScene::refitTlas(const std::vector<AccelerationInstance>& source)
+{
+    if (source.size() != instances_.size() || instance_slots_.size() != instances_.size())
+        return false;
+
+    for (const AccelerationInstance& instance : source) {
+        const auto slot = instance_slots_.find(instanceKey(instance));
+        if (slot == instance_slots_.end() || slot->second >= instances_.size()) return false;
+        instances_[slot->second] = instance;
+    }
+
+    if (instances_.empty()) return tlas_nodes_.empty();
+    if (tlas_nodes_.empty()) return false;
+
+    const float infinity = std::numeric_limits<float>::infinity();
+    for (std::size_t reverse = tlas_nodes_.size(); reverse > 0u; --reverse) {
+        GpuNode& node = tlas_nodes_[reverse - 1u];
+        Vec3 minimum{infinity, infinity, infinity};
+        Vec3 maximum{-infinity, -infinity, -infinity};
+
+        if ((node.meta & LeafBit) != 0u) {
+            const std::uint32_t count = node.meta & ~LeafBit;
+            if (count == 0u || static_cast<std::size_t>(node.first) + count > instances_.size())
+                return false;
+            for (std::uint32_t index = 0u; index < count; ++index) {
+                const AccelerationInstance& instance = instances_[node.first + index];
+                minimum = minVec(minimum, instanceMinimum(instance));
+                maximum = maxVec(maximum, instanceMaximum(instance));
+            }
+        } else {
+            if (node.first >= tlas_nodes_.size() || node.meta >= tlas_nodes_.size()) return false;
+            const GpuNode& left = tlas_nodes_[node.first];
+            const GpuNode& right = tlas_nodes_[node.meta];
+            minimum = minVec(
+                {left.min_x, left.min_y, left.min_z},
+                {right.min_x, right.min_y, right.min_z}
+            );
+            maximum = maxVec(
+                {left.max_x, left.max_y, left.max_z},
+                {right.max_x, right.max_y, right.max_z}
+            );
+        }
+
+        node.min_x = minimum.x;
+        node.min_y = minimum.y;
+        node.min_z = minimum.z;
+        node.max_x = maximum.x;
+        node.max_y = maximum.y;
+        node.max_z = maximum.z;
+    }
+    return true;
 }
 
 bool AccelerationScene::sync(
@@ -432,6 +495,7 @@ bool AccelerationScene::sync(
 
     std::vector<AccelerationInstance> next_instances;
     next_instances.reserve(items.size());
+    std::uint64_t topology_signature = 1469598103934665603ull;
     std::uint64_t signature = 1469598103934665603ull;
     hashValue(signature, blas_revision_);
 
@@ -457,6 +521,10 @@ bool AccelerationScene::sync(
         };
         next_instances.push_back(instance);
 
+        hashValue(topology_signature, item.entity);
+        hashValue(topology_signature, item.instance_index);
+        hashValue(topology_signature, item.mesh_component->mesh);
+
         hashValue(signature, item.entity);
         hashValue(signature, item.instance_index);
         hashValue(signature, item.mesh_component->mesh);
@@ -464,8 +532,18 @@ bool AccelerationScene::sync(
         hashMatrix(signature, object_to_world);
     }
 
-    if (signature != tlas_signature_) {
+    hashValue(topology_signature, static_cast<std::uint64_t>(next_instances.size()));
+    hashValue(signature, static_cast<std::uint64_t>(next_instances.size()));
+
+    if (topology_signature != tlas_topology_signature_ ||
+        next_instances.size() != instances_.size())
+    {
         rebuildTlas(std::move(next_instances));
+        tlas_topology_signature_ = topology_signature;
+        tlas_signature_ = signature;
+        ++tlas_revision_;
+    } else if (signature != tlas_signature_) {
+        if (!refitTlas(next_instances)) rebuildTlas(std::move(next_instances));
         tlas_signature_ = signature;
         ++tlas_revision_;
     }
@@ -480,8 +558,10 @@ void AccelerationScene::clear()
     local_triangles_.clear();
     blases_.clear();
     instances_.clear();
+    instance_slots_.clear();
     blas_revision_ = 0u;
     tlas_revision_ = 0u;
+    tlas_topology_signature_ = 0u;
     tlas_signature_ = 0u;
 }
 
