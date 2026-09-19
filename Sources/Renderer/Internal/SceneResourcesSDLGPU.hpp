@@ -18,7 +18,7 @@ namespace Renderer::Scenes::SDLGPU {
 class SceneResources {
 public:
     static constexpr std::size_t MaximumTextureSlots = 16u;
-    static constexpr std::size_t MaximumRasterTextureSlots = MaximumTextureSlots - 1u;
+    static constexpr std::size_t MaximumRasterTextureSlots = MaximumTextureSlots - 2u;
 
     SceneResources() = default;
     ~SceneResources();
