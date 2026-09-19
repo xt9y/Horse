@@ -97,6 +97,7 @@ private:
 };
 
 static_assert(sizeof(AccelerationTriangle) == 128u);
+static_assert(sizeof(AccelerationInstance) == 176u);
 
 } // namespace Renderer::Scenes
 
