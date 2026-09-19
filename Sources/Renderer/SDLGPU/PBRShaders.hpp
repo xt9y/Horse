@@ -328,6 +328,23 @@ float3 EnvironmentColor(float3 direction) {
     return EnvironmentColorLod(direction, 0.0);
 }
 
+float3 PrefilteredEnvironmentColor(float3 direction, float roughness) {
+    float3 sky = PGI[4].xyz;
+    float intensity = max(PGI[3].w, 0.0);
+    if (PReflectionProbes[0].z > 0.5) {
+        float rotation = PGI[7].w;
+        float u = frac(atan2(direction.z, direction.x) / (2.0*PI) + 0.5 + rotation/(2.0*PI));
+        float v = acos(clamp(direction.y, -1.0, 1.0)) / PI;
+        float mip_levels = max(PReflectionProbes[0].y, 1.0);
+        float lod = saturate(roughness) * max(mip_levels - 1.0, 0.0);
+        return ReflectionProbes.SampleLevel(
+            ReflectionProbeSampler,
+            float3(u, v, 0.0),
+            lod).rgb * intensity;
+    }
+    return sky * max(intensity, 1.0);
+}
+
 float ReflectionProbeInfluence(float3 position, float3 center, float3 extents, float blend_distance) {
     float3 edge = max(extents, 0.0.xxx) - abs(position - center);
     if (any(edge <= 0.0.xxx)) return 0.0;
@@ -689,9 +706,9 @@ float3 EnvironmentSpecular(Surface s, float3 view, float3 position) {
     if (PGI[8].x < 0.5 || PGI[8].y <= 0.0) return 0.0.xxx;
     float no_v = max(saturate(dot(s.normal, view)), 1.0e-4);
     float3 reflection_direction = reflect(-view, s.normal);
-    float mip_levels = max(PGI[8].z, 1.0);
-    float lod = saturate(s.roughness) * max(mip_levels - 1.0, 0.0);
-    float3 global_reflection = EnvironmentColorLod(reflection_direction, lod);
+    float3 global_reflection = PrefilteredEnvironmentColor(
+        reflection_direction,
+        s.roughness);
     float local_coverage = 0.0;
     float3 local_reflection = LocalReflectionColor(
         position,
