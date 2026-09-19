@@ -126,8 +126,10 @@ struct State {
     std::size_t probe_cursor = 0u;
     std::uint8_t bounce_index = 0u;
     std::uint32_t bvh_depth = 0u;
+    Debug::SceneUpdate scene_update = Debug::SceneUpdate::None;
     double scene_build_ms = 0.0;
     double photon_build_ms = 0.0;
+    double probe_update_ms = 0.0;
     bool calculating = false;
 };
 
@@ -456,6 +458,7 @@ void disableIlluminationState()
     state.bounce_index = 0u;
     state.bounces = 0u;
     state.photon_build_ms = 0.0;
+    state.probe_update_ms = 0.0;
     state.calculating = false;
 }
 
@@ -491,10 +494,15 @@ bool paused() { return tuning.paused; }
 
 const Field *update(const Ecs::World& world)
 {
-    if (tuning.paused)
+    if (tuning.paused) {
+        state.probe_update_ms = 0.0;
         return state.published.valid() ? &state.published : nullptr;
+    }
 
-    if (!configured()) return nullptr;
+    if (!configured()) {
+        state.probe_update_ms = 0.0;
+        return nullptr;
+    }
 
     const SettingsState settings = settingsState(world);
 
@@ -512,25 +520,39 @@ const Field *update(const Ecs::World& world)
     if (render_dirty || lighting_dirty) {
         const bool first_sync = !state.revisions_initialized;
         if (render_dirty) {
-            const std::uint64_t previous_geometry_revision = state.trace_scene.cache().geometryRevision();
-            const std::uint64_t previous_resource_revision = state.trace_scene.cache().resourceRevision();
+            const Scenes::SceneCache& previous_cache = state.trace_scene.cache();
+            const std::uint64_t previous_geometry_revision = previous_cache.geometryRevision();
+            const std::uint64_t previous_resource_revision = previous_cache.resourceRevision();
+            const std::uint64_t previous_topology_updates = previous_cache.topologyUpdates();
+            const std::uint64_t previous_geometry_updates = previous_cache.geometryUpdates();
+            const std::uint64_t previous_resource_updates = previous_cache.resourceUpdates();
             const Clock::time_point started = Clock::now();
             std::string error;
             Scenes::Scene::collectRenderItems(world, state.render_items);
             if (!state.trace_scene.build(world, state.render_items, &error)) {
                 std::fprintf(stderr, "[GlobalIllumination]: scene build failed: %s\n", error.c_str());
                 state.trace_scene.clear();
+                state.scene_update = Debug::SceneUpdate::None;
                 scene_changed = true;
             } else {
+                const Scenes::SceneCache& cache = state.trace_scene.cache();
                 const bool geometry_changed =
-                    state.trace_scene.cache().geometryRevision() != previous_geometry_revision;
+                    cache.geometryRevision() != previous_geometry_revision;
                 const bool resources_changed =
-                    state.trace_scene.cache().resourceRevision() != previous_resource_revision;
+                    cache.resourceRevision() != previous_resource_revision;
                 scene_changed = first_sync || geometry_changed || resources_changed;
+                if (cache.topologyUpdates() != previous_topology_updates)
+                    state.scene_update = Debug::SceneUpdate::Topology;
+                else if (cache.geometryUpdates() != previous_geometry_updates)
+                    state.scene_update = Debug::SceneUpdate::Geometry;
+                else if (cache.resourceUpdates() != previous_resource_updates)
+                    state.scene_update = Debug::SceneUpdate::Resources;
+                else
+                    state.scene_update = Debug::SceneUpdate::None;
                 if (first_sync || geometry_changed) {
-                    state.bvh_depth = state.trace_scene.cache().nodes().empty()
+                    state.bvh_depth = cache.nodes().empty()
                         ? 0u
-                        : treeDepth(state.trace_scene.cache().nodes(), 0u);
+                        : treeDepth(cache.nodes(), 0u);
                 }
             }
             state.scene_build_ms = elapsedMilliseconds(started);
@@ -542,6 +564,7 @@ const Field *update(const Ecs::World& world)
     }
 
     if (!settings.valid) {
+        state.probe_update_ms = 0.0;
         if (state.bounces != 0u || state.photon_map.valid() || state.published.valid() || state.calculating)
             disableIlluminationState();
         return nullptr;
@@ -582,7 +605,13 @@ const Field *update(const Ecs::World& world)
     }
 
     state.published.intensity = intensity;
-    advanceCalculation();
+    if (state.calculating) {
+        const Clock::time_point started = Clock::now();
+        advanceCalculation();
+        state.probe_update_ms = elapsedMilliseconds(started);
+    } else {
+        state.probe_update_ms = 0.0;
+    }
     return state.published.valid() ? &state.published : nullptr;
 }
 
@@ -616,8 +645,13 @@ Statistics statistics()
         ? 0u
         : std::min<std::uint8_t>(static_cast<std::uint8_t>(state.bounce_index + 1u), state.bounces);
     result.photon_radius = state.photon_map.radius();
+    result.scene_update = state.scene_update;
+    result.topology_updates = cache.topologyUpdates();
+    result.geometry_updates = cache.geometryUpdates();
+    result.resource_updates = cache.resourceUpdates();
     result.scene_build_ms = state.scene_build_ms;
     result.photon_build_ms = state.photon_build_ms;
+    result.probe_update_ms = state.probe_update_ms;
     result.calculating = state.calculating;
 
     const std::size_t probe_count = state.working.probes.size();
