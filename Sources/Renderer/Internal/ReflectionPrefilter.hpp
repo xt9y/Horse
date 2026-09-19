@@ -4,6 +4,7 @@
 #include "Models/Images/Image.hpp"
 #include "Renderer/Quality.hpp"
 
+#include <array>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -20,7 +21,16 @@ struct PrefilterChain {
     std::vector<PrefilterLevel> levels;
 };
 
+struct IrradianceSH {
+    std::array<float, 3> average{};
+    std::array<float, 3> x{};
+    std::array<float, 3> y{};
+    std::array<float, 3> z{};
+};
+
 std::uint32_t prefilterSampleCount(Quality quality);
+
+IrradianceSH irradianceEquirectangular(const Models::Images::Image& source);
 
 PrefilterChain prefilterEquirectangular(
     const Models::Images::Image& source,
