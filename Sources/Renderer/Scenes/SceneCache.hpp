@@ -81,6 +81,14 @@ struct LightState {
 
 class SceneCache {
 public:
+    struct Profile {
+        double resource_rebuild_ms = 0.0;
+        double geometry_rebuild_ms = 0.0;
+        double geometry_update_ms = 0.0;
+        double bvh_build_ms = 0.0;
+        double bvh_refit_ms = 0.0;
+    };
+
     static void setLeafSize(std::uint32_t value) { if (leaf_size_ != value) { leaf_size_ = value; ++config_revision_; } }
     static void setMaximumTriangles(std::size_t value) { if (maximum_triangles_ != value) { maximum_triangles_ = value; ++config_revision_; } }
     static void setOpacityCutoff(float value) { if (opacity_cutoff_ != value) { opacity_cutoff_ = value; ++config_revision_; } }
@@ -103,6 +111,7 @@ public:
     const std::vector<GpuMaterial>& materials() const { return materials_; }
     const std::vector<Models::TextureHandle>& textureHandles() const { return texture_handles_; }
     const std::vector<Scene::RenderItem>& renderItems() const { return render_items_; }
+    const Profile& profile() const { return profile_; }
     std::uint32_t materialIndex(Models::MaterialHandle handle) const;
     std::uint64_t geometryRevision() const { return geometry_revision_; }
     std::uint64_t topologyRevision() const { return topology_revision_; }
@@ -148,6 +157,7 @@ private:
     std::uint64_t geometry_updates_ = 0u;
     std::uint64_t topology_updates_ = 0u;
     std::uint64_t resource_updates_ = 0u;
+    Profile profile_{};
     bool geometry_initialized_ = false;
     bool topology_initialized_ = false;
     bool resources_initialized_ = false;
