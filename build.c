@@ -183,5 +183,9 @@ void build(C_Build *b)
     c_sources(reflection_probe_tests, "Tests/ReflectionProbes.cpp");
     configureTest(reflection_probe_tests, library);
 
+    C_Target *reflection_shader_tests = c_test(b, "HorseReflectionShaderLayoutTests");
+    c_sources(reflection_shader_tests, "Tests/ReflectionShaderLayout.cpp");
+    configureTest(reflection_shader_tests, library);
+
     c_default_target(b, library);
 }
