@@ -217,26 +217,24 @@ CameraState cameraState(const Ecs::World& world)
 void collectLights(const Ecs::World& world, std::vector<LightState>& out)
 {
     out.clear();
-    for (const Ecs::Entity entity : world.entities()) {
-        const LightComponent* light = world.get<LightComponent>(entity);
-        const Transform* transform = world.get<Transform>(entity);
-        if (!light || !transform) continue;
-
-        LightState state;
-        state.entity = entity;
-        state.transform = resolvedTransform(world, entity, *transform);
-        state.light = *light;
-        if (const ShadowComponent* shadow = world.get<ShadowComponent>(entity)) {
-            state.shadow = *shadow;
-            state.has_shadow = true;
+    world.each<LightComponent, Transform>(
+        [&](Ecs::Entity entity, const LightComponent& light, const Transform& transform) {
+            LightState state;
+            state.entity = entity;
+            state.transform = resolvedTransform(world, entity, transform);
+            state.light = light;
+            if (const ShadowComponent* shadow = world.get<ShadowComponent>(entity)) {
+                state.shadow = *shadow;
+                state.has_shadow = true;
+            }
+            if (const VolumetricLightComponent* volumetric = world.get<VolumetricLightComponent>(entity)) {
+                state.volumetric = *volumetric;
+                state.has_volumetric = true;
+            }
+            state.valid = true;
+            out.push_back(state);
         }
-        if (const VolumetricLightComponent* volumetric = world.get<VolumetricLightComponent>(entity)) {
-            state.volumetric = *volumetric;
-            state.has_volumetric = true;
-        }
-        state.valid = true;
-        out.push_back(state);
-    }
+    );
 }
 
 RenderRevision renderRevision(const Ecs::World& world)
