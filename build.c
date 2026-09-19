@@ -199,5 +199,9 @@ void build(C_Build *b)
     c_sources(volumetrics_layout_tests, "Tests/VolumetricsComputeLayout.cpp");
     configureTest(volumetrics_layout_tests, library);
 
+    C_Target *render_graph_tests = c_test(b, "HorseRenderGraphTests");
+    c_sources(render_graph_tests, "Tests/RenderGraph.cpp");
+    configureTest(render_graph_tests, library);
+
     c_default_target(b, library);
 }
