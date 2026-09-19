@@ -111,6 +111,7 @@ private:
     std::vector<std::uint32_t> instance_leaves_;
     std::vector<std::uint64_t> tlas_dirty_marks_;
     std::uint64_t tlas_dirty_generation_ = 0u;
+    std::uint64_t tlas_metadata_signature_ = 0u;
     std::uint64_t blas_revision_ = 0u;
     std::uint64_t tlas_revision_ = 0u;
     std::uint64_t tlas_topology_signature_ = 0u;
