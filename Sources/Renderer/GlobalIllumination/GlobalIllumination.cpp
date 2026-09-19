@@ -545,7 +545,6 @@ const Field *update(const Ecs::World& world)
             const std::uint64_t previous_tlas_revision = previous_acceleration.tlasRevision();
             const Clock::time_point started = Clock::now();
             std::string error;
-            Scenes::Scene::collectRenderItems(world, state.render_items);
             if (!state.trace_scene.build(world, state.render_items, &error)) {
                 std::fprintf(stderr, "[GlobalIllumination]: scene build failed: %s\n", error.c_str());
                 state.trace_scene.clear();
