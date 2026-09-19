@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -146,7 +147,8 @@ bool AccelerationScene::refitDirtyTlas(const std::vector<std::size_t>& dirty_slo
     if (dirty_slots.empty()) return true;
     if (tlas_nodes_.empty() || instances_.empty()) return false;
 
-    if (tlas_metadata_signature_ != tlas_topology_signature_ ||
+    if (tlas_signature_ != 0u ||
+        tlas_metadata_signature_ != tlas_topology_signature_ ||
         tlas_parents_.size() != tlas_nodes_.size() ||
         instance_leaves_.size() != instances_.size() ||
         tlas_dirty_marks_.size() != tlas_nodes_.size())
