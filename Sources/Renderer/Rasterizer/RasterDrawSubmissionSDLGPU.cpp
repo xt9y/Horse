@@ -1,5 +1,6 @@
 #include "Renderer/Internal/RasterDrawSubmissionSDLGPU.hpp"
 
+#include "Models/Models.hpp"
 #include "Renderer/SDLGPU/Context.hpp"
 
 #include <SDL3/SDL.h>
@@ -127,6 +128,31 @@ bool fail(std::string *error, const char *message)
     return false;
 }
 
+bool gpuEligible(const RasterGeometry::DrawItem& draw)
+{
+    const Models::MaterialData *material = Models::material(draw.material);
+    return material && material->alpha_mode != Models::AlphaMode::Blend;
+}
+
+bool appendCommand(
+    const RasterGeometry::DrawItem& draw,
+    std::vector<SDL_GPUIndexedIndirectDrawCommand>& commands,
+    std::string *error)
+{
+    if (draw.first_vertex > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) ||
+        draw.vertex_count > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
+        return fail(error, "raster draw range exceeds 32-bit backend range");
+
+    SDL_GPUIndexedIndirectDrawCommand command{};
+    command.num_indices = static_cast<Uint32>(draw.vertex_count);
+    command.num_instances = 1u;
+    command.first_index = static_cast<Uint32>(draw.first_vertex);
+    command.vertex_offset = 0;
+    command.first_instance = 0u;
+    commands.push_back(command);
+    return true;
+}
+
 } // namespace
 
 DrawSubmission::~DrawSubmission()
@@ -167,18 +193,20 @@ bool DrawSubmission::sync(const RasterGeometry& geometry, std::string *error)
 
     std::vector<Batch> batches;
     for (const RasterGeometry::DrawItem& draw : geometry.drawItems()) {
-        if (draw.vertex_count == 0u) continue;
+        if (draw.vertex_count == 0u || !gpuEligible(draw)) continue;
         const auto found = std::find_if(
             batches.begin(),
             batches.end(),
             [&](const Batch& batch) {
-                return batch.material == draw.material &&
+                return batch.gpu_eligible &&
+                    batch.material == draw.material &&
                     batch.camera_layer == draw.camera_layer;
             });
         if (found == batches.end()) {
             Batch batch;
             batch.material = draw.material;
             batch.camera_layer = draw.camera_layer;
+            batch.gpu_eligible = true;
             batches.push_back(batch);
         }
     }
@@ -189,37 +217,40 @@ bool DrawSubmission::sync(const RasterGeometry& geometry, std::string *error)
         if (commands.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
             return fail(error, "raster indirect command offset exceeds backend range");
         batch.first_command = static_cast<std::uint32_t>(commands.size());
-
         for (const RasterGeometry::DrawItem& draw : geometry.drawItems()) {
-            if (draw.vertex_count == 0u || draw.material != batch.material ||
+            if (draw.vertex_count == 0u || !gpuEligible(draw) ||
+                draw.material != batch.material ||
                 draw.camera_layer != batch.camera_layer)
                 continue;
-            if (draw.first_vertex > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()) ||
-                draw.vertex_count > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
-                return fail(error, "raster draw range exceeds 32-bit backend range");
-
-            SDL_GPUIndexedIndirectDrawCommand command{};
-            command.num_indices = static_cast<Uint32>(draw.vertex_count);
-            command.num_instances = 1u;
-            command.first_index = static_cast<Uint32>(draw.first_vertex);
-            command.vertex_offset = 0;
-            command.first_instance = 0u;
-            commands.push_back(command);
+            if (!appendCommand(draw, commands, error)) return false;
         }
-
         const std::size_t command_count = commands.size() - batch.first_command;
         if (command_count > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
             return fail(error, "raster indirect batch exceeds backend draw-count range");
         batch.command_count = static_cast<std::uint32_t>(command_count);
     }
 
+    for (const RasterGeometry::DrawItem& draw : geometry.drawItems()) {
+        if (draw.vertex_count == 0u || gpuEligible(draw)) continue;
+        if (commands.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max()))
+            return fail(error, "raster transparent command offset exceeds backend range");
+        Batch batch;
+        batch.material = draw.material;
+        batch.camera_layer = draw.camera_layer;
+        batch.gpu_eligible = false;
+        batch.first_command = static_cast<std::uint32_t>(commands.size());
+        batch.command_count = 1u;
+        if (!appendCommand(draw, commands, error)) return false;
+        batches.push_back(batch);
+    }
+
     std::vector<BatchMeta> batch_meta;
     std::uint32_t compact_first_index = 0u;
     for (Batch& batch : batches) {
-        if (batch.camera_layer) continue;
+        if (batch.camera_layer || !batch.gpu_eligible) continue;
         std::uint64_t capacity = 0u;
         for (const RasterGeometry::DrawItem& draw : geometry.drawItems()) {
-            if (!draw.camera_layer && draw.material == batch.material)
+            if (!draw.camera_layer && gpuEligible(draw) && draw.material == batch.material)
                 capacity += draw.vertex_count;
         }
         if (capacity > std::numeric_limits<std::uint32_t>::max() ||
@@ -240,12 +271,13 @@ bool DrawSubmission::sync(const RasterGeometry& geometry, std::string *error)
     std::vector<DrawMeta> draw_meta;
     draw_meta.reserve(geometry.drawItems().size());
     for (const RasterGeometry::DrawItem& draw : geometry.drawItems()) {
-        if (draw.camera_layer || draw.vertex_count == 0u) continue;
+        if (draw.camera_layer || draw.vertex_count == 0u || !gpuEligible(draw)) continue;
         const auto batch = std::find_if(
             batches.begin(),
             batches.end(),
             [&](const Batch& value) {
-                return !value.camera_layer && value.material == draw.material;
+                return value.gpu_eligible && !value.camera_layer &&
+                    value.material == draw.material;
             });
         if (batch == batches.end() || batch->compact_command == UINT32_MAX)
             return fail(error, "raster compact draw has no material batch");
@@ -418,7 +450,7 @@ bool DrawSubmission::drawIndirect(
     bool compact_world) const
 {
     if (!pass) return false;
-    if (compact_world && compacted_ && !batch.camera_layer &&
+    if (compact_world && compacted_ && batch.gpu_eligible && !batch.camera_layer &&
         batch.compact_command != UINT32_MAX)
     {
         if (!compact_indirect_buffer_) return false;
