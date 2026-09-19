@@ -169,8 +169,9 @@ bool upload(const GlobalIllumination::Field *field)
 
 bool bindReflectionProbes(SDL_GPURenderPass *pass)
 {
+    const ShadingState& shading = shadingState();
     std::string error;
-    if (!reflection_probes.sync(shadingState().reflections, &error)) {
+    if (!reflection_probes.sync(shading.reflections, shading.environment, &error)) {
         std::fprintf(
             stderr,
             "[Horse Reflections]: probe resource sync failed: %s%s%s\n",
