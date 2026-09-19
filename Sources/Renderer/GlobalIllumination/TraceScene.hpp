@@ -1,6 +1,7 @@
 #ifndef HORSE_RENDERER_GLOBAL_ILLUMINATION_TRACE_SCENE_HPP
 #define HORSE_RENDERER_GLOBAL_ILLUMINATION_TRACE_SCENE_HPP
 
+#include "Renderer/Internal/AccelerationState.hpp"
 #include "Renderer/Scenes/Acceleration.hpp"
 #include "Renderer/Scenes/SceneCache.hpp"
 
@@ -62,8 +63,8 @@ public:
     const Scenes::AccelerationScene& acceleration() const { return acceleration_; }
 
 private:
-    Scenes::SceneCache cache_;
-    Scenes::AccelerationScene acceleration_;
+    Internal::SharedSceneCacheView cache_;
+    Internal::SharedAccelerationView acceleration_;
 };
 
 } // namespace Renderer::GlobalIllumination
