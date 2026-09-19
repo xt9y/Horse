@@ -4,23 +4,29 @@
 #include <sstream>
 #include <string>
 
-int main()
-{
-    const std::filesystem::path source =
-        std::filesystem::path(__FILE__).parent_path().parent_path() /
-        "Sources/Renderer/Volumetrics/VolumetricsSDLGPU.cpp";
+namespace {
 
-    std::ifstream file(source);
+std::string read(const std::filesystem::path& path)
+{
+    std::ifstream file(path);
     assert(file);
     std::ostringstream stream;
     stream << file.rdbuf();
-    const std::string text = stream.str();
+    return stream.str();
+}
 
-    const std::size_t begin = text.find("inline constexpr const char *MarchShader");
-    const std::size_t end = text.find("inline constexpr const char *BlurShader", begin);
-    assert(begin != std::string::npos);
-    assert(end != std::string::npos);
-    const std::string march = text.substr(begin, end - begin);
+} // namespace
+
+int main()
+{
+    const std::filesystem::path root =
+        std::filesystem::path(__FILE__).parent_path().parent_path();
+    const std::string march = read(
+        root / "Sources/Renderer/Internal/VolumetricMarchShader.hpp"
+    );
+    const std::string implementation = read(
+        root / "Sources/Renderer/Volumetrics/VolumetricsSDLGPU.cpp"
+    );
 
     assert(march.find("Texture2D<float> SceneDepth : register(t0, space0)") != std::string::npos);
     assert(march.find("SamplerState DepthSampler : register(s0, space0)") != std::string::npos);
@@ -41,9 +47,13 @@ int main()
     assert(march.find("OccludedDynamic") != std::string::npos);
     assert(march.find("space3") == std::string::npos);
 
-    assert(text.find("bool pipelines_attempted = false;") != std::string::npos);
-    assert(text.find("if (state.pipelines_attempted) return false;") != std::string::npos);
-    assert(text.find("state.pipelines_attempted = true;") != std::string::npos);
+    assert(implementation.find("VolumetricMarchShader") != std::string::npos);
+    assert(implementation.find("state.acceleration_gpu.bindCompute(pass, 0u)") != std::string::npos);
+    assert(implementation.find("bindGlobalIlluminationSDLGPU(pass, global_illumination, 7u)") != std::string::npos);
+    assert(implementation.find("SDL_PushGPUComputeUniformData(\n        command,\n        2u,") != std::string::npos);
+    assert(implementation.find("bool pipelines_attempted = false;") != std::string::npos);
+    assert(implementation.find("if (state.pipelines_attempted) return false;") != std::string::npos);
+    assert(implementation.find("state.pipelines_attempted = true;") != std::string::npos);
 
     return 0;
 }
