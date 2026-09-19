@@ -207,5 +207,9 @@ void build(C_Build *b)
     c_sources(raster_render_graph_tests, "Tests/RasterRenderGraph.cpp");
     configureTest(raster_render_graph_tests, library);
 
+    C_Target *gi_profiling_tests = c_test(b, "HorseGiProfilingTests");
+    c_sources(gi_profiling_tests, "Tests/GiProfiling.cpp");
+    configureTest(gi_profiling_tests, library);
+
     c_default_target(b, library);
 }
