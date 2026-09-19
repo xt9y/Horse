@@ -62,9 +62,10 @@ bool AccelerationState::sync(const Ecs::World& world, std::string *error)
         config_revision_ == current_config_revision &&
         transformOnlyRevision(current, revision_);
 
-    Scenes::Scene::collectRenderItems(world, render_items_);
-
     if (transform_only) {
+        if (!Scenes::Scene::refreshRenderItemTransforms(world, render_items_))
+            Scenes::Scene::collectRenderItems(world, render_items_);
+
         if (!dynamic_items_.empty()) {
             collectDynamicItems(world, render_items_, dynamic_items_);
             if (!scene_.syncGeometry(world, dynamic_items_, error)) {
@@ -78,6 +79,7 @@ bool AccelerationState::sync(const Ecs::World& world, std::string *error)
             return false;
         }
     } else {
+        Scenes::Scene::collectRenderItems(world, render_items_);
         if (!scene_.syncResources(
                 world,
                 render_items_,
