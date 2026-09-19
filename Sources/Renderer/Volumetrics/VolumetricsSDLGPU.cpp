@@ -29,14 +29,14 @@ struct GpuTriangle {
     float4 uv01; float4 uv2;
 };
 
-StructuredBuffer<GpuNode> Nodes : register(t0, space0);
-StructuredBuffer<GpuTriangle> Triangles : register(t1, space0);
-StructuredBuffer<float4> Shading : register(t2, space0);
+Texture2D<float> SceneDepth : register(t0, space0);
+SamplerState DepthSampler : register(s0, space0);
+StructuredBuffer<GpuNode> Nodes : register(t1, space0);
+StructuredBuffer<GpuTriangle> Triangles : register(t2, space0);
+StructuredBuffer<float4> Shading : register(t3, space0);
 RWTexture2D<float4> Output : register(u0, space1);
-Texture2D<float> SceneDepth : register(t0, space2);
-SamplerState DepthSampler : register(s0, space2);
 
-cbuffer FrameData : register(b0, space3) {
+cbuffer FrameData : register(b0, space2) {
     float4 CameraPositionNear;
     float4 CameraForwardFar;
     float4 CameraRightAspect;
@@ -47,7 +47,7 @@ cbuffer FrameData : register(b0, space3) {
     uint4 Frame;
     uint4 PathPolicy;
 };
-cbuffer VolumetricData : register(b1, space3) {
+cbuffer VolumetricData : register(b1, space2) {
     float Density;
     float Anisotropy;
     float MaximumDistance;
@@ -446,6 +446,7 @@ struct State {
     int volume_height = 0;
     int resolution_divisor = 0;
     std::uint32_t frame_index = 0u;
+    bool pipelines_attempted = false;
     Scenes::SDLGPU::SceneResources fallback_scene;
 };
 
@@ -485,6 +486,8 @@ bool ensurePipelines()
         state.linear_sampler && state.nearest_sampler)
         return true;
     if (!Renderer::SDLGPU::device()) return false;
+    if (state.pipelines_attempted) return false;
+    state.pipelines_attempted = true;
 
     state.march_pipeline = Renderer::SDLGPU::compileComputePipeline(
         MarchShader, "Horse Volumetric March", "Main");
@@ -735,6 +738,7 @@ void shutdownVolumetricsSDLGPU()
     state.height = 0;
     state.resolution_divisor = 0;
     state.frame_index = 0u;
+    state.pipelines_attempted = false;
 }
 
 } // namespace Renderer::Internal
