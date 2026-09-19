@@ -59,12 +59,16 @@ const Settings& currentSettings();
 
 inline bool enabled(const Ecs::World& world)
 {
-    for (const Ecs::Entity entity : world.entities()) {
-        const GlobalIlluminationComponent *component =
-            world.get<GlobalIlluminationComponent>(entity);
-        if (component) return component->enabled;
-    }
-    return false;
+    bool result = false;
+    bool found = false;
+    world.each<GlobalIlluminationComponent>(
+        [&](Ecs::Entity, const GlobalIlluminationComponent& component) {
+            if (found) return;
+            result = component.enabled;
+            found = true;
+        }
+    );
+    return result;
 }
 
 void setRaysPerProbe(std::size_t value);
