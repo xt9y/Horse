@@ -61,7 +61,7 @@ float srgbToLinear(float value)
         : std::pow((value + 0.055f) / 1.055f, 2.4f);
 }
 
-bool aabbHit(
+float aabbDistance(
     const Scenes::GpuNode& node,
     Vec3 origin,
     Vec3 direction,
@@ -78,7 +78,7 @@ bool aabbHit(
         const float low = component(minimum, axis);
         const float high = component(maximum, axis);
         if (std::abs(d) <= 1.0e-10f) {
-            if (o < low || o > high) return false;
+            if (o < low || o > high) return std::numeric_limits<float>::infinity();
             continue;
         }
 
@@ -88,9 +88,11 @@ bool aabbHit(
         if (t0 > t1) std::swap(t0, t1);
         minimum_t = std::max(minimum_t, t0);
         maximum_t = std::min(maximum_t, t1);
-        if (maximum_t < minimum_t) return false;
+        if (maximum_t < minimum_t) return std::numeric_limits<float>::infinity();
     }
-    return minimum_t < maximum_distance;
+    return minimum_t < maximum_distance
+        ? minimum_t
+        : std::numeric_limits<float>::infinity();
 }
 
 bool triangleHit(
@@ -123,6 +125,47 @@ bool triangleHit(
 
     distance = dot(edge2, q) * inverse_determinant;
     return distance > ray_epsilon && distance < maximum_distance;
+}
+
+void pushChildrenNearFirst(
+    const std::vector<Scenes::GpuNode>& nodes,
+    const Scenes::GpuNode& node,
+    Vec3 origin,
+    Vec3 direction,
+    float maximum_distance,
+    std::array<std::uint32_t, 64>& stack,
+    std::size_t& stack_size)
+{
+    if (node.first >= nodes.size() || node.meta >= nodes.size()) return;
+
+    const float left_distance = aabbDistance(
+        nodes[node.first],
+        origin,
+        direction,
+        maximum_distance);
+    const float right_distance = aabbDistance(
+        nodes[node.meta],
+        origin,
+        direction,
+        maximum_distance);
+    const bool left_hit = std::isfinite(left_distance);
+    const bool right_hit = std::isfinite(right_distance);
+
+    if (left_hit && right_hit) {
+        if (stack_size + 2u > stack.size()) return;
+        if (left_distance <= right_distance) {
+            stack[stack_size++] = node.meta;
+            stack[stack_size++] = node.first;
+        } else {
+            stack[stack_size++] = node.first;
+            stack[stack_size++] = node.meta;
+        }
+        return;
+    }
+
+    if (stack_size >= stack.size()) return;
+    if (left_hit) stack[stack_size++] = node.first;
+    else if (right_hit) stack[stack_size++] = node.meta;
 }
 
 Vec3 textureColor(const Scenes::SceneCache& cache, int texture_index, Vec2 uv)
@@ -199,7 +242,7 @@ TraceHit TraceScene::traceClosest(
         const std::uint32_t node_index = stack[--stack_size];
         if (node_index >= cache_.nodes().size()) continue;
         const Scenes::GpuNode& node = cache_.nodes()[node_index];
-        if (!aabbHit(node, origin, direction, hit.distance)) continue;
+        if (!std::isfinite(aabbDistance(node, origin, direction, hit.distance))) continue;
 
         if ((node.meta & Scenes::LeafBit) != 0u) {
             const std::uint32_t count = node.meta & ~Scenes::LeafBit;
@@ -244,9 +287,14 @@ TraceHit TraceScene::traceClosest(
             continue;
         }
 
-        if (stack_size + 2u > stack.size()) continue;
-        stack[stack_size++] = node.first;
-        stack[stack_size++] = node.meta;
+        pushChildrenNearFirst(
+            cache_.nodes(),
+            node,
+            origin,
+            direction,
+            hit.distance,
+            stack,
+            stack_size);
     }
     return hit;
 }
@@ -257,8 +305,52 @@ bool TraceScene::occluded(
     float maximum_distance,
     float ray_epsilon) const
 {
-    const TraceHit hit = traceClosest(origin, direction, maximum_distance, ray_epsilon);
-    return hit.found && hit.distance < maximum_distance;
+    if (cache_.nodes().empty() || cache_.triangles().empty()) return false;
+
+    direction = normalize(direction);
+    std::array<std::uint32_t, 64> stack{};
+    std::size_t stack_size = 0u;
+    stack[stack_size++] = 0u;
+
+    while (stack_size > 0u) {
+        const std::uint32_t node_index = stack[--stack_size];
+        if (node_index >= cache_.nodes().size()) continue;
+        const Scenes::GpuNode& node = cache_.nodes()[node_index];
+        if (!std::isfinite(aabbDistance(node, origin, direction, maximum_distance))) continue;
+
+        if ((node.meta & Scenes::LeafBit) != 0u) {
+            const std::uint32_t count = node.meta & ~Scenes::LeafBit;
+            for (std::uint32_t index = 0u; index < count; ++index) {
+                const std::uint32_t triangle_index = node.first + index;
+                if (triangle_index >= cache_.triangles().size()) break;
+
+                float distance = maximum_distance;
+                float u = 0.0f;
+                float v = 0.0f;
+                if (triangleHit(
+                        cache_.triangles()[triangle_index],
+                        origin,
+                        direction,
+                        maximum_distance,
+                        ray_epsilon,
+                        distance,
+                        u,
+                        v))
+                    return true;
+            }
+            continue;
+        }
+
+        pushChildrenNearFirst(
+            cache_.nodes(),
+            node,
+            origin,
+            direction,
+            maximum_distance,
+            stack,
+            stack_size);
+    }
+    return false;
 }
 
 Vec3 TraceScene::albedo(const TraceHit& hit) const
